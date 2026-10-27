@@ -271,18 +271,16 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   our hold keeps 30 (135). Sustained after the first minute 30 fps in every variant: the native and a 720-row drawable, a 960x540 scene (37 fps
   for its first 25 s, GPU 13.6 ms), `DM_PRESENT_INTERVAL=display` (38.7 fps for 25 s). Next: runs from a cool phone (longer rests, off USB
   power), and what holds 60 for the first minutes (960x540 with the game's controller kept at 1?).
-- 271 CPU per draw, 226's area. MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook Air): resolved uniform addresses
-  cached (`TOTK_CBUF_CACHE`; encode_args was 21 % of its translating thread), argument bytes equal to the shader's last block bind that block
-  (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), the border key kept per shader (ours builds a string at each pso_get with
-  a border sampler bound, `mtl/border_warm.inc`), dispatch arguments before the encode stage's wait, generation maxima per 64 pages
-  (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as one word (`nvn_hmap.h`). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the
-  passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (our build writes them; `mtl/args.inc` fills all).
-  226's rest (closed in batch 111): the snapshot's second copy of the captured uniforms costs 0.053 ms a submission on the M5 and 0.14 ms on
-  the Air (1.56 MB), not worth a GPU-visible capture pool of its own; `us_find` is 4.6 % of the translation thread's own time on the M5.
+- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off; the translation
+  thread standing on Great Sky Island (M5) is now about 24 % busy: render encoders made 19 % (the driver's, one a pass: fewer passes are 219's),
+  encode_args 17 % (texture IDs 6 %), the uniform updates' private copies 7 % (copied whole from the range's previous copy, 225), dispatches
+  5 %. Not taken from MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook Air) yet: resolved uniform addresses cached
+  (`TOTK_CBUF_CACHE`; pc_get is 2 % here), argument bytes equal to the shader's last block bind that block (`TOTK_AB_SAME`), a 256-entry pool
+  table by page (`TOTK_POOL_HASH`), the border key kept per shader (`mtl/border_warm.inc` builds a string at each pso_get with a border sampler
+  bound), dispatch arguments before the encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as
+  one word (`nvn_hmap.h`); 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the passes of a submission, the driver segment filled only at
+  the vec4 offsets a shader reads (`mtl/args.inc` fills all).
 - 273 the translation thread against the game's thread, sustained, on the phone (kxn, Adreno 735: 43 against 32 fps on the calling thread).
-- 274 compute dispatches run before their pass (nxnative `cs_hoist_try`; with its slice merge an iPhone's GPU p95 18-19 → 13.5-14.5 ms in Breath
-  of the Wild); 218's case.
-- 275 SyncWait woken from the queue's shared event (nxnative `post_early`: 0.15 ms a wait on an iPhone 17 Pro Max), once a frame here.
 - 276 131a: MacNativeGames found the controller (main+0x584300, called from main+0x58196c; 24 samples, 100 / 90 / 80 %; the scale leaves at
   main+0x5848a8 for renderer +0xccc; `TOTK_FIXED_RES` writes 1.0 there).
 - 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
@@ -297,8 +295,6 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 281 native resolution: done for manosaba in batch 109 (below). For other games the backend route stays: render targets of the screen's shape
   made at the screen's size while the game keeps its size (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's
   `render_scale` is 1.0, `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB).
-- 283 pipelines: the tile-read pipelines in the warm-up seed (MacNativeGames 59e240a: in-world builds 58 → 21 on its Mac); at most 2
-  speculative compile workers, the submit thread compiling an unclaimed job (4ppp44 cb21bec; ours a dispatch_async each, `mtl/pipeline.inc`).
 - 284 for 264's Vulkan backend: nxport's frame capture replayed pass by pass on both backends; Adreno 740-799 without the quad / warp32
   rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
   shim headers.
@@ -641,3 +637,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   after a fence wait puts those bytes into the storage when they are of the newest rendering (else it copies on the GPU as before; an invalidate
   still does). Standing on Great Sky Island (M5): 0.6-1 → 0.043 ms a write-back, all 400 from copies, one copy for each; the frame time's p95 17.2
   → 16.8 ms, as before 278. `t_wb` +2 (-DDM_TEST_WB_STAGE_OFF fails 2).
+- [x] batch 116 · 283 the pipeline guesses compile on at most two threads, the oldest kick first, and a draw needing one no thread has started yet
+  compiles it on the submit thread (4ppp44 cb21bec, MIT, written anew; `mtl/pipeline.inc`; each kick was a dispatch_async of its own, a take
+  waited even for one not started; `DM_NVN_PP_WORKERS=<n>`, 0 as before). The iPhone Air, manosaba's first trial from a cold shader cache
+  (`DM_CLEAR_SHADER_CACHE=1`, no learned list), two runs each: long frames 37 for 2,688 ms in all against 60 for 3,338 ms; the submit thread
+  waits longer on guesses already compiling (118 against 18 ms) and compiled none itself. The prediction line gives the waits. The tile-read
+  pipelines MacNativeGames 59e240a added to its seed are in ours already (R rows carry the merged and tile-read keys, the warm-up builds them;
+  no pipeline made in play standing on Great Sky Island). 271, part: texture views by their base texture and how they view it
+  (`mtl/descriptors.inc`, let go VIEW_IDLE (8) submissions after their last use): Tears of the Kingdom made about 35 a frame again for new serials
+  on the same storage, so the same MTLTexture; tex_by_id 6.8 → 5.0 % of the translation thread, encode_args 20 → 17 %. `t_ppred` +3
+  (-DDM_TEST_PP_UNBOUNDED fails 2), `t_stor` +2 (-DDM_TEST_VIEW_NOCACHE fails 2). [-] 274 measured: of the 4 render passes a frame a dispatch ends
+  on Great Sky Island, 1.2 are taken up again with the same targets, and the one that costs (17.6 MB loaded again a frame) is 218's depth probe
+  bc58d5dec860c367_b, which reads the depth the pass wrote, so it cannot run before the pass (the other, db0984679ece41d3_b, 0.1 MB). [-] 275
+  measured: the completion handler runs 0.19 ms after the GPU's end on the M5, and Tears of the Kingdom waits on a submission still on the GPU
+  0.00 times a frame on the Mac, 0.16-0.19 on the Air (0.42 ms a frame waiting): the event's earlier wake would give about 0.03 ms a frame.

@@ -4,7 +4,10 @@
 // STOR_IDLE submissions after the last holder left get the texture back with its contents; after that it is retired.
 // An entry whose pool was finalized goes STOR_GONE_IDLE submissions after its last holder left (plan item 280); an object made there within that window
 // takes it back and keeps it.
-// Negative control: DM_NVN_TEX_SHARE=0 fails the checks marked so; an entry of a finalized pool kept STOR_IDLE (-DDM_TEST_STOR_KEEP_GONE): 1 fails.
+// An ID registered again with another object of the storage and the same view takes the view made before; an unused view goes after VIEW_IDLE
+// submissions (plan item 271).
+// Negative control: DM_NVN_TEX_SHARE=0 fails the checks marked so; an entry of a finalized pool kept STOR_IDLE (-DDM_TEST_STOR_KEEP_GONE): 1 fails;
+// every view made anew (-DDM_TEST_VIEW_NOCACHE): 2 fail.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -104,5 +107,15 @@ int main(void) { @autoreleasepool {
       EXPECT("280: ... an object at that storage within the window: the same texture", 1, tex_mtl(&j) == th);
       for (int i = 0; i < STOR_GONE_IDLE + 2; i++) { chain e = {g_cm, 0}; memset(g_cm, 0, 64); submit(&e); }
       EXPECT("280: ... held again, kept past the window, with its contents (cyan)", 0xffffff00, pixel(&j)); }
+    // 8. Plan item 271: an ID registered again with a new object on the same storage and the same view takes the view made before (one MTLTexture, the
+    //    same view of it); a view unused for VIEW_IDLE submissions is let go
+    if (on) { tex_t va = tex_at(0x50000, NVN_FORMAT_RGBA8, &g_gpu_pool), vb = tex_at(0x50000, NVN_FORMAT_RGBA8, &g_gpu_pool);
+      view_t vw; memset(&vw, 0, sizeof vw); vw.set_swz = 1; vw.swz_r = 4; vw.swz_g = 3; vw.swz_b = 2; vw.swz_a = 5;   // B G R A
+      mtl_reg_tex(31, &va, &vw); pthread_mutex_lock(&g_rmu); id<MTLTexture> v1 = tex_by_id(31); pthread_mutex_unlock(&g_rmu);
+      uint64_t made0 = g_view_made; mtl_reg_tex(31, &vb, &vw); pthread_mutex_lock(&g_rmu); id<MTLTexture> v2 = tex_by_id(31); pthread_mutex_unlock(&g_rmu);
+      EXPECT("271: the ID registered again with another object of the storage, the same view: the view made before [-DDM_TEST_VIEW_NOCACHE]", 1, v1 && v1 == v2 && g_view_made == made0);
+      uint32_t n0 = g_views.n; mtl_reg_tex(31, NULL, NULL);
+      for (int i = 0; i < VIEW_IDLE + 2; i++) { chain e = {g_cm, 0}; memset(g_cm, 0, 64); submit(&e); }
+      EXPECT("271: ... unused for VIEW_IDLE submissions: let go", 1, n0 > 0 && g_views.n < n0); }
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
 } }

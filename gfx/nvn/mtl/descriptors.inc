@@ -107,6 +107,23 @@ static inline int h_sid(uint64_t h) { int s = (int)(h >> 20); return s ? s + g_s
 // The view used to be dropped at every guest write anywhere (MacNativeGames treg_stamp, MIT; written anew here)
 static inline int treg_kind(const tex_t *t) { return (t->has_layout && t->mem) || tex_cpu_candidate(t); }
 static inline uint64_t treg_stamp(int kind) { return !kind ? 0 : check_once() ? g_sub_serial : nvn_dirty_now(); }
+// Views by their base texture and what they make of it (plan item 271): Tears of the Kingdom initializes its passes' texture objects again every frame,
+// each a new serial on the same storage, so its IDs' views were made again each time on the same MTLTexture (about 35 a frame standing on Great Sky
+// Island, 3 % of the translation thread in newTextureViewWithPixelFormat). A view is taken from here when the same base texture is viewed the same way;
+// an entry is let go VIEW_IDLE submissions after its last use (a view keeps its base texture, so a retired one goes soon after; under g_rmu)
+typedef struct { uint64_t base; uint32_t pf, tt, l0, nl, s0, ns; uint8_t sw[4], tswz, pad[7]; } view_key;
+typedef struct { void *view; uint64_t last; } view_ent;   // view: CFBridgingRetain'd
+static nvn_hmap g_views = {.klen = sizeof(view_key)}; static uint64_t g_view_hits, g_view_made;
+enum { VIEW_IDLE = 8 };
+static void view_sweep(void) {   // fin_drain, every submission
+    pthread_mutex_lock(&g_rmu);
+    for (int again = 1; again && g_views.n;) { again = 0;   // a deletion shifts entries: scan again
+        for (uint32_t i = 0; i < g_views.cap; i++) { view_ent *e = g_views.vals ? g_views.vals[i] : NULL;
+            if (!e || e->last + VIEW_IDLE > g_sub_serial) continue;
+            view_key k; memcpy(&k, g_views.keys + (size_t)i * g_views.klen, sizeof k); nvn_hm_del(&g_views, &k);
+            defer_obj_unref(CFBridgingRelease(e->view)); free(e); again = 1; break; } }
+    pthread_mutex_unlock(&g_rmu);
+}
 static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     if (g_tpool_n && tid - g_tex_ns >= g_tpool_n) { if (!g_stat_tex_oob++) MLOG("texture ID %d outside the pool (pool capacity %d) treated as an empty slot: reads 0", tid - g_tex_ns, g_tpool_n); return nil; }
     if (tid < 0 || tid >= g_ntreg || !g_treg[tid].ok) { RED_ONCE(10, "texture ID %d not registered", tid); return nil; }
@@ -212,10 +229,23 @@ static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
             tt = ns == 1 ? MTLTextureType2D : MTLTextureType2DArray;
         }
 #endif
-        if (tswz) v = [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)
-                                                 swizzle:MTLTextureSwizzleChannelsMake((MTLTextureSwizzle)esw[0], (MTLTextureSwizzle)esw[1], (MTLTextureSwizzle)esw[2], (MTLTextureSwizzle)esw[3])];
-        else v = [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)];
-        if (!v) { RED_ONCE(11, "cannot create texture view id %d", tid); v = base; }
+        view_key vk; memset(&vk, 0, sizeof vk); vk.base = (uint64_t)(uintptr_t)(__bridge void *)base; vk.pf = pf; vk.tt = (uint32_t)tt;
+        vk.l0 = (uint32_t)l0; vk.nl = (uint32_t)nl; vk.s0 = (uint32_t)s0; vk.ns = (uint32_t)ns; vk.tswz = (uint8_t)tswz; if (tswz) memcpy(vk.sw, esw, 4);
+        view_ent *ve = NULL;
+#ifndef DM_TEST_VIEW_NOCACHE   // negative control of t_stor only: every view made anew, as before
+        ve = nvn_hm_get(&g_views, &vk);
+#endif
+        if (ve) { v = (__bridge id<MTLTexture>)ve->view; ve->last = g_sub_serial; g_view_hits++; }
+        else {
+            if (tswz) v = [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)
+                                                     swizzle:MTLTextureSwizzleChannelsMake((MTLTextureSwizzle)esw[0], (MTLTextureSwizzle)esw[1], (MTLTextureSwizzle)esw[2], (MTLTextureSwizzle)esw[3])];
+            else v = [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)];
+            if (!v) { RED_ONCE(11, "cannot create texture view id %d", tid); v = base; }
+            else { g_view_made++;
+#ifndef DM_TEST_VIEW_NOCACHE
+                view_ent *ne = malloc(sizeof *ne); if (!ne) MDIE("texture view cache"); ne->view = (void *)CFBridgingRetain(v); ne->last = g_sub_serial; nvn_hm_put(&g_views, &vk, ne);
+#endif
+            } }
     }
     rp->view = (void *)CFBridgingRetain(v); rp->view_rid = v.gpuResourceID._impl; rp->view_ser = sg; rp->view_dirty = dg; rp->view_kind = kind;
     return v;

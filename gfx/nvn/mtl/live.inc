@@ -2,9 +2,10 @@
 // the texture objects' host copies are gfx/nvn/core/live.c, plan item 264)
 static void treg_drop_views(const uint64_t *serials, int n);
 static void blk_drop(uint64_t serial);   // a finalized compressed render target's auxiliary texture
+static void view_sweep(void);   // descriptors.inc
 static void fin_drain(void) {   // submit thread, at the start of a submission
     uint64_t due[64]; int n = 0;
-    tex_snap_reap(g_sub_serial); stor_sweep();
+    tex_snap_reap(g_sub_serial); stor_sweep(); view_sweep();
     pthread_mutex_lock(&g_fin_mu);
     for (int i = 0; i < g_nfin;) {
         if (!g_fin[i].due) g_fin[i].due = g_sub_serial + FIN_GRACE;

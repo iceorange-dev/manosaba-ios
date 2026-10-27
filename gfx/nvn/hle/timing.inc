@@ -44,10 +44,10 @@ void mtl_vis_state(int *open, uint64_t *folded);
 void mtl_counts(uint64_t out[13]);
 void mtl_pkg_age(uint64_t out[5]);
 void mtl_fbx_stats(uint64_t out[3]); void mtl_fbx_split_stats(uint64_t out[2]); void mtl_fbx_fetch_stats(uint64_t out[1]);
-void mtl_pp_stats(uint64_t out[9]);
+void mtl_pp_stats(uint64_t out[12]);
 __attribute__((weak)) void dm_gate_counts(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }   // host/hle/hle.c; the graphics unit tests link without it
 static void power_line(uint64_t frame) {
-    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[9]; static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
+    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12]; static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
     static int counts = -1; if (counts < 0) counts = getenv("DM_NVN_COUNTS") && strcmp(getenv("DM_NVN_COUNTS"), "0");
     task_power_info_v2_data_t pw; mach_msg_type_number_t n = TASK_POWER_INFO_V2_COUNT;
     if (task_info(mach_task_self(), TASK_POWER_INFO_V2, (task_info_t)&pw, &n) != KERN_SUCCESS) return;
@@ -76,10 +76,10 @@ static void power_line(uint64_t frame) {
         { uint64_t sw[3]; void nvn_syncwait_stats(uint64_t out[3]); nvn_syncwait_stats(sw);
           if (sw[0] > psw[0]) LOG("[nvn] sync waits up to frame %llu: %.2f a frame, %.2f of them on the newest submission still on the GPU, %.2f ms a frame waiting (plan item 177)",
                                   frame, (sw[0] - psw[0]) / nf, (sw[1] - psw[1]) / nf, (sw[2] - psw[2]) / 1e6 / nf); }
-        { uint64_t pr[9]; mtl_pp_stats(pr);   // the pipeline prediction (nvn_mtl.m pso_predict_rest) over the window, when it scanned
+        { uint64_t pr[12]; mtl_pp_stats(pr);   // the pipeline prediction (nvn_mtl.m pso_predict_rest) over the window, when it scanned
           if (pr[4] > ppr[4]) LOG("[nvn] pipeline prediction up to frame %llu: %llu scans (ended by commands %llu / keys %llu / time %llu), %llu pipelines kicked, %llu taken by draws, "
-                                  "%llu freed untaken, %llu refused with the table full, %llu in the table", frame, pr[4] - ppr[4], pr[5] - ppr[5], pr[6] - ppr[6], pr[7] - ppr[7],
-                                  pr[0] - ppr[0], pr[1] - ppr[1], pr[2] - ppr[2], pr[3] - ppr[3], pr[8]); }
+                                  "%llu freed untaken, %llu refused with the table full, %llu in the table; the submit thread waited %.1f ms on %llu and compiled %llu itself", frame, pr[4] - ppr[4], pr[5] - ppr[5], pr[6] - ppr[6], pr[7] - ppr[7],
+                                  pr[0] - ppr[0], pr[1] - ppr[1], pr[2] - ppr[2], pr[3] - ppr[3], pr[8], (pr[9] - ppr[9]) / 1e6, pr[10] - ppr[10], pr[11] - ppr[11]); }
         if (counts) { uint64_t c[13], g[4]; mtl_counts(c); dm_gate_counts(g);   // DM_NVN_COUNTS (plan items 42-45)
             LOG("[nvn] counts up to frame %llu, a frame: %.1f draws sample the levels and layers their own pass draws (%.1f after other draws of the Metal pass, %.1f of them after a barrier); "
                 "%.1f timestamp reports, %.2f submissions with two or more; %.1f ClearTexture; %.1f render passes without a draw; a second: %.0f counter reads, %.0f svcs",

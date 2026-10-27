@@ -287,7 +287,20 @@ static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t 
 #define PSO_PEND_MAX 768
 enum { PP_SCAN_OPS = 8192, PP_SCAN_KEYS = 64, PP_STALE_SUBMITS = 2 };
 #define PP_SCAN_NS 2000000ull
-static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t submit; int used, done; } g_pp[PSO_PEND_MAX];
+// The compiles run on at most PP_WORKERS threads, the oldest kick first, and a draw that needs a pipeline still waiting for a thread compiles it on
+// the submit thread at once instead of waiting behind the others (plan item 283; 4ppp44 cb21bec, MIT, written anew; each kick was a dispatch_async
+// of its own, as many compiles at once as the system gave threads, and a take waited for one not started). A guess not started is dropped as stale
+// as a finished one is
+enum { PP_WORKERS = 2 };   // DM_NVN_PP_WORKERS=<n> sets it (0: a thread for each kick and a take waits, as before)
+static int pp_workers(void) {
+    static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_PP_WORKERS"); v = e ? atoi(e) : PP_WORKERS; if (v < 0) v = 0; if (e) MLOG("DM_NVN_PP_WORKERS=%d: %s", v, v ? "pipeline guesses compile on that many threads" : "a thread for each guess, as before"); }
+#ifdef DM_TEST_PP_UNBOUNDED   // negative control of t_ppred only: a thread of its own for each kick, as before
+    v = 0;
+#endif
+    return v;
+}
+static struct { pso_key k; id<MTLRenderPipelineState> ps; MTLRenderPipelineDescriptor *d; uint64_t submit, seq; int used, done, running; } g_pp[PSO_PEND_MAX];
+static int g_pp_workers, g_pp_workers_max; static uint64_t g_pp_seq, g_pp_wait_ns, g_pp_waits, g_pp_self;
 static pthread_mutex_t g_pp_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pp_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken;   // Whether this submission has already been predicted (by submission serial); cumulative kicked / taken counts
 static uint64_t g_pp_freed, g_pp_full, g_pp_scans, g_pp_stop[3];   // guesses freed untaken, kicks refused with the table full, scans and the bound that ended them (commands, keys, time)
@@ -305,7 +318,7 @@ static int pp_scan_due(uint64_t sub) {   // a pipeline miss in submission sub: s
 }
 static void pso_pend_reclaim(uint64_t submit) {   // g_pp_mu held
 #ifndef DM_TEST_PP_NO_RECLAIM   // negative control of t_ppred only: the old table, a slot freed only by a take
-    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && g_pp[i].done && submit - g_pp[i].submit > PP_STALE_SUBMITS) { g_pp[i].ps = nil; g_pp[i].used = 0; g_pp_freed++; }
+    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && (g_pp[i].done || !g_pp[i].running) && submit - g_pp[i].submit > PP_STALE_SUBMITS) { g_pp[i].ps = nil; g_pp[i].d = nil; g_pp[i].used = 0; g_pp_freed++; }
 #else
     (void)submit;
 #endif
@@ -313,14 +326,16 @@ static void pso_pend_reclaim(uint64_t submit) {   // g_pp_mu held
 static int pso_pend_claim(const pso_key *k, uint64_t submit) {   // g_pp_mu held: a slot for k kicked in this submission, or -1 when k is there already or the table is full (counted)
     pso_pend_reclaim(submit);
     if (pso_pend_find(k) >= 0) return -1;
-    for (int i = 0; i < PSO_PEND_MAX; i++) if (!g_pp[i].used) { g_pp[i].k = *k; g_pp[i].ps = nil; g_pp[i].done = 0; g_pp[i].used = 1; g_pp[i].submit = submit; return i; }
+    for (int i = 0; i < PSO_PEND_MAX; i++) if (!g_pp[i].used) { g_pp[i].k = *k; g_pp[i].ps = nil; g_pp[i].d = nil; g_pp[i].done = g_pp[i].running = 0; g_pp[i].used = 1; g_pp[i].submit = submit; g_pp[i].seq = ++g_pp_seq; return i; }
     g_pp_full++; return -1;
 }
-void mtl_pp_stats(uint64_t out[9]) {   // power line (hle_nvn.c): kicked, taken, freed, refused full, scans, ended by commands / keys / time, in the table now
+void mtl_pp_stats(uint64_t out[12]) {   // power line (hle_nvn.c): kicked, taken, freed, refused full, scans, ended by commands / keys / time, in the table now; the submit thread's waits (ns, count) and own compiles
     pthread_mutex_lock(&g_pp_mu); int busy = 0; for (int i = 0; i < PSO_PEND_MAX; i++) busy += g_pp[i].used;
     out[0] = g_pp_kicked; out[1] = g_pp_taken; out[2] = g_pp_freed; out[3] = g_pp_full; out[4] = g_pp_scans; out[5] = g_pp_stop[0]; out[6] = g_pp_stop[1]; out[7] = g_pp_stop[2]; out[8] = (uint64_t)busy;
+    out[9] = g_pp_wait_ns; out[10] = g_pp_waits; out[11] = g_pp_self;
     pthread_mutex_unlock(&g_pp_mu);
 }
+static void pso_pend_worker(void);
 static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // Called by the submit thread: kick only if it is neither in the cache nor in the table
     if (hm_get_id(&g_pso, k)) return;
     pthread_mutex_lock(&g_pp_mu);
@@ -328,15 +343,42 @@ static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // C
     pthread_mutex_unlock(&g_pp_mu);
     if (slot < 0) return;
     MTLRenderPipelineDescriptor *d = pso_desc(k, vs, fs, nil, 0); g_pp_kicked++;
+    if (!pp_workers()) {
+    pthread_mutex_lock(&g_pp_mu); g_pp[slot].running = 1; g_pp_workers++; if (g_pp_workers > g_pp_workers_max) g_pp_workers_max = g_pp_workers; pthread_mutex_unlock(&g_pp_mu);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *e = nil; id<MTLRenderPipelineState> ps = [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
-        pthread_mutex_lock(&g_pp_mu); g_pp[slot].ps = ps; g_pp[slot].done = 1; pthread_cond_broadcast(&g_pp_cv); pthread_mutex_unlock(&g_pp_mu);
+        pthread_mutex_lock(&g_pp_mu); g_pp[slot].ps = ps; g_pp[slot].done = 1; g_pp_workers--; pthread_cond_broadcast(&g_pp_cv); pthread_mutex_unlock(&g_pp_mu);
     });
+    return; }
+    pthread_mutex_lock(&g_pp_mu);
+    g_pp[slot].d = d;
+    int start = g_pp_workers < pp_workers(); if (start) { g_pp_workers++; if (g_pp_workers > g_pp_workers_max) g_pp_workers_max = g_pp_workers; }
+    pthread_mutex_unlock(&g_pp_mu);
+    if (start) dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ pso_pend_worker(); });
 }
-static id<MTLRenderPipelineState> pso_pend_take(const pso_key *k) {   // Called by the submit thread: if it is in the table, wait for it to finish compiling and take it; otherwise return nil
+static void pso_pend_worker(void) {   // a compile thread: the oldest guess not started, until none is left
+    for (;;) { @autoreleasepool {
+        pthread_mutex_lock(&g_pp_mu);
+        int at = -1; for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !g_pp[i].running && !g_pp[i].done && g_pp[i].d && (at < 0 || g_pp[i].seq < g_pp[at].seq)) at = i;
+        if (at < 0) { g_pp_workers--; pthread_mutex_unlock(&g_pp_mu); return; }
+        MTLRenderPipelineDescriptor *d = g_pp[at].d; g_pp[at].d = nil; g_pp[at].running = 1;
+        pthread_mutex_unlock(&g_pp_mu);
+        NSError *e = nil; id<MTLRenderPipelineState> ps = [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
+        pthread_mutex_lock(&g_pp_mu); g_pp[at].ps = ps; g_pp[at].done = 1; pthread_cond_broadcast(&g_pp_cv); pthread_mutex_unlock(&g_pp_mu);
+    } }
+}
+static id<MTLRenderPipelineState> pso_pend_take(const pso_key *k) {   // Called by the submit thread: if it is in the table, take it (compiled here when no thread has started it, else waited for); otherwise return nil
     pthread_mutex_lock(&g_pp_mu);
     int at = pso_pend_find(k); id<MTLRenderPipelineState> ps = nil;
-    if (at >= 0) { while (!g_pp[at].done) pthread_cond_wait(&g_pp_cv, &g_pp_mu); ps = g_pp[at].ps; g_pp[at].ps = nil; g_pp[at].used = 0; }
+    if (pp_workers() && at >= 0 && !g_pp[at].running && !g_pp[at].done && g_pp[at].d) {   // not started: compiled here, the slot freed
+        MTLRenderPipelineDescriptor *d = g_pp[at].d; g_pp[at].d = nil; g_pp[at].used = 0; g_pp_self++;
+        pthread_mutex_unlock(&g_pp_mu);
+        NSError *e = nil; return [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
+    }
+    if (at >= 0) { uint64_t t0 = g_pp[at].done ? 0 : bp_now();
+        while (!g_pp[at].done) pthread_cond_wait(&g_pp_cv, &g_pp_mu);
+        if (t0) { g_pp_wait_ns += bp_now() - t0; g_pp_waits++; }
+        ps = g_pp[at].ps; g_pp[at].ps = nil; g_pp[at].used = 0; }
     pthread_mutex_unlock(&g_pp_mu);
     return ps;
 }
