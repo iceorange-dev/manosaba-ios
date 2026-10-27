@@ -288,11 +288,15 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 286 278's write-back without the GPU round trip on the game's thread: the targets up to 64 KiB copied to staging at the end of the
   submission that rendered them, so a fence wait only writes the staged bytes into storage (now 0.6-1 ms a write-back, the frame time's p95
   16.77 → 17.2 ms standing on Great Sky Island on the M5; a grass field's cut map would take one a frame).
-- 280 manosaba's trial peak (item 2 above; a save just before the first trial: `work/run/mano/save_before_trial1`, Load Game → the Auto page →
-  A1 of 2026-10-27 22:12, then R, fast-forward, to the trial): a census of which of the 124 targets share pool storage, then heaps for them (nxnative c484b13: 101
-  descriptions at one address, Luigi's Mansion 3 5,507 → 2,125 MiB of GPU memory; AnySwitch's heaps in any pool); the characters' pixels per
-  unit lowered (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100; the Switch's
-  `resources.assets` has the same 50 entries); depth / stencil that no pass keeps made memoryless.
+- 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
+  colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
+  1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
+  Load Game → the Auto page → A1 of 2026-10-27 22:12, then R, fast-forward; `work/scripts/mano_trial_dev.sh` runs it on the phone (the Air,
+  1920x1080: RSS 3240 MB and GPU 2949 MB at the peak). Left: the characters' pixels per unit lowered in the RomFS's `resources.assets` (PR #2's
+  `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100, the Switch's file has the same 50 entries; a 2930-row
+  target is drawn at most 1260 rows high on a phone), an asset change for the user to decide; the depth / stencil targets made memoryless, which
+  needs each pass's store decided at its begin (now at its end), as 264's Vulkan backend needs too. Heaps buy little: in the census the targets'
+  pools overlap in two pairs (9 MB).
 - 281 native resolution: done for manosaba in batch 109 (below). For other games the backend route stays: render targets of the screen's shape
   made at the screen's size while the game keeps its size (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's
   `render_scale` is 1.0, `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB).
@@ -629,3 +633,9 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   controls: R fast-forward on / off (Options → 文本快进模式 全部 for unread text), X the phone menu (save, load, options, help), Y the
   encyclopedia, B hides the text box; the investigation map takes UP to a location, LEFT / RIGHT between floors, A to go there; chapter 1's
   choices that end the game: the first option of the first two, the second of the ones at Noah's room and in the shower room.
+- [x] batch 114 · 280, part: a shared texture whose pool was finalized goes STOR_GONE_IDLE (16) submissions after its last holder left, instead of
+  STOR_IDLE (600; `mtl/textures.inc` stor_drop_range from mtl_pool_del). manosaba gives each render target of a trial's start a pool of its own and
+  finalizes both together; those entries held the peak up: on the Mac (`DM_TEST_MEM_LIMIT_MB=3600`'s steps) 3572 MB of footprint or more → 3216-3344
+  MB, GPU allocated 3927 → 2338 MB in the memory line (sharing off altogether: 2955 MB of footprint, so the rest the game holds). A texture ID used
+  within the window, or a new object at that storage, still finds it, and holding it makes it live again. `DM_NVN_RT_CENSUS=1` (the render targets
+  of recorded commands by pool: Metal bytes, the union of their guest ranges, overlaps). `t_stor` +3 (-DDM_TEST_STOR_KEEP_GONE fails 1).

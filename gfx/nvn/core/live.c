@@ -70,4 +70,10 @@ void tex_snap_reap(uint64_t now) {
     if (!g_snap_old) g_snap_old_tail = &g_snap_old;
     pthread_mutex_unlock(&g_snap_mu);
 }
+int tex_snap_copy(tex_t *out, int cap) {   // the live copies into out (at most cap), for a census; how many there are
+    pthread_mutex_lock(&g_snap_mu); int n = 0;
+    for (int b = 0; b < SNAP_BUCKETS; b++) for (snap_t *e = g_snap[b]; e; e = e->next) { if (n < cap) out[n] = e->t; n++; }
+    pthread_mutex_unlock(&g_snap_mu);
+    return n;
+}
 uint64_t mtl_tex_snap_count(void) { pthread_mutex_lock(&g_snap_mu); uint64_t n = g_snap_live; pthread_mutex_unlock(&g_snap_mu); return n; }

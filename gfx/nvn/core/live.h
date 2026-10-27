@@ -29,3 +29,4 @@ const tex_t *mtl_tex_snap(const tex_t *t);         // The host copy of a texture
 void tex_snap_retire(uint64_t serial, uint64_t due); // The texture was released: its copy is freed at submission index due
 void tex_snap_reap(uint64_t now);                   // Free the copies due by submission index now
 uint64_t mtl_tex_snap_count(void);
+int tex_snap_copy(tex_t *out, int cap);             // The live copies into out (at most cap) for a census; how many there are

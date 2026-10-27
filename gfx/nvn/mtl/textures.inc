@@ -41,11 +41,15 @@ static int ser_unaffected(uint64_t from, uint64_t to, uint64_t serial) {   // 1:
 // of its reference only (defer_obj_unref, the texture stays resident for the others); an entry nobody holds is kept STOR_IDLE submissions (objects
 // re-initialized at the same storage every frame take it back) and then retired. DM_NVN_TEX_SHARE=0: one texture per serial
 typedef struct { uint64_t mem, size; uint32_t w, h, d, levels, target, samples, fmt, pad; } stor_key;   // 48 bytes, no padding left uninitialized
-typedef struct { stor_key k; void *tex; uint64_t *ser; int nser, cap; uint64_t idle_fence; } stor_ent;   // tex: CFBridgingRetain'd
+typedef struct { stor_key k; void *tex; uint64_t *ser; int nser, cap; uint64_t idle_fence, gone_fence; } stor_ent;   // tex: CFBridgingRetain'd; gone_fence: its pool was finalized then (0: alive)
 static nvn_hmap g_stor = {.klen = sizeof(stor_key)}, g_stor_obj = {.klen = 8};   // key → entry; texture → entry (under g_smu)
 static stor_ent **g_stor_list; static int g_nstor, g_stor_cap;
 static uint64_t g_stor_shared, g_stor_entries, g_stor_swept, g_stor_usage_miss;
-enum { STOR_IDLE = 600 };
+// An entry whose pool was finalized (stor_drop_range, from mtl_pool_del) is kept only STOR_GONE_IDLE submissions once nobody holds it (plan item 280:
+// manosaba gives each render target of a trial's start a pool of its own and finalizes both when it lets the target go; the entries kept for
+// STOR_IDLE held about 650 MB more at the trial's peak on the Mac, 3.6 GB of footprint against 3.0 with sharing off). A texture ID used just
+// after its release, or a new object at the same storage, still finds it within that window; a new holder makes it live again
+enum { STOR_IDLE = 600, STOR_GONE_IDLE = 16 };
 static int stor_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_TEX_SHARE"); v = !(e && !strcmp(e, "0")); if (!v) MLOG("DM_NVN_TEX_SHARE=0: one texture per serial"); } return v; }
 static int stor_drop_holder_locked(id o, uint64_t ser) {   // 1: o belongs to the table (the caller only unrefs it)
     uint64_t ok = (uint64_t)(uintptr_t)(__bridge void *)o; stor_ent *e = nvn_hm_get(&g_stor_obj, &ok); if (!e) return 0;
@@ -55,6 +59,7 @@ static int stor_drop_holder_locked(id o, uint64_t ser) {   // 1: o belongs to th
 }
 static void stor_add_holder_locked(id o, uint64_t ser) {
     uint64_t ok = (uint64_t)(uintptr_t)(__bridge void *)o; stor_ent *e = nvn_hm_get(&g_stor_obj, &ok); if (!e) return;
+    e->gone_fence = 0;   // held again: its storage is in use
     for (int i = 0; i < e->nser; i++) if (e->ser[i] == ser) return;
     if (e->nser == e->cap) { e->cap = e->cap ? e->cap * 2 : 4; e->ser = realloc(e->ser, (size_t)e->cap * sizeof *e->ser); if (!e->ser) MDIE("storage holder list"); }
     e->ser[e->nser++] = ser;
@@ -67,9 +72,18 @@ static void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); id old = hm_get
 static void stor_sweep(void) {   // fin_drain: entries nobody has held for STOR_IDLE submissions are retired
     pthread_mutex_lock(&g_smu);
     for (int i = 0; i < g_nstor;) { stor_ent *e = g_stor_list[i];
-        if (e->nser || e->idle_fence + STOR_IDLE > g_fence) { i++; continue; }
+        uint64_t since = e->gone_fence > e->idle_fence ? e->gone_fence : e->idle_fence;
+#ifdef DM_TEST_STOR_KEEP_GONE   // negative control of t_stor only: an entry of a finalized pool kept STOR_IDLE submissions, as before
+        since = e->idle_fence; e->gone_fence = 0;
+#endif
+        if (e->nser || (e->gone_fence ? since + STOR_GONE_IDLE : e->idle_fence + STOR_IDLE) > g_fence) { i++; continue; }
         uint64_t ok = (uint64_t)(uintptr_t)e->tex; nvn_hm_del(&g_stor_obj, &ok); nvn_hm_del(&g_stor, &e->k);
         defer_obj_release(CFBridgingRelease(e->tex)); free(e->ser); free(e); g_stor_list[i] = g_stor_list[--g_nstor]; g_stor_swept++; }
+    pthread_mutex_unlock(&g_smu);
+}
+static void stor_drop_range(uintptr_t lo, uintptr_t hi) {   // mtl_pool_del: the entries on a finalized pool's memory
+    pthread_mutex_lock(&g_smu);
+    for (int i = 0; i < g_nstor; i++) { stor_ent *e = g_stor_list[i]; if (e->k.mem >= lo && e->k.mem < hi && !e->gone_fence) e->gone_fence = g_fence ? g_fence : 1; }
     pthread_mutex_unlock(&g_smu);
 }
 // Host record of a packaged texture: the current MTLTexture, the upload stamp, and the global write generation at the last check

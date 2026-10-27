@@ -241,6 +241,7 @@ void mtl_pool_add(const void *mem, uint64_t size) { @autoreleasepool {
 } }
 
 static void wb_drop_range(uintptr_t lo, uintptr_t hi);   // writeback.inc
+static void stor_drop_range(uintptr_t lo, uintptr_t hi);   // textures.inc
 void mtl_pool_del(const void *mem) { @autoreleasepool {
     g_reg_gen++;
     id<MTLBuffer> gone = nil; uintptr_t lo = 0, hi = 0;
@@ -248,7 +249,7 @@ void mtl_pool_del(const void *mem) { @autoreleasepool {
     for (int i = 0; i < g_npool; i++)
         if (g_pools[i].key == mem) { gone = g_pools[i].buf; lo = g_pools[i].lo; hi = g_pools[i].hi; [g_keep removeObject:gone]; g_pools[i] = g_pools[--g_npool]; pool_find_reset(&g_pfind); atomic_fetch_add(&g_pool_gen, 1); break; }
     pthread_mutex_unlock(&g_mu);
-    if (hi) wb_drop_range(lo, hi);   // its GPU write-back records go with it (writeback.inc)
+    if (hi) { wb_drop_range(lo, hi); stor_drop_range(lo, hi); }   // its GPU write-back records go with it (writeback.inc), its shared textures soon (textures.inc)
     defer_obj_release(gone);   // retire: release after the submissions that used it complete, and remove from the residency set (it used to be only removed from g_keep - the residency set holds it strongly, so the zero-copy buffer object was never destroyed)
 } }
 

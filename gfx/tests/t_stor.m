@@ -2,7 +2,9 @@
 // and format get one MTLTexture, so what is rendered through one is sampled through the other; another format or a CPU-filled texture keeps its own.
 // The first object's release leaves the texture resident for the second (validation layer: no fault); objects re-initialized at the storage within
 // STOR_IDLE submissions after the last holder left get the texture back with its contents; after that it is retired.
-// Negative control: DM_NVN_TEX_SHARE=0 fails the checks marked so.
+// An entry whose pool was finalized goes STOR_GONE_IDLE submissions after its last holder left (plan item 280); an object made there within that window
+// takes it back and keeps it.
+// Negative control: DM_NVN_TEX_SHARE=0 fails the checks marked so; an entry of a finalized pool kept STOR_IDLE (-DDM_TEST_STOR_KEEP_GONE): 1 fails.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -86,5 +88,21 @@ int main(void) { @autoreleasepool {
       int due_ok = 0; pthread_mutex_lock(&g_fin_mu); for (int i = 0; i < g_nfin; i++) if (g_fin[i].serial == tg.serial) due_ok = g_fin[i].due >= g_sub_serial + RECREATE_GRACE - 2; pthread_mutex_unlock(&g_fin_mu);
       EXPECT("... released again only RECREATE_GRACE submissions later", 1, due_ok);
       (void)v; }
+    // 7. Plan item 280: an entry whose pool was finalized is retired STOR_GONE_IDLE submissions after nobody holds it (manosaba's trial: a pool per
+    //    render target, both finalized together); an object made at that storage within the window still gets the texture with its contents
+    if (on) { uint8_t *m2; if (posix_memalign((void **)&m2, getpagesize(), 1 << 20)) abort(); memset(m2, 0, 1 << 20); mtl_pool_add(m2, 1 << 20);
+      static pool_t p2; p2 = g_gpu_pool; p2.mem = m2;
+      tex_t g = tex_at(0, NVN_FORMAT_RGBA8, &p2); g.mem = m2 + 0x1000; render_clear(&g, 1, 1, 0); release(&g);
+      mtl_pool_del(m2); uint64_t sw1 = g_stor_swept;
+      for (int i = 0; i < STOR_GONE_IDLE + 2; i++) { chain e = {g_cm, 0}; memset(g_cm, 0, 64); submit(&e); }
+      EXPECT("280: its pool finalized, nobody holding it: retired within STOR_GONE_IDLE submissions [-DDM_TEST_STOR_KEEP_GONE]", 1, g_stor_swept > sw1);
+      uint8_t *m3; if (posix_memalign((void **)&m3, getpagesize(), 1 << 20)) abort(); memset(m3, 0, 1 << 20); mtl_pool_add(m3, 1 << 20);
+      static pool_t p3; p3 = g_gpu_pool; p3.mem = m3;
+      tex_t h = tex_at(0, NVN_FORMAT_RGBA8, &p3); h.mem = m3 + 0x1000; render_clear(&h, 0, 1, 1); id<MTLTexture> th = tex_mtl(&h); release(&h);
+      mtl_pool_del(m3); mtl_pool_add(m3, 1 << 20);   // finalized, and a pool made again on that memory
+      tex_t j = tex_at(0, NVN_FORMAT_RGBA8, &p3); j.mem = m3 + 0x1000;
+      EXPECT("280: ... an object at that storage within the window: the same texture", 1, tex_mtl(&j) == th);
+      for (int i = 0; i < STOR_GONE_IDLE + 2; i++) { chain e = {g_cm, 0}; memset(g_cm, 0, 64); submit(&e); }
+      EXPECT("280: ... held again, kept past the window, with its contents (cyan)", 0xffffff00, pixel(&j)); }
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
 } }

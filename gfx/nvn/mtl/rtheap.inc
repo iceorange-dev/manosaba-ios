@@ -204,6 +204,43 @@ static void res_census(unsigned long long frame, unsigned long long rss_mb) {
              nl[0], bl[0] >> 20, nl[1], bl[1] >> 20, nr[0], br[0] >> 20, nr[1], br[1] >> 20);
     }
 }
+// DM_NVN_RT_CENSUS=1 (plan item 280): at the memory line, the render targets of recorded commands (the snapshots, core/live.c) by pool: how many,
+// their Metal bytes (each MTLTexture once: storage-shared ones are one), the union of their guest ranges against the sum, and how many overlap
+// another one; the eight pools with the most Metal bytes
+typedef struct { const pool_t *pool; int64_t off; uint32_t size; int depth; __unsafe_unretained id<MTLTexture> m; } rtc_ent;
+static int rtc_by_pool(const void *x, const void *y) { const rtc_ent *a = x, *b = y; return a->pool != b->pool ? (a->pool < b->pool ? -1 : 1) : (a->off > b->off) - (a->off < b->off); }
+static int rtc_by_obj(const void *x, const void *y) { const rtc_ent *a = x, *b = y; return ((uintptr_t)(__bridge void *)a->m > (uintptr_t)(__bridge void *)b->m) - ((uintptr_t)(__bridge void *)a->m < (uintptr_t)(__bridge void *)b->m); }
+static void rt_census(unsigned long long frame) { @autoreleasepool {
+    int cap = 65536; tex_t *ts = malloc(sizeof *ts * (size_t)cap); rtc_ent *e = malloc(sizeof *e * (size_t)cap); if (!ts || !e) { free(ts); free(e); return; }
+    int nt = tex_snap_copy(ts, cap); if (nt > cap) nt = cap;
+    int n = 0;
+    for (int i = 0; i < nt; i++) { const tex_t *t = &ts[i]; if (!t->pool || t->off < 0 || !t->size) continue;
+        __unsafe_unretained id o = serial_get(t->serial); if (!o || ![o conformsToProtocol:@protocol(MTLTexture)]) continue;
+        id<MTLTexture> m = o; if (!(m.usage & MTLTextureUsageRenderTarget)) continue;
+        e[n++] = (rtc_ent){t->pool, t->off, t->size, pf_is_depth_stencil(m.pixelFormat), m}; }
+    qsort(e, (size_t)n, sizeof *e, rtc_by_pool);
+    typedef struct { const pool_t *pool; int n, over, nd; uint64_t mtl, md, guest, uni; } rtc_pool;
+    rtc_pool *pp = calloc((size_t)n + 1, sizeof *pp); int np = 0; uint64_t all = 0, alld = 0; int uniq = 0;
+    for (int i = 0; i < n;) {
+        int j = i; while (j < n && e[j].pool == e[i].pool) j++;
+        rtc_pool *q = &pp[np++]; q->pool = e[i].pool;
+        int64_t hi = -1, lo = 0;
+        for (int k = i; k < j; k++) { q->n++; q->guest += e[k].size;
+            int64_t a = e[k].off, b = e[k].off + e[k].size;
+            if (a < hi) { q->over++; if (b > hi) { q->uni += (uint64_t)(b - hi); hi = b; } }
+            else { q->uni += (uint64_t)(b - a); lo = a; hi = b; } }
+        (void)lo;
+        qsort(e + i, (size_t)(j - i), sizeof *e, rtc_by_obj);
+        for (int k = i; k < j; k++) if (k == i || e[k].m != e[k - 1].m) { uint64_t b = (uint64_t)e[k].m.allocatedSize; q->mtl += b; uniq++; if (e[k].depth) { q->md += b; q->nd++; } }
+        all += q->mtl; alld += q->md; i = j;
+    }
+    MLOG("render-target census at frame %llu: %d targets of recorded commands, %d Metal textures %.0f MB (depth / stencil %.0f MB), in %d pools", frame, n, uniq, all / 1048576.0, alld / 1048576.0, np);
+    for (int r = 0; r < 8 && r < np; r++) { int best = r; for (int k = r + 1; k < np; k++) if (pp[k].mtl > pp[best].mtl) best = k; rtc_pool t = pp[r]; pp[r] = pp[best]; pp[best] = t;
+        const rtc_pool *q = &pp[r];
+        MLOG("  pool %p flags %#x %.1f MB: %d targets (%d depth / stencil), Metal %.1f MB (depth / stencil %.1f), guest %.1f MB, their union %.1f MB, %d overlap one before",
+             (const void *)q->pool, q->pool->flags, q->pool->size / 1048576.0, q->n, q->nd, q->mtl / 1048576.0, q->md / 1048576.0, q->guest / 1048576.0, q->uni / 1048576.0, q->over); }
+    free(pp); free(e); free(ts);
+} }
 void dm_alias_stat(size_t *mapped_mb, size_t *host_mb); int dm_mem_low(void);
 // Metal objects in the residency set by kind, for the low-memory watch (memstat.m; any thread): private render-target textures, other private textures,
 // shared buffers wrapping guest memory pools (no copy: their memory is the guest's), other buffers (upload staging and the like); count and MB each,
@@ -237,6 +274,7 @@ void mtl_cmd_alloc_bytes(uint64_t out[3]) {
 }
 void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_ok, unsigned long long heap_mb, unsigned long long heap_free_mb, unsigned long long heap_maxblk_kb) {
     if (g_res_census > 0) res_census(frame, rss_mb);
+    { static int rc = -1; if (rc < 0) rc = getenv("DM_NVN_RT_CENSUS") && strcmp(getenv("DM_NVN_RT_CENSUS"), "0"); if (rc) rt_census(frame); }
     static unsigned long long last_rss, last_gpu, last_frame, last_hfree, last_hmax; static int lines; unsigned long long gpu = (unsigned long long)(g_dev.currentAllocatedSize >> 20);
     unsigned long long dr = rss_mb > last_rss ? rss_mb - last_rss : last_rss - rss_mb, dg = gpu > last_gpu ? gpu - last_gpu : last_gpu - gpu;
     unsigned long long dh = heap_free_mb > last_hfree ? heap_free_mb - last_hfree : last_hfree - heap_free_mb, hmax_mb = heap_maxblk_kb >> 10, dm = hmax_mb > last_hmax ? hmax_mb - last_hmax : last_hmax - hmax_mb;
