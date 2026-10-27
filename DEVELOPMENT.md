@@ -263,10 +263,10 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   Island the game's own controller picks interval 2 within the first minute (thermal state 0-1; the 17 Pro went back to 1 within 0.1-0.7 s each
   time), the GPU's time then follows its lowered clock (25-28 ms), and from thermal state serious, 1-2.5 minutes in with the phone on USB power,
   our hold keeps 30 (135). Sustained after the first minute 30 fps in every variant: the native and a 720-row drawable, a 960x540 scene (37 fps
-  for its first 25 s, GPU 13.6 ms), `DM_PRESENT_INTERVAL=display` (38.7 fps for 25 s). Next: runs from a cool phone (longer rests, off USB
-  power). What holds 60 for the first minutes: the option hold60 (batch 118) keeps the controller at 1, about 60 fps until thermal state serious
+  for its first 25 s, GPU 13.6 ms), `DM_PRESENT_INTERVAL=display` (38.7 fps for 25 s). The phone has a cooler on it (the user, 2026-10-28: it
+  cannot be made cooler), so these runs are the cool case. What holds 60 for the first minutes: the option hold60 (batch 118) keeps the controller at 1, about 60 fps until thermal state serious
   (720 rows: p50 17.7-18 ms, p95 25 ms, GPU 14.6-15.4 ms, for a minute and more on USB power; 540 rows: 16.6-16.9 ms for 35 s), then our hold
-  and the GPU's lowered clock (27 ms) give 30. Left: those runs off USB power, from a cool phone.
+  and the GPU's lowered clock (27 ms) give 30. Left: a run off USB power (the runs here were on it).
 - 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off, batch 119 the memcmp
   call of 8-byte hash keys (`nvn_hmap.h`, one word). The translation thread standing on Great Sky Island (M5, a Time Profiler run of batch 120):
   render encoders made 20.5 % (the driver's, one a pass: fewer passes are 219's), dispatches 4.3 %; encode_args 15.5 %, of it the uniform updates'
