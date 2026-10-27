@@ -75,7 +75,8 @@ static int tex_membacked(const tex_t *t) {
 // block by block). Each GPU write of such a texture is noted (storage protected, a reference kept until its serial is released); an invalidate over
 // its storage waits for the GPU and writes every level and layer back in the NVN layout, unless the CPU wrote that memory since (its bytes are newer)
 // or a later rendering of the same memory supersedes it (t_wb)
-typedef struct { tex_t t; uint64_t stamp; void *obj; uint64_t sub, idle_stamp, fence; uint8_t *snap; uint32_t snap_n; } wb_ent;   // sub: submission of the last GPU write; idle_stamp: written back after it (DM_NVN_WB_IDLE), 0 = not yet; fence: the one its submission completes with; snap: its own bytes then
+typedef struct { tex_t t; uint64_t stamp; void *obj; uint64_t sub, idle_stamp, fence, stage_fence; uint8_t *snap; uint32_t snap_n; void *stage; } wb_ent;   // sub: submission of the last GPU write; idle_stamp: written back after it (DM_NVN_WB_IDLE), 0 = not yet; fence: the one its submission completes with; snap: its own bytes then; stage / stage_fence: its levels copied at the end of the submission of that fence (286, CFBridgingRetain'd)
+enum { WB_FENCE_MAX = 64 * 1024 };   // 278's targets: up to 64 KiB
 static nvn_hmap g_wb = {.klen = 8}; static pthread_mutex_t g_wb_mu = PTHREAD_MUTEX_INITIALIZER; static uint64_t g_wb_done, g_wb_skip_cpu, g_wb_bytes, g_wb_exact, g_wb_snap_total;
 // The texture's own bytes when the GPU write is noted (plan item 203; MacNativeGames 8a29e0a and PR #188, MIT, written anew): the dirty tracking is
 // per 16 KiB page, and a page the CPU wrote often holds other data next to the texture (Tears of the Kingdom's 260x260 terrain normal maps: the
@@ -93,9 +94,16 @@ static void wb_snap(wb_ent *e) {   // g_wb_mu held
 #endif
     free(e->snap); g_wb_snap_total -= e->snap_n; e->snap = NULL; e->snap_n = 0;
 }
-static void wb_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_unref((__bridge id)e->obj); CFRelease(e->obj); }
+static void wb_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_unref((__bridge id)e->obj); CFRelease(e->obj); } if (e->stage) defer_obj_release(CFBridgingRelease(e->stage));
     if (e->snap) { pthread_mutex_lock(&g_wb_mu); g_wb_snap_total -= e->snap_n; pthread_mutex_unlock(&g_wb_mu); free(e->snap); } free(e); }
 static id<MTLTexture> tex_mtl(const tex_t *ct);
+// Plan item 286: 278's write-back after a fence wait waited for a copy on the GPU on the game's thread (0.6-1 ms each). The submission that renders such
+// a target now copies it to a buffer of its own at its end (wb_stage_encode, from mtl_sub_commit), so the write-back after the wait only puts those
+// bytes into the storage, when the copy is of the target's newest rendering; otherwise it copies on the GPU as before
+static int wb_fence_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_WB_FENCE"); on = !(e && !strcmp(e, "0")); if (!on) MLOG("DM_NVN_WB_FENCE=0: GPU results written back on an invalidate only"); } return on; }
+static int wb_fence_kind(const tex_t *t) { uint32_t upf; int ubpp, r_, s_; return t->size <= WB_FENCE_MAX && t->d.target != 2 && t->d.samples <= 1 && !bc_unpack(t->d.format, &upf, &ubpp) && !bc1_astc(t->d.format, &r_, &s_); }
+static uint64_t g_wb_stage_ser[64]; static int g_wb_stage_n; static uint64_t g_wb_staged, g_wb_stage_used;
+static unsigned wb_layers(const tex_t *t); static void wb_level_size(const tex_t *t, unsigned level, uint32_t *lw, uint32_t *lh, size_t *lp, size_t *lr);
 static void wb_note(const tex_t *t) {   // submit thread: the GPU writes t in this submission (every caller makes its MTLTexture right after)
     if (!t->mem || !t->size) return;
     id o = serial_get(t->serial); if (!o) { tex_mtl(t); o = serial_get(t->serial); } if (!o) return;
@@ -106,6 +114,42 @@ static void wb_note(const tex_t *t) {   // submit thread: the GPU writes t in th
     else if (g_wb.n < 8192) { e = calloc(1, sizeof *e); if (!e) MDIE("write-back record"); e->t = *t; e->stamp = stamp; e->sub = g_sub_serial; e->fence = g_fence + 1; e->obj = (void *)CFBridgingRetain(o); wb_snap(e); nvn_hm_put(&g_wb, &k, e); }
     else RED_ONCE(87, "GPU write-back table full (8192 textures): texture %llu is not written back on an invalidate", (unsigned long long)t->serial);
     pthread_mutex_unlock(&g_wb_mu);
+#ifndef DM_TEST_WB_STAGE_OFF   // negative control of t_wb only: no copy at the submission's end, the write-back copies on the GPU as before
+    if (wb_fence_on() && wb_fence_kind(t)) { int have = 0; for (int i = 0; i < g_wb_stage_n && !have; i++) have = g_wb_stage_ser[i] == k;
+        if (!have && g_wb_stage_n < 64) g_wb_stage_ser[g_wb_stage_n++] = k; }
+#endif
+}
+static void wb_stage_encode(void) {   // mtl_sub_commit, after the last pass: this submission's targets of 278 copied to staging (286)
+    int n = g_wb_stage_n; g_wb_stage_n = 0;
+    for (int i = 0; i < n; i++) {
+        uint64_t k = g_wb_stage_ser[i];
+        pthread_mutex_lock(&g_wb_mu); wb_ent *e = nvn_hm_get(&g_wb, &k); tex_t t = e ? e->t : (tex_t){0}; uint64_t f = e ? e->fence : 0; id o = e && e->obj ? (__bridge id)e->obj : nil; pthread_mutex_unlock(&g_wb_mu);
+        if (!e || !o || f != g_fence + 1) continue;   // written back meanwhile, or its newest rendering is not this submission's
+        id<MTLTexture> mt = [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->tex : o; if (!mt) continue;
+        size_t len = 0; for (unsigned l = 0; l < (t.d.levels ? t.d.levels : 1); l++) for (unsigned y = 0; y < wb_layers(&t); y++) { uint32_t lw, lh; size_t lp, lr; wb_level_size(&t, l, &lw, &lh, &lp, &lr); len += lp * lr; }
+        id<MTLBuffer> b = len ? [g_dev newBufferWithLength:len options:MTLResourceStorageModeShared] : nil; if (!b) continue;
+        res_add(b);
+        BENC bl = blit(); size_t off = 0;
+        for (unsigned l = 0; l < (t.d.levels ? t.d.levels : 1); l++) for (unsigned y = 0; y < wb_layers(&t); y++) { uint32_t lw, lh; size_t lp, lr; wb_level_size(&t, l, &lw, &lh, &lp, &lr);
+            [bl copyFromTexture:mt sourceSlice:y sourceLevel:l sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(lw, lh, 1) toBuffer:b destinationOffset:off destinationBytesPerRow:lp destinationBytesPerImage:lp * lr];
+            off += lp * lr; }
+        void *old = NULL;
+        pthread_mutex_lock(&g_wb_mu); wb_ent *e2 = nvn_hm_get(&g_wb, &k);
+        if (e2 == e && e->fence == f) { old = e->stage; e->stage = (void *)CFBridgingRetain(b); e->stage_fence = f; g_wb_staged++; b = nil; }
+        pthread_mutex_unlock(&g_wb_mu);
+        if (old) defer_obj_release(CFBridgingRelease(old));
+        if (b) defer_obj_release(b);   // the entry went meanwhile
+    }
+}
+static int wb_from_stage(wb_ent *e) {   // 286: the staged copy of the newest rendering put into the storage; 0: none, or it does not fit
+    if (!e->stage || e->stage_fence != e->fence) return 0;
+    id<MTLBuffer> b = (__bridge id<MTLBuffer>)e->stage; const tex_t *u = &e->t; size_t off = 0;
+    dm_guest_write_prepare(u->mem, u->size);
+    for (unsigned l = 0; l < (u->d.levels ? u->d.levels : 1); l++) for (unsigned y = 0; y < wb_layers(u); y++) { uint32_t lw, lh; size_t lp, lr; wb_level_size(u, l, &lw, &lh, &lp, &lr);
+        if (off + lp * lr > b.length || nvn_swizzle(&u->d, l, y, (const uint8_t *)b.contents + off, lp, u->mem)) return 0;
+        g_wb_bytes += lp * lr; off += lp * lr; }
+    g_wb_stage_used++;
+    return 1;
 }
 // DM_NVN_TEXCENSUS (item 94): textures the GPU writes in CPU-visible pools (exactly the write-back table's), each new shape logged; then, every 300
 // submissions, those whose storage the CPU wrote after the GPU did (a tile moved into a rendered slot), and at a CPU-filled texture's first use one
@@ -264,7 +308,7 @@ static void wb_textures(const tex_t *const *t, __unsafe_unretained id<MTLTexture
 }
 // The entries taken from the table written back (the GPU work that wrote them has completed): of several renderings of one memory only the newest,
 // none whose storage the CPU wrote since (its bytes are newer), formats the deswizzle cannot write skipped; the entries freed. t0..t1: the wait before
-static void wb_write_list(wb_ent **list, int nl, const char *why, uint64_t t0, uint64_t t1) {
+static void wb_write_list(wb_ent **list, int nl, const char *why, uint64_t t0, uint64_t t1, int staged) {   // staged: written from 286's copies where there are
     int fresh[512];   // decided for all before anything is written (a write-back writes the pages); of several renderings of one memory only the newest
     for (int i = 0; i < nl; i++) { fresh[i] = !nvn_dirty_since(list[i]->t.mem, list[i]->t.size, list[i]->stamp);
         if (!fresh[i] && list[i]->snap && list[i]->snap_n == list[i]->t.size && !memcmp(list[i]->snap, list[i]->t.mem, list[i]->snap_n)) {   // its pages written, its bytes not
@@ -280,6 +324,8 @@ static void wb_write_list(wb_ent **list, int nl, const char *why, uint64_t t0, u
         int a1r_, a1s_; if (!mt || bc_unpack(t->d.format, &upf, &ubpp) || bc1_astc(t->d.format, &a1r_, &a1s_) || t->d.target == 2 || t->d.samples > 1) { RED_ONCE(88, "GPU write-back: texture format %#x target %d not supported (first case)", t->d.format, t->d.target); wb_free(e); continue; }
         wt[nw] = t; wm[nw] = mt; we[nw++] = e;
     }
+    int ns = 0; wb_ent **se = staged ? malloc(sizeof *se * (size_t)(nw ? nw : 1)) : NULL;
+    if (staged) for (int i = 0; i < nw;) { if (wb_from_stage(we[i])) { se[ns++] = we[i]; we[i] = we[--nw]; wt[i] = wt[nw]; wm[i] = wm[nw]; } else i++; }   // those off the GPU list
     uint64_t cbs = g_wb_cbs; wb_textures(wt, wm, nw, wok); uint64_t t2 = bp_now();
     static _Atomic uint64_t slow; if (t2 - t0 > 20000000ull) { uint64_t k = atomic_fetch_add(&slow, 1) + 1;   // as DavidZande/MacNativeGames 8c46687's [invalidate] line
         if (k <= 8 || !(k % 100)) MLOG("write-back %s %.1f ms: waiting for the GPU %.1f ms, %d of %d textures written back with %llu command buffers in %.1f ms (%llu such)", why, (t2 - t0) / 1e6,
@@ -292,7 +338,9 @@ static void wb_write_list(wb_ent **list, int nl, const char *why, uint64_t t0, u
                                             t->d.width, t->d.height, t->d.format, (unsigned long long)d, g_wb_bytes / 1048576.0, (unsigned long long)g_wb_skip_cpu);
         wb_free(e);
     }
-    free(wt); free(wm); free(we); free(wok);
+    for (int i = 0; i < ns; i++) { uint64_t d = ++g_wb_done; if (d <= 4 || !(d % 1000)) MLOG("GPU write-back %s: texture %llu %ux%u format %#x from the copy made in its submission (%llu so far)", why,
+        (unsigned long long)se[i]->t.serial, se[i]->t.d.width, se[i]->t.d.height, se[i]->t.d.format, (unsigned long long)d); wb_free(se[i]); }
+    free(se); free(wt); free(wm); free(we); free(wok);
 }
 void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { @autoreleasepool {   // hle_nvn.c nvnMemoryPoolInvalidateMappedRange (game thread)
     if (!p || !p->mem || !n) return;
@@ -306,29 +354,28 @@ void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { @autorelea
     pthread_mutex_unlock(&g_wb_mu);
     if (!nl) return;
     uint64_t t0 = bp_now(); mtl_finish_gpu(); uint64_t t1 = bp_now();
-    wb_write_list(list, nl, "on invalidate", t0, t1);
+    wb_write_list(list, nl, "on invalidate", t0, t1, 0);
 } }
 // After the game's own fence waits (plan item 278; MacNativeGames 1bffa28, MIT, written anew): on the console the GPU's bytes are in the pool once
 // the fence has passed, and a game may read a small target from the CPU with no invalidate: Tears of the Kingdom decides the cut reaction of grass
 // from a 128x128 RGBA8 target its grass pass renders into a CPU-visible pool every frame (MacNativeGames: no blades, no insects, the grass not cut
 // while the bytes stayed in the Metal texture). nvnSyncWait (signalled) and nvnQueueFinish write back the targets up to 64 KiB whose rendering has
 // completed; a later CPU write keeps its bytes as on an invalidate. Each new shape written back this way is logged. DM_NVN_WB_FENCE=0 turns it off.
-// Standing on Great Sky Island (M5, 2026-10-27) one wait in 18 writes back a 96x96 target, 0.6-1 ms on the game's thread for the GPU's round trip
-enum { WB_FENCE_MAX = 64 * 1024 };
+// Standing on Great Sky Island (M5, 2026-10-27) one wait in 18 writes back a 96x96 target: 0.6-1 ms on the game's thread for a copy on the GPU,
+// 0.043 ms from the copy its submission made (286)
 static uint64_t g_wb_fence_n;
 void mtl_wb_fence_done(void) { @autoreleasepool {   // hle_nvn.c, the game's thread
 #ifdef DM_TEST_WB_INVALIDATE_ONLY   // negative control of t_wb only: written back on an invalidate only, as before
     return;
 #endif
-    static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_WB_FENCE"); on = !(e && !strcmp(e, "0")); if (!on) MLOG("DM_NVN_WB_FENCE=0: GPU results written back on an invalidate only"); }
-    if (!on || !g_wb.n) return;
+    if (!wb_fence_on() || !g_wb.n) return;
     uint64_t done = mtl_done_fence();
     wb_ent *list[64]; int nl = 0;
     pthread_mutex_lock(&g_wb_mu);
     for (int again = 1; again && nl < 64;) { again = 0;   // a deletion shifts entries: scan again
         for (uint32_t i = 0; i < g_wb.cap && nl < 64; i++) { wb_ent *e = g_wb.vals ? g_wb.vals[i] : NULL;
             if (!e || e->t.size > WB_FENCE_MAX || !e->fence || e->fence > done) continue;
-            { uint32_t upf_; int ubpp_, r_, s_; if (e->t.d.target == 2 || e->t.d.samples > 1 || bc_unpack(e->t.d.format, &upf_, &ubpp_) || bc1_astc(e->t.d.format, &r_, &s_)) continue; }   // not written back anyway (an invalidate says so)
+            if (!wb_fence_kind(&e->t)) continue;   // not written back anyway (an invalidate says so)
             uint64_t k = e->t.serial; nvn_hm_del(&g_wb, &k); list[nl++] = e; again = 1; break; } }
     pthread_mutex_unlock(&g_wb_mu);
     if (!nl) return;
@@ -340,7 +387,7 @@ void mtl_wb_fence_done(void) { @autoreleasepool {   // hle_nvn.c, the game's thr
     pthread_mutex_unlock(&seen_mu);
     g_wb_fence_n += (uint64_t)nl;
     uint64_t t0 = bp_now();
-    wb_write_list(list, nl, "after a fence wait", t0, t0);
+    wb_write_list(list, nl, "after a fence wait", t0, t0, 1);
 } }
 // The GPU is about to write this texture: from now on its MTLTexture is the content. An upload of a CPU-filled texture carries on as that texture
 static void tex_gpu_write(const tex_t *t) {

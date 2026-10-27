@@ -285,9 +285,6 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 275 SyncWait woken from the queue's shared event (nxnative `post_early`: 0.15 ms a wait on an iPhone 17 Pro Max), once a frame here.
 - 276 131a: MacNativeGames found the controller (main+0x584300, called from main+0x58196c; 24 samples, 100 / 90 / 80 %; the scale leaves at
   main+0x5848a8 for renderer +0xccc; `TOTK_FIXED_RES` writes 1.0 there).
-- 286 278's write-back without the GPU round trip on the game's thread: the targets up to 64 KiB copied to staging at the end of the
-  submission that rendered them, so a fence wait only writes the staged bytes into storage (now 0.6-1 ms a write-back, the frame time's p95
-  16.77 → 17.2 ms standing on Great Sky Island on the M5; a grass field's cut map would take one a frame).
 - 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
   colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
   1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
@@ -639,3 +636,8 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   MB, GPU allocated 3927 → 2338 MB in the memory line (sharing off altogether: 2955 MB of footprint, so the rest the game holds). A texture ID used
   within the window, or a new object at that storage, still finds it, and holding it makes it live again. `DM_NVN_RT_CENSUS=1` (the render targets
   of recorded commands by pool: Metal bytes, the union of their guest ranges, overlaps). `t_stor` +3 (-DDM_TEST_STOR_KEEP_GONE fails 1).
+- [x] batch 115 · 286 278's write-back without a GPU round trip on the game's thread: the submission that renders such a target (up to 64 KiB, not
+  3D, multisampled or BC) copies it to a buffer of its own at its end (`mtl/writeback.inc` wb_stage_encode, from mtl_sub_commit), and the write-back
+  after a fence wait puts those bytes into the storage when they are of the newest rendering (else it copies on the GPU as before; an invalidate
+  still does). Standing on Great Sky Island (M5): 0.6-1 → 0.043 ms a write-back, all 400 from copies, one copy for each; the frame time's p95 17.2
+  → 16.8 ms, as before 278. `t_wb` +2 (-DDM_TEST_WB_STAGE_OFF fails 2).

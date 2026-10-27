@@ -13,6 +13,7 @@ static uint64_t gpu_budget_bytes(void) {
 static int gpu_budget_exceeded(uint64_t *cur, uint64_t *budget) { *budget = gpu_budget_bytes(); *cur = (uint64_t)g_dev.currentAllocatedSize; return *budget && *cur > *budget; }
 static void res_census(unsigned long long frame, unsigned long long rss_mb);
 static void up_retire(void);   // upload.inc
+static void wb_stage_encode(void);   // writeback.inc
 // Over the budget, part of the allocation can be objects already retired and staging that submissions still on the GPU hold, both released when
 // those complete (plan item 279; MacNativeGames 4de7b4e, MIT, written anew: Tears of the Kingdom stopped there while the world loaded, and on a
 // dive): the running work is let complete and what it held released, at most 2 s, ending early once nothing has completed for 20 ms with nothing
@@ -54,6 +55,7 @@ uint64_t mtl_sub_commit(void) {
     defer_fallback();   // Deferred merged pass: at the end of the submission there are still P draws not replayed (the normal path never gets here)
     upd_flush(); upd_sub_end();   // renamed uniform updates reach memory at the end of their submission
     rp_flush();
+    wb_stage_encode();   // 278's targets rendered in this submission, copied for the write-back after a fence wait (writeback.inc, 286)
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     up_flush();
     uint64_t fence = ++g_fence;
