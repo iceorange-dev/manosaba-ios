@@ -268,7 +268,9 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   time), the GPU's time then follows its lowered clock (25-28 ms), and from thermal state serious, 1-2.5 minutes in with the phone on USB power,
   our hold keeps 30 (135). Sustained after the first minute 30 fps in every variant: the native and a 720-row drawable, a 960x540 scene (37 fps
   for its first 25 s, GPU 13.6 ms), `DM_PRESENT_INTERVAL=display` (38.7 fps for 25 s). Next: runs from a cool phone (longer rests, off USB
-  power), and what holds 60 for the first minutes (960x540 with the game's controller kept at 1?).
+  power). What holds 60 for the first minutes: the option hold60 (batch 118) keeps the controller at 1, about 60 fps until thermal state serious
+  (720 rows: p50 17.7-18 ms, p95 25 ms, GPU 14.6-15.4 ms, for a minute and more on USB power; 540 rows: 16.6-16.9 ms for 35 s), then our hold
+  and the GPU's lowered clock (27 ms) give 30. Left: those runs off USB power, from a cool phone.
 - 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off; the translation
   thread standing on Great Sky Island (M5) is now about 24 % busy: render encoders made 19 % (the driver's, one a pass: fewer passes are 219's),
   encode_args 17 % (texture IDs 6 %), the uniform updates' private copies 7 % (copied whole from the range's previous copy, 225), dispatches
@@ -657,3 +659,9 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   [-] 273 measured on the iPhone Air (sustained, standing on Great Sky Island): 30 fps with the translation thread and without (frame p50 33.3
   / 33.5 ms, GPU 28.2 / 28.0 ms); the thread takes 2 ms of the game's submit and present (7.5 against 9.6 ms), and the GPU sets the rate, so
   the default stays on.
+- [x] batch 118 · 285, part: the option hold60 (`games/totk/rules.py`, off by default; with fps60): the frame-rate controller's raising branch
+  (0x2db214, b.gt) made a nop, so the interval comes down to 1 and stays there. The iPhone Air, a test build with it, standing on Great Sky
+  Island: about 60 fps for the first minute and more at 720 rows (p50 17.7-18 ms, p95 25 ms against the game's controller, which chose 2 within
+  the minute), 35 s at 540 rows, until thermal state serious, where the hot hold and the GPU's lowered clock (27 ms) give 30. Not a default:
+  its frames are less even than the game's 30 while the GPU cannot keep 60. Both products rebuilt (binaries the same; the old as `.prev285`),
+  `verify/regress.sh --fuzz` OK. `tools/tests/t_totk_options.py` (was t_totk_fixedres.py) +3 (T_HOLD60_ORIGINAL=1 fails 1).

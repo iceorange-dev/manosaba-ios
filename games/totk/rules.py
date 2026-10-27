@@ -9,6 +9,7 @@
 #   output    the swapchain and canvas size from the host page +24 / +32 (DM_OUTPUT_RES)
 #   aspect    the cameras' aspect ratio × the host page +40, for a wide picture (DM_ASPECT, the Mac's View → Wide Picture; CAVES)
 #   fixedres  the dynamic resolution held at 100 % (plan item 276): every tier of the game's controller scales by 1.0
+#   hold60    with fps60, the frame-rate controller's interval never raised again (plan item 285): it stays at 1 whatever the frame costs
 CUTS = {}
 OBS = {}
 PARAMS = {}
@@ -96,7 +97,13 @@ OPTIONS = {
         # update 0x58196c) predicts the next frame's cost from 24 frame-time samples and steps the scene through tiers of 100 / 90 / 80 %; it returns the
         # tier's scale as a float in the low word of x0 (bit 33: the tier did not change), which the caller makes the renderer's scale at +0xccc. Every
         # path leaves through one epilogue, where this one word moves the scale into the result: as 1.0 the controller still picks its tiers, each at
-        # 100 % (131a: two of four pass dumps on the iPhone were at 0.8). tools/tests/t_totk_fixedres.py runs the epilogue in Unicorn
+        # 100 % (131a: two of four pass dumps on the iPhone were at 0.8). tools/tests/t_totk_options.py runs the epilogue in Unicorn
+        # The interval held (plan item 285): fps60 lowers the controller's minimum to 1, but a slow scene still raises the interval to 2 or 3 (the
+        # iPhone Air within the first minute on Great Sky Island). This one word skips the raising: desired above the current interval goes the way of
+        # "not over" (its over-count reset), so with fps60 the interval comes down to 1 and stays there
+        'hold60': [
+            (0x2db214, '0c050054', '1f2003d5', 'frame-rate controller: b.gt 0x2db2b4 (desired above the current interval: raise it) → nop'),
+        ],
         'fixedres': [
             (0x5848a8, 'e903172a', '09f0a752', 'dynamic resolution controller epilogue: mov w9, w23 (the tier\'s scale) → mov w9, #0x3f800000 (1.0)'),
         ],
