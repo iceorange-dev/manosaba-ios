@@ -90,6 +90,9 @@ static void pso_predict_rest(void) {
             const p_set_rt *r = aq; memset(cf, 0, sizeof cf); dfull = sfull = 0; samples = 1;
             for (int i = 0; i < r->n && i < 8; i++) { id<MTLTexture> t = r->color[i] && !rt_dup_slot(r, i) ? tex_mtl(r->color[i]) : nil; if (t) { cf[i] = (uint32_t)rt_color_fmt(r->color[i], t, &r->cview[i], r->has_cview[i], 0); samples = (uint32_t)t.sampleCount; } }
             id<MTLTexture> dt = r->depth ? tex_mtl(r->depth) : nil;
+#ifndef DM_TEST_PREDICT_ANY_DEPTH   // negative control of t_mtlguard only: any format predicted as depth, as before (Metal aborts in the background compile)
+            if (dt && !pf_is_depth_stencil(dt.pixelFormat)) dt = nil;   // not attached at the replay either (rp_begin_ex, 64m)
+#endif
             if (dt) { MTLPixelFormat f = dt.pixelFormat; samples = (uint32_t)dt.sampleCount;
                 dfull = f != MTLPixelFormatStencil8 ? (uint32_t)f : 0; sfull = (f == MTLPixelFormatStencil8 || f == MTLPixelFormatDepth32Float_Stencil8) ? (uint32_t)f : 0; }
             df = dfull; sf = sfull; continue;

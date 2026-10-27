@@ -288,7 +288,8 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 286 278's write-back without the GPU round trip on the game's thread: the targets up to 64 KiB copied to staging at the end of the
   submission that rendered them, so a fence wait only writes the staged bytes into storage (now 0.6-1 ms a write-back, the frame time's p95
   16.77 → 17.2 ms standing on Great Sky Island on the M5; a grass field's cut map would take one a frame).
-- 280 manosaba's trial peak (item 2 above): a census of which of the 124 targets share pool storage, then heaps for them (nxnative c484b13: 101
+- 280 manosaba's trial peak (item 2 above; a save just before the first trial: `work/run/mano/save_before_trial1`, Load Game → the Auto page →
+  A1 of 2026-10-27 22:12, then R, fast-forward, to the trial): a census of which of the 124 targets share pool storage, then heaps for them (nxnative c484b13: 101
   descriptions at one address, Luigi's Mansion 3 5,507 → 2,125 MiB of GPU memory; AnySwitch's heaps in any pool); the characters' pixels per
   unit lowered (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100; the Switch's
   `resources.assets` has the same 50 entries); depth / stencil that no pass keeps made memoryless.
@@ -618,3 +619,13 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Also: `host/tests/t_fs_kill` kills on past 60 times until its writer has got through more than 60 commits (at most 180; it failed under the
   batch's load twice with 59). gfx 151 commands on Metal 4 and Metal 3, host 179; both IPAs. Smoke: the same red lines, frames the same by
   eye, instructions a draw as before.
+- [x] batch 113 · 287 a depth / stencil texture bound as a colour target is left out (`mtl/renderpass.inc` rt_color_fmt, red line 116), and
+  the parallel precompile predicts a depth attachment only for a depth-renderable format (`mtl/lookahead.inc`, as the replay's 64m does):
+  manosaba, 26 minutes into a session on the Mac with several loads, at the first trial's start bound a Depth32Float_Stencil8 target as colour 0
+  and an RGBA8 one as depth, and the precompile's background compile of that pass's pipeline hit Metal's descriptor validation, which ends the
+  process (`depthAttachmentPixelFormat MTLPixelFormatRGBA8Unorm is not depth renderable`; the replay itself had left the pass out). A fresh
+  session from the save before the trial reached the trial without that binding. `t_mtlguard` +2 (-DDM_TEST_COLOR_ANY_FORMAT and
+  -DDM_TEST_PREDICT_ANY_DEPTH fail 1 each, their child ending on SIGABRT). Also: the save before manosaba's first trial for 280; its
+  controls: R fast-forward on / off (Options → 文本快进模式 全部 for unread text), X the phone menu (save, load, options, help), Y the
+  encyclopedia, B hides the text box; the investigation map takes UP to a location, LEFT / RIGHT between floors, A to go there; chapter 1's
+  choices that end the game: the first option of the first two, the second of the ones at Noah's room and in the shower room.

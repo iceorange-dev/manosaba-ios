@@ -68,6 +68,16 @@ static MTLPixelFormat blk_view_fmt_unp(const tex_t *t, const view_t *v, int has_
     return (MTLPixelFormat)vpf;
 }
 static MTLPixelFormat rt_color_fmt(const tex_t *t, id<MTLTexture> base, const view_t *v, int has_v, int warn) {
+#ifndef DM_TEST_COLOR_ANY_FORMAT   // negative control of t_mtlguard only: a depth / stencil texture attached as a colour target, as before (Metal aborts)
+    // A depth / stencil texture bound as a colour target (manosaba at a trial's start: a Depth32Float_Stencil8 target in the colour slot and an
+    // RGBA8 one in the depth slot, 2026-10-27; Metal's pipeline validation aborted the process): not attached, its draws land nowhere, as 64m
+    // leaves out a depth target that is not depth-renderable. The parallel precompile takes its formats from here as well
+    if (base && pf_is_depth_stencil(base.pixelFormat)) {
+        if (warn) RED_ONCE(116, "a depth / stencil texture (Metal %lu, %lux%lu, serial %llu) bound as a colour target: not attached, its draws land nowhere (first case)",
+                           (unsigned long)base.pixelFormat, (unsigned long)base.width, (unsigned long)base.height, (unsigned long long)t->serial);
+        return MTLPixelFormatInvalid;
+    }
+#endif
     if (base && tex_stored_unpacked(t) && has_v && v->set_format) {   // before the compressed check: BC1 is kept as ASTC (62c3)
         MTLPixelFormat bf = blk_view_fmt_unp(t, v, has_v); if (bf != MTLPixelFormatInvalid) return bf; }
     if (base && mtl_fmt_block(base.pixelFormat)) {
