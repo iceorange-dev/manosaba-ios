@@ -226,6 +226,8 @@ t_stor: t_stor.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_stor.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_poolcheck: t_poolcheck.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_poolcheck.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_respool: t_respool.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_respool.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_snapreap: t_snapreap.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_snapreap.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_usnap: t_usnap.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
@@ -354,6 +356,7 @@ run: \
 	t_pool_find \
 	t_poolcache \
 	t_poolcheck \
+	t_respool \
 	t_ppred \
 	t_present_crop \
 	t_present_fx \
@@ -430,6 +433,7 @@ run: \
 	./t_attless
 	./t_poolcache
 	./t_poolcheck
+	./t_respool
 	./t_tex_auto
 	./t_d16clear
 	./t_fuse_check

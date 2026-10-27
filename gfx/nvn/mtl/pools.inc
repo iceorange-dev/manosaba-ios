@@ -210,12 +210,27 @@ static void pc_put(int i) {   // caller holds g_mu; pool i is resident
     pc_ent *c = &t_pc.e[t_pc.n < 8 ? t_pc.n++ : t_pc.next++ % 8];
     *c = (pc_ent){g_pools[i].lo, g_pools[i].hi, g_pools[i].base, g_pools[i].buf, g_pools[i].gpu};
 }
+static int g_test_nocopy_fail;   // tests only (t_poolcheck): the next n zero-copy buffers refused
 void mtl_pool_add(const void *mem, uint64_t size) { @autoreleasepool {
     mtl_init(); g_reg_gen++;
     uintptr_t pg = (uintptr_t)getpagesize(), lo = (uintptr_t)mem, hi = lo + size;
     uintptr_t a = lo & ~(pg - 1), b = (hi + pg - 1) & ~(pg - 1);
     if (!pool_range_ok(a, b, mem, size)) { g_pool_refused++; return; }
-    id<MTLBuffer> buf = [g_dev newBufferWithBytesNoCopy:(void *)a length:b - a options:MTLResourceStorageModeShared deallocator:nil];
+    // Metal can refuse the zero-copy buffer for a moment (MacNativeGames 11ea252, MIT: at boot, while a guest thread faulted on a page of the range
+    // the tracker had protected): retried 8 times, 2 ms apart doubling, before it stops (plan item 279; the pages stay protected meanwhile, so no
+    // write escapes the tracker)
+    id<MTLBuffer> buf = nil;
+    for (int k = 0; ; k++) {
+        if (g_test_nocopy_fail > 0) { g_test_nocopy_fail--; buf = nil; }
+        else buf = [g_dev newBufferWithBytesNoCopy:(void *)a length:b - a options:MTLResourceStorageModeShared deallocator:nil];
+#ifndef DM_TEST_POOL_NO_RETRY   // negative control of t_poolcheck only: no retry, as before
+        if (buf || k == 8) break;
+        MLOG("[red] memory pool %p+%#llx: the zero-copy buffer refused (attempt %d of 9), again in %d ms", mem, (unsigned long long)size, k + 1, 2 << k);
+        usleep(2000u << k);
+#else
+        break;
+#endif
+    }
     if (!buf) MDIE("memory pool %p+%#llx: failed to create zero-copy buffer", mem, (unsigned long long)size);
     pthread_mutex_lock(&g_mu);
     if (g_npool == g_cap) { g_cap = g_cap ? g_cap * 2 : 64; g_pools = realloc(g_pools, g_cap * sizeof *g_pools); }

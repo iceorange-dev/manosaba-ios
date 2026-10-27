@@ -226,10 +226,6 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   not fit, since under the power split the frame looks CPU-bound.
 - 131a the game's own dynamic resolution: two of four pass dumps on the iPhone (240) were at 0.8 of the page's size, which the Mac never showed.
   Nothing in main was found to set its enable bit (0x8c4eb0, +0x1c bit 0); look again from those dumps.
-- 226 the submit call's capture on the game's thread, after batch 110's walk (below; about 265 us a call on the M5 Mac): the uniforms it copies
-  (0.9 MB a call, with the allocation 77 us) the snapshot copies again on the translation thread; snapshot lookups miss between draws binding
-  several blocks; texture views are checked again in 6 % of the thread. It runs for Tears of the Kingdom, whose defaults turn the translation
-  thread on; manosaba's do not.
 - 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its middle,
   and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576).
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
@@ -281,19 +277,16 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   a border sampler bound, `mtl/border_warm.inc`), dispatch arguments before the encode stage's wait, generation maxima per 64 pages
   (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as one word (`nvn_hmap.h`). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the
   passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (our build writes them; `mtl/args.inc` fills all).
+  226's rest (closed in batch 111): the snapshot's second copy of the captured uniforms costs 0.053 ms a submission on the M5 and 0.14 ms on
+  the Air (1.56 MB), not worth a GPU-visible capture pool of its own; `us_find` is 4.6 % of the translation thread's own time on the M5.
 - 273 the translation thread against the game's thread, sustained, on the phone (kxn, Adreno 735: 43 against 32 fps on the calling thread).
 - 274 compute dispatches run before their pass (nxnative `cs_hoist_try`; with its slice merge an iPhone's GPU p95 18-19 → 13.5-14.5 ms in Breath
   of the Wild); 218's case.
 - 275 SyncWait woken from the queue's shared event (nxnative `post_early`: 0.15 ms a wait on an iPhone 17 Pro Max), once a frame here.
 - 276 131a: MacNativeGames found the controller (main+0x584300, called from main+0x58196c; 24 samples, 100 / 90 / 80 %; the scale leaves at
   main+0x5848a8 for renderer +0xccc; `TOTK_FIXED_RES` writes 1.0 there).
-- 277 render-target heap members without lossless compression (AnySwitch 8ba3c71: a view of another format over compressed bytes read garbage;
-  ours places them with the plain descriptor, `mtl/rtheap.inc`); `MTL4VisibilityOptionResourceAlias` in barriers while aliasing heaps exist
-  (nxnative c1b7eff; ours: Device only). A/B of the GPU time with each.
 - 278 small render targets (64 KiB and less) written back after the game's SyncWait / QueueFinish (MacNativeGames 1bffa28: the grass cut
   reaction reads a 128x128 RGBA8 target); 94a's and 161's area, nxport's render-target guard the other design.
-- 279 the GPU memory budget waits up to 2 s and drains deferred releases before it stops (MacNativeGames 4de7b4e; ours stops at once, which
-  166's soak hit); `newBufferWithBytesNoCopy` retried while pages are protected (11ea252).
 - 280 manosaba's trial peak (item 2 above): a census of which of the 124 targets share pool storage, then heaps for them (nxnative c484b13: 101
   descriptions at one address, Luigi's Mansion 3 5,507 → 2,125 MiB of GPU memory; AnySwitch's heaps in any pool); the characters' pixels per
   unit lowered (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100; the Switch's
@@ -301,7 +294,6 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 281 native resolution: done for manosaba in batch 109 (below). For other games the backend route stays: render targets of the screen's shape
   made at the screen's size while the game keeps its size (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's
   `render_scale` is 1.0, `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB).
-- 282 `@autoreleasepool` in res_add / res_remove on guest threads (nxnative 7d368c4: Ghost Trick 8.3 → 1.7 GB allocated); DM_RES_CENSUS first.
 - 283 pipelines: the tile-read pipelines in the warm-up seed (MacNativeGames 59e240a: in-world builds 58 → 21 on its Mac); at most 2
   speculative compile workers, the submit thread compiling an unclaimed job (4ppp44 cb21bec; ours a dispatch_async each, `mtl/pipeline.inc`).
 - 284 for 264's Vulkan backend: nxport's frame capture replayed pass by pass on both backends; Adreno 740-799 without the quad / warp32
@@ -599,3 +591,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   list called twice, call depth 32 and not 33; -DDM_TEST_CAP_DEPTH_FIRST fails 1). gfx 150 commands on Metal 4 and Metal 3; host 179, of which
   t_fs_kill failed once under the run's load (its writer got through 59 commits; the check wants more than 60) and passed alone; both IPAs. Smoke: the
   same red lines, Tears of the Kingdom's frames the same by eye, manosaba's within 1.1, instructions a draw as before.
+- [x] batch 111 · 279 the GPU memory budget waits before it stops (MacNativeGames 4de7b4e, MIT, written anew; `mtl/commit.inc`
+  `gpu_budget_settle`): over the budget, the deferred releases and the upload staging of completed batches are released while the running work
+  completes, at most 2 s, ending early after 20 ms with nothing running or completing; a spike it recovers from is logged, and only memory still
+  allocated stops the process. A zero-copy pool buffer Metal refuses is retried 8 times, 2 ms apart doubling (MacNativeGames 11ea252; the
+  pages stay protected, so no write escapes the tracker; never seen in our logs). `t_poolcheck` +4 (-DDM_TEST_BUDGET_NO_WAIT fails 3;
+  -DDM_TEST_POOL_NO_RETRY stops at the refused buffer). 282 res_add / res_remove in their own autorelease pool (nxnative 7d368c4): the weak
+  table's containsObject: autoreleased the object on guest threads, whose pool never drains; Tears of the Kingdom on the Mac (DM_RES_CENSUS=1,
+  standing): retired but not destroyed 25 textures → 0, RSS 12 MB less, GPU allocated the same (they were heap members). `t_respool` (a thread
+  with no pool; -DDM_TEST_RES_NO_POOL fails 1). [-] 277 measured, nothing changed: heap members keep lossless compression (an M5 probe read
+  cleared and blitted texels right through an R32UI target at the same heap offset, now `t_rtheap` +2; GPU p50 with it off 7.21 / 7.37 ms
+  against 6.66 / 9.83 on, within the runs' spread, one run to the next differing by 1.3 ms with the same code); no
+  `MTL4VisibilityOptionResourceAlias`: nxnative's case is two Metal buffers over the same bytes, which ours never makes (MapVirtual points the
+  virtual pool at the physical pool's memory; of Tears of the Kingdom's 2,686 pools none overlaps another's guest range, 11 share a 16 KiB page
+  only, 4 KiB-aligned; manosaba's 25 none), and heap textures at one offset have one GPU address. 226 closed (its rest under 271). gfx 151
+  commands on Metal 4 and Metal 3, host 179; both IPAs. Smoke: the same red lines, frames the same by eye, instructions a draw as before.

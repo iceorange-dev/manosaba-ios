@@ -7,7 +7,8 @@
 // Metal texture, and one in a pool that is not virtual, keep textures of their own; the census counts 3 placed and 1 not fitting of the 4
 // virtual-pool targets. On Metal 3 every target keeps a texture of its own. A target allowed past its scaled range (-DDM_TEST_RTHEAP_NO_LIMIT):
 // 2 fail (Metal 4: 4). The default (plan item 166): on with Metal 4 and the TBDR rewrites off, off with =0, on Metal 3 or with the rewrites;
-// off unless asked (-DDM_TEST_RTHEAP_DEFAULT_OFF): 1 fails.
+// off unless asked (-DDM_TEST_RTHEAP_DEFAULT_OFF): 1 fails. Metal 4: another description over a target's heap bytes reads its texels' bits with
+// lossless compression on (cleared, and blitted).
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -88,6 +89,21 @@ int main(void) { @autoreleasepool {
     uint32_t pc = pixel(&c), pb = pixel(&b);
     CHECK(pc == 0xffff0000 && pb == 0xff00ff00, "cleared blue, red, then green: the disjoint one still blue (%08x), the last green (%08x)", pc, pb);
     CHECK(mtl_last_commit_error() == 0, "no command buffer error (validation layer)");
+#if !DM_NVN_M3
+    // Another description over the same heap bytes reads them as plain texels with lossless compression left on (plan item 277: AnySwitch 8ba3c71 saw
+    // garbage there and turned it off for heap members; on the M5, 2026-10-27, cleared and blitted texels read right through an R32UI target)
+    { tex_t g = tex_at(0x80000, 64, 64, &g_vpool), f = tex_at(0x80000, 64, 64, &g_vpool); f.d.format = NVN_FORMAT_R32UI;
+      id<MTLTexture> tg = tex_mtl(&g), tf = tex_mtl(&f);
+      render_clear(&g, 1, 0, 0); uint32_t pf = pixel(&f);
+      CHECK(tg.heap && tg.heapOffset == tf.heapOffset && pf == 0xff0000ff, "an RGBA8 target cleared red, read through an R32UI one at its heap offset: its bits (%08x)", pf);
+      id<MTLBuffer> src = [g_dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared]; res_add(src);
+      uint32_t *px = (uint32_t *)src.contents; for (int i = 0; i < 64 * 64; i++) px[i] = (uint32_t)i * 2654435761u;
+      state_reset(); mtl_sub_begin();
+      [blit() copyFromBuffer:src sourceOffset:0 sourceBytesPerRow:256 sourceBytesPerImage:64 * 64 * 4 sourceSize:MTLSizeMake(64, 64, 1) toTexture:tg destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+      mtl_wait(mtl_sub_commit(), 5000000000ull);
+      pf = pixel(&f);
+      CHECK(pf == px[3 * 64 + 3] && tg.allowGPUOptimizedContents, "... texels blitted into it (compressible), read through the R32UI one: the same bits (%08x, written %08x)", pf, px[3 * 64 + 3]); }
+#endif
     char line[256]; rt_census_line(line, sizeof line); printf("  %s\n", line + 2);
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
 } }

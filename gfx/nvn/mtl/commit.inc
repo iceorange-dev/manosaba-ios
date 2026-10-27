@@ -12,10 +12,41 @@ static uint64_t gpu_budget_bytes(void) {
 }
 static int gpu_budget_exceeded(uint64_t *cur, uint64_t *budget) { *budget = gpu_budget_bytes(); *cur = (uint64_t)g_dev.currentAllocatedSize; return *budget && *cur > *budget; }
 static void res_census(unsigned long long frame, unsigned long long rss_mb);
+static void up_retire(void);   // upload.inc
+// Over the budget, part of the allocation can be objects already retired and staging that submissions still on the GPU hold, both released when
+// those complete (plan item 279; MacNativeGames 4de7b4e, MIT, written anew: Tears of the Kingdom stopped there while the world loaded, and on a
+// dive): the running work is let complete and what it held released, at most 2 s, ending early once nothing has completed for 20 ms with nothing
+// running; only memory still allocated after that stops the process. The submission being built is not committed yet, so its own fence is not
+// waited for. 1: back under the budget
+static int gpu_budget_settle(uint64_t budget, uint64_t *cur, double *waited_ms) {
+    uint64_t t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), quiet = t0, done = mtl_done_fence();
+    *cur = (uint64_t)g_dev.currentAllocatedSize;
+#ifndef DM_TEST_BUDGET_NO_WAIT   // negative control of t_poolcheck only: stop at once, as before
+    for (;;) {
+        @autoreleasepool { defer_drain(); up_retire(); }
+        *cur = (uint64_t)g_dev.currentAllocatedSize; if (*cur <= budget) break;
+        uint64_t t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), d = mtl_done_fence();
+        if (d != done || atomic_load(&g_inflight)) { done = d; quiet = t; }
+        else if (t - quiet > 20000000ull) break;
+        if (t - t0 > 2000000000ull) break;
+        usleep(500);
+    }
+#endif
+    *waited_ms = (double)(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0) / 1e6;
+    return *cur <= budget;
+}
 static void gpu_budget_check(void) {
     uint64_t cur, budget; if (!gpu_budget_exceeded(&cur, &budget)) return;
+    uint64_t first = cur; double ms;
+    if (gpu_budget_settle(budget, &cur, &ms)) {
+        static unsigned spikes; spikes++;
+        if (spikes <= 8 || !(spikes % 100)) MLOG("GPU allocated %llu MB, above the budget of %llu MB (%u times): %llu MB once the running work completed and released what it held (%.1f ms)",
+            (unsigned long long)(first >> 20), (unsigned long long)(budget >> 20), spikes, (unsigned long long)(cur >> 20), ms);
+        return;
+    }
     res_census((unsigned long long)atomic_load(&g_cur_frame), 0);
-    MDIE("GPU allocated %llu MB, above the budget of %llu MB: stopping before the driver runs out of wired memory (DM_NVN_GPU_BUDGET_MB)", (unsigned long long)(cur >> 20), (unsigned long long)(budget >> 20));
+    MDIE("GPU allocated %llu MB, above the budget of %llu MB (%llu MB before the running work completed and released what it held, %.1f ms): stopping before the driver runs out of wired memory (DM_NVN_GPU_BUDGET_MB)",
+         (unsigned long long)(cur >> 20), (unsigned long long)(budget >> 20), (unsigned long long)(first >> 20), ms);
 }
 uint64_t mtl_sub_commit(void) {
     uint64_t tr = trace_now(); unsigned tr_part = ++g_tr_parts;

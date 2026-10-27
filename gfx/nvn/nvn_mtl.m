@@ -90,7 +90,15 @@ static id<MTLBuffer> m3_buf(uint64_t gpu, NSUInteger *off) {
 // the first three such textures are named, for `leaks --traceTree=<address>`
 static NSHashTable *g_res_ever; static int g_res_census = -1;
 static uint64_t g_res_noop;   // res_add / res_remove calls that changed nothing (the set already held / did not hold it): no addAllocation, no commit
-static void res_add(id<MTLResource> r) {
+// Both run in their own autorelease pool (plan item 282; nxnative 7d368c4, MIT, written anew): containsObject: / removeObject: on the weak table
+// autorelease the object, and on a guest thread, whose implicit pool never drains, that kept retired textures alive (nxnative: Ghost Trick's GPU
+// allocation 8.3 GB against 1.7 GB with the pools)
+#ifndef DM_TEST_RES_NO_POOL   // negative control of t_respool only: no pool of their own, as before
+#define RES_POOL @autoreleasepool
+#else
+#define RES_POOL
+#endif
+static void res_add(id<MTLResource> r) { RES_POOL {
     if (!r) return;
     pthread_mutex_lock(&g_res_mu);
     if ([g_res_objects containsObject:r]) { g_res_noop++; pthread_mutex_unlock(&g_res_mu); return; }   // a re-upload adds its texture again (nxnative e06a8ec)
@@ -104,8 +112,8 @@ static void res_add(id<MTLResource> r) {
     if (g_res_census > 0) { if (!g_res_ever) g_res_ever = [NSHashTable weakObjectsHashTable]; [g_res_ever addObject:r]; }
     g_res_dirty = 1;
     pthread_mutex_unlock(&g_res_mu);
-}
-static void res_remove(id<MTLResource> r) {
+} }
+static void res_remove(id<MTLResource> r) { RES_POOL {
     if (!r) return;
     pthread_mutex_lock(&g_res_mu);
     if (![g_res_objects containsObject:r]) { g_res_noop++; pthread_mutex_unlock(&g_res_mu); return; }
@@ -116,7 +124,7 @@ static void res_remove(id<MTLResource> r) {
 #endif
     g_res_dirty = 1;
     pthread_mutex_unlock(&g_res_mu);
-}
+} }
 // DM_RES_CHECK=1 (diagnostic): if textures / buffers the shader accesses through the argument block are not in the residency set, print the first 40 (textures are attributed to the actual allocation via parent texture / underlying buffer)
 static int g_res_check_on;
 static void res_check(id r, const char *what, int reg) {
