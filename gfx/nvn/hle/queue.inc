@@ -31,5 +31,5 @@ NVN(nvnQueueFlush, void, NVNqueue *q) { (void)q; }
 // false, as the SDK (dr3-mobile read it there; GirlNet's P5R branch the same; plan item 64d)
 NVN(nvnQueueWaitSync, NVNboolean, NVNqueue *q, const NVNsync *s) { (void)q; uint64_t f; return s && sync_fence_load((const sync_t *)s, &f); }
 NVN(nvnQueueFinish, void, NVNqueue *q) {
-    NVN_BLOCKING(); (void)q; x_drain(); gfx_mt_enter("QueueFinish"); mtl_finish(); gfx_mt_leave(); }
+    NVN_BLOCKING(); (void)q; x_drain(); gfx_mt_enter("QueueFinish"); mtl_finish(); mtl_wb_fence_done(); gfx_mt_leave(); }
 

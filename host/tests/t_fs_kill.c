@@ -1,6 +1,7 @@
 // A save killed at any moment (plan item 51: an app swiped away in the app switcher while suspended gets SIGKILL, no callback): a child process
 // mounts the transactional save and commits version after version (64 files, all holding the version number), telling the parent each commit it
-// finished; the parent kills it with SIGKILL after a random 2-40 ms, 60 times. After each kill a fresh process mounts the save: every file holds the
+// finished; the parent kills it with SIGKILL after a random 2-40 ms, 60 times, and on until the writer has got through more than 60 commits (at most
+// 180 times: on a loaded machine it gets through fewer in each, batch 110 / 112 saw 59). After each kill a fresh process mounts the save: every file holds the
 // same version, and that version is the last one reported or the one after (a commit can finish before its report). The real hle_fs.c with
 // clonefile and renamex_np(RENAME_SWAP) on the disk under TMPDIR.
 // Negative control: -DDM_TEST_FS_COMMIT_INPLACE (remove the committed directory, then clone the working one in its place) loses or tears the save.
@@ -46,8 +47,8 @@ int main(void) {
     char root[1024], save[1100]; const char *tp = getenv("TMPDIR"); snprintf(root, sizeof root, "%s/t_fs_kill.XXXXXX", tp ? tp : "/private/tmp");
     if (!mkdtemp(root)) { perror("mkdtemp"); return 2; }
     snprintf(save, sizeof save, "%s/save", root); setenv("DM_SAVE", save, 1);
-    srand(12345); int bad = 0, lost = 0, mid = 0, last_v = 0, vmax = 0;
-    for (int t = 0; t < TRIALS; t++) {
+    srand(12345); int bad = 0, lost = 0, mid = 0, last_v = 0, vmax = 0, t;
+    for (t = 0; t < TRIALS || (vmax <= TRIALS && t < 3 * TRIALS); t++) {
         int pf[2]; if (pipe(pf)) return 2;
         pid_t w = fork(); if (!w) { close(pf[0]); freopen("/dev/null", "w", stderr); writer(pf[1]); }
         close(pf[1]); usleep(2000 + rand() % 38000); kill(w, SIGKILL); int st; waitpid(w, &st, 0);
@@ -59,10 +60,10 @@ int main(void) {
         if (!ok) { bad++; lost += got >= 0 && got < reported; if (bad <= 5) printf("  trial %d: the save reads %d after commit %d was reported\n", t + 1, got, reported); }
         mid += got == reported + 1; if (got > vmax) vmax = got; last_v = got > 0 ? got : reported;
     }
-    printf("%d trials, %d commits in all; %d killed after a commit it had not reported yet\n", TRIALS, vmax, mid);
+    printf("%d trials, %d commits in all; %d killed after a commit it had not reported yet\n", t, vmax, mid);
     int fails = 0;
     #define CHECK(c, ...) do { if (c) printf("  ✓ "); else { fails++; printf("  ✗ "); } printf(__VA_ARGS__); printf("\n"); } while (0)
-    CHECK(bad == 0, "after every kill each file holds one whole version, the last reported or the next (%d of %d not, %d of them lost commits)", bad, TRIALS, lost);
+    CHECK(bad == 0, "after every kill each file holds one whole version, the last reported or the next (%d of %d not, %d of them lost commits)", bad, t, lost);
     CHECK(vmax > TRIALS, "the writer got through many commits (%d), so kills landed in writes and commits alike", vmax);
     char cmd[1200]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", root); if (system(cmd)) {}
     printf("== 2 checks, %d failed ==\n", fails); return fails != 0;

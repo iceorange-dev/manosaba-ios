@@ -32,5 +32,6 @@ uint64_t mtl_last_fence(void);                       // Fence value of the most 
 int mtl_wait(uint64_t fence, uint64_t timeout_ns);   // Returns 1 when the GPU has completed up to fence, 0 on timeout
 uint64_t mtl_done_fence(void);                       // Highest completed submission fence
 void mtl_finish(void);                               // Wait for all submitted commands to complete
+void mtl_wb_fence_done(void);                        // After the game's fence waits: small GPU-written targets of CPU-visible pools whose rendering completed, written back (plan item 278)
 void mtl_drain(void);                                // Wait for all commands on the queue (including presents) to complete: submit an empty command buffer and wait for it
 void mtl_xv_window_tex(uint64_t serial);   // Register a window (swapchain) texture: the cross-submit validity ledger never collects it

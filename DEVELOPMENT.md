@@ -285,8 +285,9 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 275 SyncWait woken from the queue's shared event (nxnative `post_early`: 0.15 ms a wait on an iPhone 17 Pro Max), once a frame here.
 - 276 131a: MacNativeGames found the controller (main+0x584300, called from main+0x58196c; 24 samples, 100 / 90 / 80 %; the scale leaves at
   main+0x5848a8 for renderer +0xccc; `TOTK_FIXED_RES` writes 1.0 there).
-- 278 small render targets (64 KiB and less) written back after the game's SyncWait / QueueFinish (MacNativeGames 1bffa28: the grass cut
-  reaction reads a 128x128 RGBA8 target); 94a's and 161's area, nxport's render-target guard the other design.
+- 286 278's write-back without the GPU round trip on the game's thread: the targets up to 64 KiB copied to staging at the end of the
+  submission that rendered them, so a fence wait only writes the staged bytes into storage (now 0.6-1 ms a write-back, the frame time's p95
+  16.77 → 17.2 ms standing on Great Sky Island on the M5; a grass field's cut map would take one a frame).
 - 280 manosaba's trial peak (item 2 above): a census of which of the 124 targets share pool storage, then heaps for them (nxnative c484b13: 101
   descriptions at one address, Luigi's Mansion 3 5,507 → 2,125 MiB of GPU memory; AnySwitch's heaps in any pool); the characters' pixels per
   unit lowered (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100; the Switch's
@@ -606,3 +607,14 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   virtual pool at the physical pool's memory; of Tears of the Kingdom's 2,686 pools none overlaps another's guest range, 11 share a 16 KiB page
   only, 4 KiB-aligned; manosaba's 25 none), and heap textures at one offset have one GPU address. 226 closed (its rest under 271). gfx 151
   commands on Metal 4 and Metal 3, host 179; both IPAs. Smoke: the same red lines, frames the same by eye, instructions a draw as before.
+- [x] batch 112 · 278 GPU results written back after the game's fence waits (MacNativeGames 1bffa28, MIT, written anew; `mtl/writeback.inc`
+  `mtl_wb_fence_done`, from nvnSyncWait when signalled and nvnQueueFinish): a target up to 64 KiB in a CPU-visible pool whose rendering has
+  completed is written back with no invalidate, as on the console, where the bytes are in the pool once the fence has passed; Tears of the
+  Kingdom reads its grass cut map (128x128 RGBA8) that way (MacNativeGames: no blades, no insects, the grass not cut). The CPU's newer bytes
+  stay as on an invalidate (the invalidate's checks now in `wb_write_list`); 3D, multisampled and BC targets stay for an invalidate; each new
+  shape written back this way is logged; DM_NVN_WB_FENCE=0 turns it off. Standing on Great Sky Island (M5): one fence wait in 18 writes back a
+  96x96 target, 0.6-1 ms on the game's thread for the GPU's round trip (286 is the follow-up). Not yet seen in a grass field here: the scenes
+  reached (Great Sky Island's platform and cliff, a shrine, a cave) render no cut map. `t_wb` +6 (-DDM_TEST_WB_INVALIDATE_ONLY fails 3).
+  Also: `host/tests/t_fs_kill` kills on past 60 times until its writer has got through more than 60 commits (at most 180; it failed under the
+  batch's load twice with 59). gfx 151 commands on Metal 4 and Metal 3, host 179; both IPAs. Smoke: the same red lines, frames the same by
+  eye, instructions a draw as before.

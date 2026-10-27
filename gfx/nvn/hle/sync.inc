@@ -39,6 +39,7 @@ NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
     newest = s && f0 && f0 == mtl_last_fence();
 #endif
     NVNsyncWaitResult r = sync_wait(s, timeout);
+    if (r == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED || r == NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED) mtl_wb_fence_done();   // what the GPU wrote is in memory now
     trace_end(TR_WAIT, tr, f0, (uint64_t)r);
     atomic_fetch_add(&g_sw_n, 1); if (newest) atomic_fetch_add(&g_sw_newest, 1); atomic_fetch_add(&g_sw_ns, now_ns() - t0);
     if (s && s == atomic_load_explicit(&g_acq_sync_last, memory_order_relaxed)) dm_game_frame_sync();
