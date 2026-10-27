@@ -8,6 +8,7 @@
 #   scene     the scene render size from the host page +16 (DM_RENDER_RES), also while the game runs (+48 / +56, CAVES)
 #   output    the swapchain and canvas size from the host page +24 / +32 (DM_OUTPUT_RES)
 #   aspect    the cameras' aspect ratio × the host page +40, for a wide picture (DM_ASPECT, the Mac's View → Wide Picture; CAVES)
+#   fixedres  the dynamic resolution held at 100 % (plan item 276): every tier of the game's controller scales by 1.0
 CUTS = {}
 OBS = {}
 PARAMS = {}
@@ -91,6 +92,14 @@ OPTIONS = {
         # the cooldown ctl+0x4c is over and no listener (ctl+0x68) vetoes. It writes the interval to sys+0x88 and 60 / interval to sys+0x250, from
         # which the step is taken (0x2daa54: ratio = 60 / sys+0x250 * 0.5, 1 at 30 fps; 0x3e5638 the same before a 0.5 / 1 selector), so the game
         # keeps its speed at whatever interval is chosen. These words lower the minimum to 1 (60 fps); slow scenes still raise it to 2 or 3.
+        # The dynamic resolution (plan item 276; MacNativeGames 2279d4b, MIT, written anew): the controller 0x584300 (called from the renderer's per-frame
+        # update 0x58196c) predicts the next frame's cost from 24 frame-time samples and steps the scene through tiers of 100 / 90 / 80 %; it returns the
+        # tier's scale as a float in the low word of x0 (bit 33: the tier did not change), which the caller makes the renderer's scale at +0xccc. Every
+        # path leaves through one epilogue, where this one word moves the scale into the result: as 1.0 the controller still picks its tiers, each at
+        # 100 % (131a: two of four pass dumps on the iPhone were at 0.8). tools/tests/t_totk_fixedres.py runs the epilogue in Unicorn
+        'fixedres': [
+            (0x5848a8, 'e903172a', '09f0a752', 'dynamic resolution controller epilogue: mov w9, w23 (the tier\'s scale) → mov w9, #0x3f800000 (1.0)'),
+        ],
         'fps60': [
             (0x2db204, '5f01086b', '5f050071', 'frame-rate controller clamp: cmp w10, w8 (minimum) → cmp w10, #1'),
             (0x2db208, '0ab1891a', '2aa59f1a', 'frame-rate controller clamp: csel w10, w8, w9, lt → csinc w10, w9, wzr, ge (desired at least 1)'),

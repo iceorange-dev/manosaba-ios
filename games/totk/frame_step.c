@@ -194,7 +194,26 @@ int totk_scene_request(unsigned w, unsigned h) {
 }
 int dm_game_realtime_step(void) { return g_realtime && g_pin <= 0; }   // (a pinned step needs the fixed pacing)
 int nvn_fstep_step(void);   // gfx/nvn/hle_nvn.c: DM_FRAME_STEP=vsync, the host's step in vsyncs of 60 Hz (plan item 133), 0 otherwise
+// The game's dynamic resolution as it runs (plan items 131a / 276): the scale the renderer holds at +0xccc (the controller 0x584300's tier, stored by
+// its caller; rules.py option fixedres holds it at 100 %), read at each present from the renderer the scene option keeps at +48; every 600 presents
+// the values seen and how often, when more than one was or it moved
+static void dr_note(void) {
+    static struct { uint32_t v; unsigned n; } seen[4]; static int ns; static unsigned presents, other; static uint32_t last;
+    uintptr_t rend = (uintptr_t)atomic_load_explicit((_Atomic uint64_t *)(void *)((uint8_t *)g_page + 48), memory_order_relaxed);
+    if (!rend) return;
+    uint32_t v = atomic_load_explicit((_Atomic uint32_t *)(rend + 0xccc), memory_order_relaxed);
+    int k = 0; while (k < ns && seen[k].v != v) k++;
+    if (k == ns) { if (ns < 4) { seen[ns].v = v; seen[ns].n = 0; ns++; } else k = -1; }
+    if (k >= 0) seen[k].n++; else other++;
+    int moved = presents && v != last; last = v;
+    if (++presents < 600 && !moved) return;
+    if (presents >= 600) {
+        if (ns > 1 || other) { char b[256]; int o = 0; for (int i = 0; i < ns; i++) { float f; memcpy(&f, &seen[i].v, 4); o += snprintf(b + o, sizeof b - o, " %g × %u", f, seen[i].n); }
+            LOG("[scene size] the game's dynamic resolution over %u presents: renderer +0xccc%s%s", presents, b, other ? " and others" : ""); }
+        ns = 0; presents = 0; other = 0; }
+}
 void dm_game_present(void) {
+    if (g_scene) dr_note();
     if (g_scene) { int r = scene_latch_step(&g_latch, (uint8_t *)g_page, atomic_load(&g_scene_want)); uint64_t l = g_latch.latched;
         if (r & SCENE_WROTE) LOG("[scene size] %ux%u on the page; the game's mode-change path asked for one pick", (unsigned)(uint32_t)l, (unsigned)(l >> 32));
         if (r & SCENE_NO_RENDERER) LOG("[scene size] %ux%u on the page; the game has not picked a size yet and takes it at its first", (unsigned)(uint32_t)l, (unsigned)(l >> 32));

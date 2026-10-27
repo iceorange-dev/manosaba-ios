@@ -224,8 +224,6 @@ The iPhone's frame rate (the current focus; the power split above decides what h
 - 190 a scene size driven by dropped frames, now that the scene size can change while the game runs (240; 960x540 holds 59.6 fps on the island
   against 56.0). Upstream's controller counts only the first 3 frames of a run of dropped frames unless the run lasts 1 s; its GPU-time rule does
   not fit, since under the power split the frame looks CPU-bound.
-- 131a the game's own dynamic resolution: two of four pass dumps on the iPhone (240) were at 0.8 of the page's size, which the Mac never showed.
-  Nothing in main was found to set its enable bit (0x8c4eb0, +0x1c bit 0); look again from those dumps.
 - 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its middle,
   and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576).
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
@@ -280,9 +278,6 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   bound), dispatch arguments before the encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as
   one word (`nvn_hmap.h`); 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the passes of a submission, the driver segment filled only at
   the vec4 offsets a shader reads (`mtl/args.inc` fills all).
-- 273 the translation thread against the game's thread, sustained, on the phone (kxn, Adreno 735: 43 against 32 fps on the calling thread).
-- 276 131a: MacNativeGames found the controller (main+0x584300, called from main+0x58196c; 24 samples, 100 / 90 / 80 %; the scale leaves at
-  main+0x5848a8 for renderer +0xccc; `TOTK_FIXED_RES` writes 1.0 there).
 - 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
   colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
   1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
@@ -651,3 +646,14 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   bc58d5dec860c367_b, which reads the depth the pass wrote, so it cannot run before the pass (the other, db0984679ece41d3_b, 0.1 MB). [-] 275
   measured: the completion handler runs 0.19 ms after the GPU's end on the M5, and Tears of the Kingdom waits on a submission still on the GPU
   0.00 times a frame on the Mac, 0.16-0.19 on the Air (0.42 ms a frame waiting): the event's earlier wake would give about 0.03 ms a frame.
+- [x] batch 117 · 276 / 131a the game's own dynamic resolution: the controller main+0x584300 (MacNativeGames 2279d4b, MIT, written anew) steps the
+  scene through 100 / 90 / 80 % by predicted frame time and returns the tier's scale through one word of its epilogue (0x5848a8, mov w9, w23); the
+  option fixedres (`games/totk/rules.py`, off by default; on iOS it must be built in, DM_OPTIONS at the build) makes it 1.0. `[scene size] the
+  game's dynamic resolution over 600 presents` now gives the values the renderer holds at +0xccc when they vary (`games/totk/frame_step.c`
+  dr_note): on the iPhone Air at 30 fps the game sits at 90 % or 80 % much of the time (one window 519 of 600 presents at 0.9), on the Mac at a
+  1920x1080 scene 80 % in 10-20 % of the presents (1.2 of 1.5), and with fixedres 1.5 throughout. Both products rebuilt (binaries the same, the
+  option row and the rewriter stamp new; the old ones kept as `.prev276`); `verify/regress.sh --fuzz` OK for the three modules.
+  `tools/tests/t_totk_fixedres.py` (the epilogue in Unicorn: a tier of 0.8 comes out as 1.0, bit 33 kept; T_FIXEDRES_ORIGINAL=1 fails 1).
+  [-] 273 measured on the iPhone Air (sustained, standing on Great Sky Island): 30 fps with the translation thread and without (frame p50 33.3
+  / 33.5 ms, GPU 28.2 / 28.0 ms); the thread takes 2 ms of the game's submit and present (7.5 against 9.6 ms), and the GPU sets the rate, so
+  the default stays on.
