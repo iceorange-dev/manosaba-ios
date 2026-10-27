@@ -25,6 +25,7 @@ typedef struct {
     uint64_t g[5];        // What made upd_guard_draw write the updates: index, vertex, storage buffer, buffer texture, uniform range without a snapshot
     uint64_t pass;        // The render pass of the latest update logged while one was open
     uint64_t ul_calls, ul_walk, ul_applied, ul_moves;   // ul_apply: calls past the range check, log entries walked, entries applied, sort moves
+    uint64_t copied, copy_max;   // Bytes copied into private copies (each the whole bound range), the largest range copied (plan item 271)
 } upd_stats;
 extern upd_stats g_ren;
 int ub_rename_on(void);   // DM_NVN_UB_RENAME (read once)

@@ -102,7 +102,7 @@ uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub) {
     if (!sc && !pending) return 0;   // no snapshot (a GPU write of this submission reached it) and its updates written: memory on the GPU timeline is right
     uint64_t hh = (lo >> 4) ^ (lo >> 19) ^ (size * 0x9E3779B97F4A7C15ull); ub_shadow *e = &g_shadow[(hh ^ (hh >> 32)) & (UB_SHADOW_N - 1)];
     if (e->lo == lo && e->size == size && e->seq == seq && e->gpu) { *buf = e->buf; g_ren.reuse++; return e->gpu; }   // seq only grows: an entry of an earlier submission never matches
-    uint64_t pad = lo & 255; uint8_t *cpu; uint64_t gpu; void *ab; nvn_be_arena((size_t)(size + pad), &cpu, &gpu, &ab); cpu += pad; gpu += pad;   // same offset modulo 256 as the original (as the snapshots)
+    uint64_t pad = lo & 255, incr0 = g_ren.incr; (void)incr0; uint8_t *cpu; uint64_t gpu; void *ab; nvn_be_arena((size_t)(size + pad), &cpu, &gpu, &ab); cpu += pad; gpu += pad;   // same offset modulo 256 as the original (as the snapshots)
     if (sc) {
 #ifndef DM_TEST_UBSH_ANY_SUB   // negative control of t_ubren only: a copy of an earlier submission taken as the base
         int same = e->sub == sub;
@@ -116,17 +116,23 @@ uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub) {
         if (!pend_read_x(lo, cpu, size, g_pend.n, 0)) { g_ren.unknown++; RED_ONCE(90, "renamed uniform update: range %#llx+%llu has no snapshot and a GPU write of unknown content (first case): its copy may be stale", (unsigned long long)lo, (unsigned long long)size); }
     }
     *e = (ub_shadow){lo, size, seq, gpu, sub, ab, sc ? cpu : NULL}; *buf = e->buf; g_ren.shadows++;
+#ifdef DM_TEST_UB_COPIED_FULL_ONLY   // negative control of t_ubren only: a copy from the range's previous copy not counted
+    if (g_ren.incr == incr0)
+#endif
+    g_ren.copied += size;
+    if (size > g_ren.copy_max) g_ren.copy_max = size;
     return e->gpu;
 }
 void ren_report(uint64_t f) {
-    static uint64_t p[16]; uint64_t c[16] = {g_ren.updates, g_ren.shadows, g_ren.reuse, g_ren.flushes, g_ren.guard, g_ren.noshot, g_ren.unknown, g_ren.g[0], g_ren.g[1], g_ren.g[2], g_ren.g[3], g_ren.g[4],
-                                             g_ren.ul_calls, g_ren.ul_walk, g_ren.ul_applied, g_ren.incr};
+    static uint64_t p[17]; uint64_t c[17] = {g_ren.updates, g_ren.shadows, g_ren.reuse, g_ren.flushes, g_ren.guard, g_ren.noshot, g_ren.unknown, g_ren.g[0], g_ren.g[1], g_ren.g[2], g_ren.g[3], g_ren.g[4],
+                                             g_ren.ul_calls, g_ren.ul_walk, g_ren.ul_applied, g_ren.incr, g_ren.copied};
     if (f % 300 || c[0] == p[0]) return;
     double uc = c[12] > p[12] ? (double)(c[12] - p[12]) : 1;
     MLOG("renamed uniform updates up to frame %llu: %llu updates, %llu private copies (%llu shared), written to memory %llu times (%llu before a draw reading them otherwise: index %llu, vertex %llu, storage %llu, buffer texture %llu, no snapshot %llu); %llu copies without a snapshot, %llu of unknown content; "
-         "%llu applications of the log, %.1f entries walked and %.1f applied each; %llu copies from the range's previous copy (plan item 225)",
+         "%llu applications of the log, %.1f entries walked and %.1f applied each; %llu copies from the range's previous copy (plan item 225); %.1f KB copied a copy, the largest range %llu bytes",
          (unsigned long long)f, (unsigned long long)(c[0] - p[0]), (unsigned long long)(c[1] - p[1]), (unsigned long long)(c[2] - p[2]), (unsigned long long)(c[3] - p[3]), (unsigned long long)(c[4] - p[4]),
          (unsigned long long)(c[7] - p[7]), (unsigned long long)(c[8] - p[8]), (unsigned long long)(c[9] - p[9]), (unsigned long long)(c[10] - p[10]), (unsigned long long)(c[11] - p[11]),
-         (unsigned long long)(c[5] - p[5]), (unsigned long long)(c[6] - p[6]), (unsigned long long)(c[12] - p[12]), (c[13] - p[13]) / uc, (c[14] - p[14]) / uc, (unsigned long long)(c[15] - p[15]));
+         (unsigned long long)(c[5] - p[5]), (unsigned long long)(c[6] - p[6]), (unsigned long long)(c[12] - p[12]), (c[13] - p[13]) / uc, (c[14] - p[14]) / uc, (unsigned long long)(c[15] - p[15]),
+         (c[16] - p[16]) / 1024.0 / (c[1] > p[1] ? (double)(c[1] - p[1]) : 1), (unsigned long long)g_ren.copy_max);
     memcpy(p, c, sizeof p);
 }

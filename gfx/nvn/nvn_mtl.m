@@ -62,6 +62,10 @@ static _Atomic int g_up_pending;
 static pthread_mutex_t g_up_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_up_cv = PTHREAD_COND_INITIALIZER;
 static void up_notify(void) { pthread_mutex_lock(&g_up_mu); pthread_cond_broadcast(&g_up_cv); pthread_mutex_unlock(&g_up_mu); }
 static void up_wait_zero(_Atomic int *v) {
+#ifdef DM_TEST_UPWAIT_POLL   // negative control of t_upwait only: the polling these waits replaced
+    while (atomic_load(v)) usleep(1000);
+    return;
+#endif
     pthread_mutex_lock(&g_up_mu);
     while (atomic_load(v)) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_nsec += 50000000; if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; } pthread_cond_timedwait(&g_up_cv, &g_up_mu, &ts); }
     pthread_mutex_unlock(&g_up_mu);

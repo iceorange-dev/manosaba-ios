@@ -271,16 +271,20 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   power). What holds 60 for the first minutes: the option hold60 (batch 118) keeps the controller at 1, about 60 fps until thermal state serious
   (720 rows: p50 17.7-18 ms, p95 25 ms, GPU 14.6-15.4 ms, for a minute and more on USB power; 540 rows: 16.6-16.9 ms for 35 s), then our hold
   and the GPU's lowered clock (27 ms) give 30. Left: those runs off USB power, from a cool phone.
-- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off, batch 119 the
-  memcmp call of 8-byte hash keys (`nvn_hmap.h`, one word); the translation thread standing on Great Sky Island (M5) is now about 24 % busy:
-  render encoders made 19 % (the driver's, one a pass: fewer passes are 219's),
-  encode_args 17 % (texture IDs 6 %), the uniform updates' private copies 7 % (copied whole from the range's previous copy, 225), dispatches
-  5 %. Not taken from MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook Air) yet: resolved uniform addresses cached
-  (`TOTK_CBUF_CACHE`; pc_get is 2 % here), argument bytes equal to the shader's last block bind that block (`TOTK_AB_SAME`), a 256-entry pool
-  table by page (`TOTK_POOL_HASH`), the border key kept per shader (`mtl/border_warm.inc` builds a string at each pso_get with a border sampler
-  bound), dispatch arguments before the encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`); 4ppp44 cb21bec / d0d3cb1:
-  argument blocks reused across the passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (`mtl/args.inc`
-  fills all).
+- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off, batch 119 the memcmp
+  call of 8-byte hash keys (`nvn_hmap.h`, one word). The translation thread standing on Great Sky Island (M5, a Time Profiler run of batch 120):
+  render encoders made 20.5 % (the driver's, one a pass: fewer passes are 219's), dispatches 4.3 %; encode_args 15.5 %, of it the uniform updates'
+  private copies 5.7 % (upd_shadow_at, 4.3 % memmove: each copy is the whole bound range, 32-36 KB on average and 64 KB the largest, `[nvn-mtl]
+  renamed uniform updates`, about 88 copies a frame) and the texture IDs 5.6 % (tex_by_id's slow path 4.4 %, half of it tex_mtl's
+  once-a-submission check of textures that follow guest memory); pso_get 3.1 %, pc_get 1.2 %. Copies of only what a shader reads: in 6,000
+  translated shaders a uniform binding read at constant indices only is read in its first 31 vec4s (median) or 144 (90th percentile) of 4,096, but
+  1,371 of the shaders index one at run time; the extents would come from the reflection of `gfx/tools/dmsh_build.py`, and a change there changes
+  its code fingerprint, so every shader is translated and compiled again (Mac and iOS libraries). Not taken from MacNativeGames PR #750 (all its
+  switches together +11 % fps on an M4 MacBook Air): resolved uniform addresses cached (`TOTK_CBUF_CACHE`; pc_get above), argument bytes equal to
+  the shader's last block bind that block (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), dispatch arguments before the
+  encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`); the border key kept per shader is not worth it here (border_variant 0.0
+  % of the thread). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the passes of a submission, the driver segment filled only at the vec4
+  offsets a shader reads (`mtl/args.inc` fills all).
 - 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
   colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
   1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
@@ -671,3 +675,10 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   tables, write-back, the store's objects, the compute pipelines, the programs' functional keys). A lookup in a 4,000-key table 4.35 → 1.68 ns on the M5; in
   batch 116's profile the memcmp of these tables was 0.2 % of the translation thread (pso_get's long key, 0.8 %, is unchanged). `t_hmap` +1:
   2,000 keys apart only in their high half (-DDM_TEST_HM_KEQ_HALF, the low half compared: fails 1).
+- [x] batch 120 · 271, measured: `[nvn-mtl] renamed uniform updates` also gives the bytes copied a private copy and the largest range copied
+  (`core/upd.c`): standing on Great Sky Island 32-36 KB a copy, 64 KB the largest, about 88 copies a frame; the translation thread's profile and
+  what copies of only the read part would take are under 271 above (not done: every shader translated and compiled again). `t_ubren` +1 (two
+  copies, 512 bytes; -DDM_TEST_UB_COPIED_FULL_ONLY, the copy from the previous one not counted: fails 1). `t_upwait` judged by the median of its
+  30 rounds, not the mean: in the first run of this batch, beside the IPA builds, one or two rounds preempted for a millisecond put the mean at
+  0.180 ms against 0.1 (it passed alone); -DDM_TEST_UPWAIT_POLL (the usleep(1000) polling it replaced, `nvn_mtl.m` up_wait_zero) fails 1 with a
+  median of 1.04 ms.
