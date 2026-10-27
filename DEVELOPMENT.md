@@ -265,8 +265,16 @@ The user's choices: 192 touch controls after Touchable (its 8-way D-pad, Liquid 
 drag and opacity are open); 221 above; `DM_FRAME_STEP=vsync` as iOS's default (133: 35 % less CPU than the mean step on the Mac).
 
 From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test phone is the iPhone Air (iOS 27.0.1) from 2026-10-27:
-- 270 the iPhone's drawable at the game picture's rows (MacNativeGames `TOTK_IOS_DRAWABLE_H`, 720 by default; kxn on an Adreno 735: 9.5 %
-  fewer GPU writes): ours has the screen's pixels (`ios/Sources/front_ios.m`), so our GPU scales 1280x720 to the panel every frame. An A/B.
+- 270 the iPhone's drawable at the game picture's rows (MacNativeGames `TOTK_IOS_DRAWABLE_H`; kxn on an Adreno 735: 9.5 % fewer GPU writes):
+  `DM_IOS_DRAWABLE_H=<rows>` exists since batch 109 (the compositor scales the layer). On the iPhone Air (2026-10-27) every run sat at 30 fps
+  (285), where the GPU time follows the clock iOS gives, not the work: native 27.6 / 28.3 ms, 720 rows 27.7 / 27.8 ms. Measure it again where
+  60 holds.
+- 285 Tears of the Kingdom on the iPhone Air (iOS 27.0.1; its A19 Pro has 5 GPU cores against the 17 Pro's 6, and no vapor chamber): on Great Sky
+  Island the game's own controller picks interval 2 within the first minute (thermal state 0-1; the 17 Pro went back to 1 within 0.1-0.7 s each
+  time), the GPU's time then follows its lowered clock (25-28 ms), and from thermal state serious, 1-2.5 minutes in with the phone on USB power,
+  our hold keeps 30 (135). Sustained after the first minute 30 fps in every variant: the native and a 720-row drawable, a 960x540 scene (37 fps
+  for its first 25 s, GPU 13.6 ms), `DM_PRESENT_INTERVAL=display` (38.7 fps for 25 s). Next: runs from a cool phone (longer rests, off USB
+  power), and what holds 60 for the first minutes (960x540 with the game's controller kept at 1?).
 - 271 CPU per draw, 226's area. MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook Air): resolved uniform addresses
   cached (`TOTK_CBUF_CACHE`; encode_args was 21 % of its translating thread), argument bytes equal to the shader's last block bind that block
   (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), the border key kept per shader (ours builds a string at each pso_get with
@@ -291,10 +299,9 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   descriptions at one address, Luigi's Mansion 3 5,507 → 2,125 MiB of GPU memory; AnySwitch's heaps in any pool); the characters' pixels per
   unit lowered (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100; the Switch's
   `resources.assets` has the same 50 entries); depth / stencil that no pass keeps made memoryless.
-- 281 native resolution for manosaba (the user, 2026-10-27): render targets of the screen's shape made at the screen's size while the game
-  keeps its 1920x1080 (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's `render_scale` is 1.0,
-  `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB). No Unity port renders above 1920 wide (Touchable's Silksong is capped
-  by the guest window textures).
+- 281 native resolution: done for manosaba in batch 109 (below). For other games the backend route stays: render targets of the screen's shape
+  made at the screen's size while the game keeps its size (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's
+  `render_scale` is 1.0, `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB).
 - 282 `@autoreleasepool` in res_add / res_remove on guest threads (nxnative 7d368c4: Ghost Trick 8.3 → 1.7 GB allocated); DM_RES_CENSUS first.
 - 283 pipelines: the tile-read pipelines in the warm-up seed (MacNativeGames 59e240a: in-world builds 58 → 21 on its Mac); at most 2
   speculative compile workers, the submit thread compiling an unclaimed job (4ppp44 cb21bec; ours a dispatch_async each, `mtl/pipeline.inc`).
@@ -569,3 +576,15 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   review). Also: the batch script's host build takes the run target's prerequisites only (names in its recipe gave three "No rule" lines).
   gfx 150 commands on Metal 4 and 150 on Metal 3, host 175, as before plus the new tests; both IPAs built. Smoke: the same red lines, frames
   within the usual spread, instructions a draw as before.
+- [x] batch 109 · 281 native resolution for manosaba (the user, 2026-10-27: "game default" is 1920x1080, the portraits looked soft at 720p).
+  Unity's Switch player answers its display size with the constant 1920x1080 in two places (the screen manager's vtable +0x180 at
+  main+0x90c990, the graphics device's at main+0x99bcc0), and its window textures and Screen.SetResolution follow it; it never asks
+  `nn::oe::GetDefaultDisplayResolution` (reporting 2560x1440 there changed nothing). Both are cut to host call 0x81 (`rules.py`,
+  `graphics.c` `hc_display_size`), which answers `DM_DISPLAY_SIZE=<w>x<h>` (unset: 1920x1080 as before). With 2560x1440 on the Mac the
+  window textures are 2560x1440 and the game renders its own 2560x1440 picture, menus and text box in place, the portraits' lines sharper than
+  at 1080 (with only the first cut, the picture reached the window's top-left 1920x1080). The iOS setting "Native (manosaba)" (Settings and the
+  panel; `dm.render_height` -1) reports the 16:9 picture the screen's pixels hold and renders at it (an iPhone Air: 2240x1260). Memory grows with
+  the picture (the 3071 MB A16 iPad above has no room for it). `host/tests/t_mano_display` (unset, 2241x1261 → 2240x1260, malformed;
+  -DDM_TEST_DISPLAY_CONST fails the second); `verify/regress.sh --fuzz` OK (main: 6 cuts, 3 gates). Also 270's `DM_IOS_DRAWABLE_H`. gfx 150
+  commands on Metal 4 and Metal 3, host 179; both IPAs; smoke as batch 108. Not yet run on a device: the manosaba build for the iPhone Air
+  needs Xcode's account again ("No Accounts").

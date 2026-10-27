@@ -275,7 +275,7 @@ static void *boot_thread(void *arg) {
     plog("boot: dm_main returned %d", rc);
     return NULL;
 }
-// Graphics settings (Settings app → this app, Settings.bundle): dm.fps 60 / 30, dm.render_height 0 (the game's own) / 900 / 720 / 540, dm.metalfx,
+// Graphics settings (Settings app → this app, Settings.bundle): dm.fps 60 / 30, dm.render_height 0 (the game's own) / -1 (native) / 900 / 720 / 540, dm.metalfx,
 // dm.hot_hold (Hold 30 fps when hot, on unless turned off).
 // At start they become DM_FPS / DM_RENDER_HEIGHT / DM_UPSCALE, unless a launch already set those (devicectl --environment, tests). Frame rate and
 // MetalFX also follow a change made while the game runs (on returning to it); the render resolution is read by the game once, at startup.
@@ -296,10 +296,16 @@ static void gfx_settings_boot(void) {
     g_gfx_fps = fps_afforded([d integerForKey:@"dm.fps"] == 30 ? 30 : 60, &why); g_gfx_fx = [d boolForKey:@"dm.metalfx"];
     NSInteger h = [d integerForKey:@"dm.render_height"];
     if (g_gfx_fps == 30) setenv("DM_FPS", "30", 0);
-    if (h > 0) { char b[16]; snprintf(b, sizeof b, "%ld", (long)h); setenv("DM_RENDER_HEIGHT", b, 0); }
+    if (h == -1) {   // "Native" (plan item 281, manosaba): the 16:9 picture the screen's pixels hold, reported as the display (DM_DISPLAY_SIZE,
+                     // games/manosaba/graphics.c) and rendered at (DM_RENDER_HEIGHT; the width as Screen.SetResolution's hook scales 2560x1440)
+        UIWindowScene *ws = nil; for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) if ([sc isKindOfClass:UIWindowScene.class]) { ws = (UIWindowScene *)sc; break; }
+        CGSize nb = ws ? ws.screen.nativeBounds.size : CGSizeZero; double lng = MAX(nb.width, nb.height), sht = MIN(nb.width, nb.height);
+        unsigned H = (unsigned)MIN(sht, floor(lng * 9 / 16)) & ~1u, W = ((2560u * H + 720u) / 1440u) & ~1u;
+        if (H >= 360) { char b[32]; snprintf(b, sizeof b, "%ux%u", W, H); setenv("DM_DISPLAY_SIZE", b, 0); snprintf(b, sizeof b, "%u", H); setenv("DM_RENDER_HEIGHT", b, 0); }
+    } else if (h > 0) { char b[16]; snprintf(b, sizeof b, "%ld", (long)h); setenv("DM_RENDER_HEIGHT", b, 0); }
     if (g_gfx_fx) setenv("DM_UPSCALE", "metalfx", 0);
-    plog("boot: graphics settings: %ld fps (%s), render height %s, MetalFX %s, hold 30 fps when hot %s", (long)g_gfx_fps, why, getenv("DM_RENDER_HEIGHT") ?: "the game's",
-         g_gfx_fx ? "on" : "off", hot_hold() ? "on" : "off");
+    plog("boot: graphics settings: %ld fps (%s), render height %s%s%s, MetalFX %s, hold 30 fps when hot %s", (long)g_gfx_fps, why, getenv("DM_RENDER_HEIGHT") ?: "the game's",
+         getenv("DM_DISPLAY_SIZE") ? ", display " : "", getenv("DM_DISPLAY_SIZE") ?: "", g_gfx_fx ? "on" : "off", hot_hold() ? "on" : "off");
 }
 static void gfx_settings_refresh(void) {
     if (!g_host_up) return;

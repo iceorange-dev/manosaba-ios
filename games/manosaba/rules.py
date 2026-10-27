@@ -20,6 +20,13 @@ CUTS = {
         # (width, height) from its configuration's table by level and tail-calls Screen.SetResolution(int, int, bool) 0x3327d00, its only caller on
         # Switch (the PC settings dropdowns call the four-argument overload 0x328c360 directly); LoadServiceState 0x21c6660 calls it at startup
         (0x3327d00, '5f00007268008052', '011000d4c0035fd6', 'Screen.SetResolution(int, int, bool): tst w2, #1; mov w8, #3 → svc #0x80; ret (host call: the size scaled, then the four-argument overload)'),
+        # The display's size (graphics.c): the Switch player's screen manager (the object main+0x44d760 returns, made at 0x44d6c0 with the
+        # constructor 0x90c860) answers its size with the constant 1920x1080 at vtable +0x180, 0x90c990; the window textures take it (0x9b01f8 →
+        # SetSize2D at 0x9b0258 / 0x9b02f4) and Screen.SetResolution is held to it; the graphics device has the same constant answer at 0x99bcc0
+        # (with it 1920x1080, a 2560x1440 picture reached only the window's top-left 1920x1080). The host call answers DM_DISPLAY_SIZE instead
+        # for both (plan item 281)
+        (0x90c990, '08f08052280000b9', '211000d4c0035fd6', 'screen manager display size: mov w8, #0x780; str w8, [x1] → svc #0x81; ret (host call: the size reported)'),
+        (0x99bcc0, '08f08052280000b9', '211000d4c0035fd6', 'graphics device display size: mov w8, #0x780; str w8, [x1] → svc #0x81; ret (host call: the size reported)'),
     ],
 }
 OBS = {}

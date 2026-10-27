@@ -54,6 +54,7 @@
 			<key>Titles</key>
 			<array>
 				<string>Game default</string>
+				<string>Native (manosaba)</string>
 				<string>900p</string>
 				<string>720p</string>
 				<string>540p</string>
@@ -61,6 +62,7 @@
 			<key>Values</key>
 			<array>
 				<integer>0</integer>
+				<integer>-1</integer>
 				<integer>900</integer>
 				<integer>720</integer>
 				<integer>540</integer>

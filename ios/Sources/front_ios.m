@@ -40,6 +40,16 @@ static CGRect letterbox_rect(CGRect f) {
     return CGRectMake(f.origin.x + floor((f.size.width - w) / 2), f.origin.y + floor((f.size.height - h) / 2), w, h);
 }
 
+// The drawable's size: the view's pixels, or with DM_IOS_DRAWABLE_H=<rows> that many rows at the view's shape, so the system compositor scales
+// the layer to the screen and our GPU fills fewer pixels a frame (MacNativeGames' TOTK_IOS_DRAWABLE_H, MIT, written anew; kxn/d2r-mobile measured
+// 9.5 % fewer GPU writes on an Adreno 735 with its buffer at the game's size; plan item 270, an A/B on the phone)
+static CGSize drawable_size(CGSize pt, CGFloat scale) {
+    static int rows = -1; if (rows < 0) { const char *e = getenv("DM_IOS_DRAWABLE_H"); rows = e ? atoi(e) : 0; if (rows < 0) rows = 0;
+        if (rows) LOG("front: drawable %d rows at the view's shape (DM_IOS_DRAWABLE_H), the compositor scales it", rows); }
+    if (!rows || pt.height <= 0 || rows >= pt.height * scale) return CGSizeMake(pt.width * scale, pt.height * scale);
+    return CGSizeMake(round(pt.width * rows / pt.height), rows);
+}
+
 // ---------- Game view: CAMetalLayer + touches ----------
 // Touches: every finger gets the lowest free slot 0–15 on touch down and keeps it until it lifts; the whole set goes to the host in coordinates
 // normalized to this view on every change (hle_touch.c scales them to the game's touch space)
@@ -56,7 +66,7 @@ static CGRect letterbox_rect(CGRect f) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CAMetalLayer *l = (CAMetalLayer *)self.layer;
-    l.drawableSize = CGSizeMake(self.bounds.size.width * l.contentsScale, self.bounds.size.height * l.contentsScale);
+    l.drawableSize = drawable_size(self.bounds.size, l.contentsScale);
 }
 - (void)push {
     dm_touch pt[16]; int n = 0; CGSize b = self.bounds.size;
@@ -288,7 +298,7 @@ static UISlider *panel_slider(NSString *key, float lo, float hi, float def, NSAr
     UILabel *t = [UILabel new]; t.text = @"Settings"; t.textColor = UIColor.whiteColor; t.font = [UIFont boldSystemFontOfSize:18]; [st addArrangedSubview:t];
     [st addArrangedSubview:panel_row(@"Frame rate", panel_choice(@"dm.fps", @[@"60", @"30"], @[@60, @30]))];
     [st addArrangedSubview:panel_row(@"Hold 30 fps when hot", panel_switch_on(@"dm.hot_hold"))];
-    [st addArrangedSubview:panel_row(@"Render resolution (next launch)", panel_choice(@"dm.render_height", @[@"Game", @"900", @"720", @"540"], @[@0, @900, @720, @540]))];
+    [st addArrangedSubview:panel_row(@"Render resolution (next launch)", panel_choice(@"dm.render_height", @[@"Game", @"Native", @"900", @"720", @"540"], @[@0, @-1, @900, @720, @540]))];
     [st addArrangedSubview:panel_row(@"MetalFX upscaling", panel_switch(@"dm.metalfx"))];
     [st addArrangedSubview:panel_row(@"Show frame rate", panel_switch(@"dm.perf_line"))];
     if (g_pad) {
@@ -410,7 +420,7 @@ UIView *front_ios_view(CGRect frame, CGFloat scale) {
     g_layer.device = MTLCreateSystemDefaultDevice();
     g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     g_layer.contentsScale = scale;
-    g_layer.drawableSize = CGSizeMake(v.bounds.size.width * g_layer.contentsScale, v.bounds.size.height * g_layer.contentsScale);
+    g_layer.drawableSize = drawable_size(v.bounds.size, g_layer.contentsScale);
     g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
     g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
     [g_rate_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
