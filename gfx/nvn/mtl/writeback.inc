@@ -46,8 +46,7 @@ static int storage_filled(const tex_t *t) {
     return 0;
 }
 static void cpuf_watch(const tex_t *t) {   // submit thread: protect the storage, so a later CPU write shows as dirty pages
-    nvn_dirty_protect(t->mem, t->size);
-    uint64_t st = nvn_dirty_now();
+    uint64_t st = nvn_dirty_protect_stamp(t->mem, t->size);
     pthread_mutex_lock(&g_cpuf_mu);
     if (!g_cpuf_watch) g_cpuf_watch = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
     CFDictionarySetValue(g_cpuf_watch, (const void *)(uintptr_t)t->serial, (const void *)(uintptr_t)(st + 1));
@@ -100,8 +99,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct);
 static void wb_note(const tex_t *t) {   // submit thread: the GPU writes t in this submission (every caller makes its MTLTexture right after)
     if (!t->mem || !t->size) return;
     id o = serial_get(t->serial); if (!o) { tex_mtl(t); o = serial_get(t->serial); } if (!o) return;
-    nvn_dirty_protect(t->mem, t->size);   // CPU writes after this rendering show in nvn_dirty_since
-    uint64_t stamp = nvn_dirty_now(), k = t->serial;
+    uint64_t stamp = nvn_dirty_protect_stamp(t->mem, t->size), k = t->serial;   // CPU writes after this rendering show in nvn_dirty_since
     pthread_mutex_lock(&g_wb_mu);
     wb_ent *e = nvn_hm_get(&g_wb, &k);
     if (e) { e->stamp = stamp; e->t = *t; e->sub = g_sub_serial; e->idle_stamp = 0; wb_snap(e); }
@@ -198,6 +196,25 @@ static void wb_cpu_pass(void) {   // submit thread, before the submission
     }
 }
 static void wb_released(uint64_t serial) { pthread_mutex_lock(&g_wb_mu); wb_ent *e = nvn_hm_del(&g_wb, &serial); pthread_mutex_unlock(&g_wb_mu); wb_free(e); }   // fin_drain
+// A pool finalized: the records of textures in its memory go with it (MacNativeGames 0930478's wb_drop_range, MIT, written anew). A texture's
+// own release can come later (fin_drain) or never, and an invalidate of a pool made later on that memory would write the old rendering over what
+// the game put there next: sead heap blocks, an allocator node, index buffers (MacNativeGames #529 / #764, Tears of the Kingdom after a warp; t_wb)
+static void wb_drop_range(uintptr_t lo, uintptr_t hi) {
+#ifndef DM_TEST_WB_KEEP_DEAD   // negative control of t_wb only: the records stay, as before
+    for (int full = 1; full;) {
+        wb_ent *list[256]; int nl = 0;
+        pthread_mutex_lock(&g_wb_mu);
+        for (uint32_t i = 0; i < g_wb.cap && nl < 256; i++) { wb_ent *e = g_wb.vals ? g_wb.vals[i] : NULL;
+            if (e && (uintptr_t)e->t.mem < hi && (uintptr_t)e->t.mem + e->t.size > lo) list[nl++] = e; }
+        for (int k = 0; k < nl; k++) { uint64_t key = list[k]->t.serial; nvn_hm_del(&g_wb, &key); }
+        pthread_mutex_unlock(&g_wb_mu);
+        for (int k = 0; k < nl; k++) wb_free(list[k]);
+        full = nl == 256;
+    }
+#else
+    (void)lo; (void)hi;
+#endif
+}
 static uint64_t g_wb_cbs;   // command buffers the write-backs committed (t_wb)
 static void wb_level_size(const tex_t *t, unsigned level, uint32_t *lw, uint32_t *lh, size_t *lp, size_t *lr) {
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);

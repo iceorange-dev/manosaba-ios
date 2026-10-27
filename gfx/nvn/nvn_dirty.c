@@ -31,7 +31,10 @@ enum { BLK_SHIFT = 10, BLK = 1 << BLK_SHIFT, NBLK = 256, MAX_RANGE = BLK * NBLK 
 // c2c0105, MIT: taking the first range containing the address judged a texture whose pool shares its first page with a smaller preceding pool
 // untracked, so it was re-uploaded on every use; a fault on a shared page released one range and left the other marked protected; destroying a
 // pool could unregister its neighbour.)
-typedef struct { uintptr_t base, end, mem; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; } range_t;
+// born: the clock when the range was registered. A stamp older than its range is of other memory (the pool was finalized and its memory reused):
+// whatever it says, the pages count as written since (MacNativeGames 873edff, MIT: a GPU write-back record that outlived its pool read as fresh,
+// because a new range's generations start at 0, and wrote an old rendering into the game's heap)
+typedef struct { uintptr_t base, end, mem; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; uint64_t born; } range_t;
 static _Atomic(range_t *) g_blk[NBLK];
 static inline range_t *rg(int i) { return &atomic_load_explicit(&g_blk[i >> BLK_SHIFT], memory_order_acquire)[i & (BLK - 1)]; }
 static _Atomic int g_nr;
@@ -90,9 +93,12 @@ static void stamp_shared(range_t *r, uintptr_t p, uint64_t g) {
     (void)r; (void)p; (void)g;
 #endif
 }
+#ifndef DM_DIRTY_AFTER_CLOCK
+#define DM_DIRTY_AFTER_CLOCK()   // t_dirty_stamp stages a release paused here: its generation taken, the page still BUSY
+#endif
 static void unprotect_page(range_t *r, uintptr_t p) {   // The caller has already changed the state from PROT to BUSY
     mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
-    uint64_t g = atomic_fetch_add(&g_now, 1) + 1;
+    uint64_t g = atomic_fetch_add(&g_now, 1) + 1; DM_DIRTY_AFTER_CLOCK();
     atomic_store(&r->gen[p], g); stamp_shared(r, p, g);
     atomic_store(&r->state[p], PG_NONE);
 }
@@ -129,7 +135,7 @@ static void prep_write(void *addr, size_t len) {
             if (took) { if (!open) { run = p; open = 1; } continue; }
             if (open) {   // pages [run, p) are ours (BUSY): one mprotect, then each stamped and released
                 mp(r->base + (run << g_shift), (p - run) << g_shift, PROT_READ | PROT_WRITE);
-                uint64_t g = atomic_fetch_add(&g_now, 1) + 1;
+                uint64_t g = atomic_fetch_add(&g_now, 1) + 1; DM_DIRTY_AFTER_CLOCK();
                 for (uintptr_t k = run; k < p; k++) { atomic_store(&r->gen[k], g); stamp_shared(r, k, g); atomic_store(&r->state[k], PG_NONE); }
                 atomic_fetch_add(&g_preps, p - run); open = 0;
             }
@@ -172,7 +178,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     } else {
         memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen);
     }
-    r->base = base; r->end = end; r->mem = (uintptr_t)mem; r->state = state; r->gen = gen;
+    r->base = base; r->end = end; r->mem = (uintptr_t)mem; r->state = state; r->gen = gen; r->born = atomic_fetch_add(&g_now, 1) + 1;
     if (slot == n) atomic_store(&g_nr, n + 1);
     atomic_store_explicit(&r->live, 1, memory_order_release);
     pthread_mutex_unlock(&g_slot_mu);
@@ -192,17 +198,39 @@ void nvn_dirty_protect(const void *addr, size_t len) {
     if (!r) return;
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     // Consecutive pages set to PROT are merged into one mprotect (per-page calls ran to over a thousand per frame when large textures were first uploaded; character select, startup frame 5: 4888 calls).
-    // Pages already PROT / BUSY break a run: they are not protected again, and pages another thread is changing are left alone
+    // Pages already PROT break a run and are not protected again. A page another thread is changing (BUSY: a write being released) is waited
+    // for and then taken, the run closed first so no page of ours is held BUSY meanwhile: left alone, it ended writable after the caller's stamp,
+    // with a generation the release took before that stamp, and every later write went unseen (seedds/nxnative 5b0c11a, MIT: Tears of the
+    // Kingdom's glyph letters missing; t_dirty_stamp)
     uintptr_t run = 0; int open = 0;
     for (uintptr_t i = p; i <= q + 1; i++) {
         uint8_t st = PG_NONE;
         int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
         if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0; }
+#ifndef DM_TEST_DIRTY_SKIP_BUSY   // negative control of t_dirty_stamp only: a BUSY page left alone, as before
+        if (!took && i <= q && st == PG_BUSY && busy_wait(r, i)) i--;   // NONE or PROT now: look at it again
+#endif
     }
+}
+// The stamp of the content about to be read, then its pages set read-only, in this order: a write released after the protection began has a
+// newer generation than the stamp. Protecting first let a write that faulted in between take the very generation the stamp then read, so it
+// counted as part of a copy that may not have seen it, and its page stayed writable (nxnative 5b0c11a; t_dirty_stamp)
+#ifndef DM_DIRTY_AFTER_PROTECT
+#define DM_DIRTY_AFTER_PROTECT()   // t_dirty_stamp lets a write fault and be released here
+#endif
+uint64_t nvn_dirty_protect_stamp(const void *addr, size_t len) {
+#ifdef DM_TEST_DIRTY_STAMP_AFTER   // negative control of t_dirty_stamp only: protected first, as before
+    nvn_dirty_protect(addr, len); DM_DIRTY_AFTER_PROTECT(); return nvn_dirty_now();
+#else
+    uint64_t s = nvn_dirty_now(); nvn_dirty_protect(addr, len); DM_DIRTY_AFTER_PROTECT(); return s;
+#endif
 }
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
 static int span_written(const range_t *r, uintptr_t a, size_t len, uint64_t stamp) {
+#ifndef DM_TEST_DIRTY_NO_BORN   // negative control of t_dirty_stamp only: a stamp older than its range read against the new range's generations
+    if (stamp < r->born) return 1;   // taken before this range existed: of other memory (see range_t)
+#endif
     uintptr_t p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     for (uintptr_t i = p; i <= q; i++) if (atomic_load(&r->gen[i]) > stamp) return 1;   // The generation of the last write before upload is <= the stamp; any later write must be > the stamp
     return 0;

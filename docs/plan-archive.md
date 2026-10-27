@@ -17,9 +17,8 @@ What is left (2026-10-21): every item the Mac can do alone is done. The open ite
 
 - The user at the Mac (a window, sudo, a display): 97 (`powermetrics`), 71b (the covered window), 71d (a display above 120 Hz), the window
   checks of 123 (the 30 fps setting) and 127.
-- Play or saves: 72 (a blood moon skip with the 30 fps product; with the 60 fps one on the iPhone the game went on, 2026-10-22), 69 (game
-  over), 71c (product60's 30 fps systems), 132 (a save where the wave program draws), and the checks of 161 (grass), 163 (hair and cloth), 165
-  (`DM_NVN_FBX=split` over paved ground or decals), 167 (an overworld save for towns).
+- Play or saves: 69 (game over), 71c (product60's 30 fps systems), 132 (a save where the wave program draws), and the checks of 161 (grass), 163
+  (hair and cloth), 165 (`DM_NVN_FBX=split` over paved ground or decals), 167 (an overworld save for towns).
 - The console: 94a (Link close to the camera, the Great Sky Island grass), 124 (stick diagonals).
 - An iPhone or iPad: 71b's Metal 4 screen; the checks of 148, 153, 171 (done on 2026-10-21: 65, 68, 106,
   134, 135, 140, 173, 175, and manosaba's part of 142).
@@ -1264,9 +1263,10 @@ Tools:
   `hle_svc.c` that 6 GB failed there dates from before the memory limit was signed in (65)
 
 Open:
-- [ ] 72 the blood moon crash: after 1, the stack logging of 40 and 47, dump the threads right at the skip; with 130's movie hold, the skip with the
+- [-] 72 the blood moon crash: after 1, the stack logging of 40 and 47, dump the threads right at the skip; with 130's movie hold, the skip with the
   hold, without it (`DM_INACTIVITY_FPS=0`) and with the 30 fps product (needs a blood moon in play: the user). 2026-10-22: skipped with the
-  hold on the iPhone (the 60 fps product, 5ee1644), no crash (the user); left: a skip with the 30 fps product
+  hold on the iPhone (the 60 fps product, 5ee1644), no crash (the user); left: a skip with the 30 fps product. Closed 2026-10-24: the user
+  judges it an earlier crash that happened to land at the skip
 
 ## Evidence the open items relied on (2026-10-23)
 

@@ -123,14 +123,16 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
             uint64_t st; id<MTLTexture> nt = pkg_upload(t, &st, reuse);
             if (nt) { id<MTLTexture> old = pk->tex;
                       if (nt == reuse) g_pkg_spare_reuse++; else if (pk->spare) defer_obj_release(pk->spare);   // a spare still in use or of another shape: retired
-                      pk->spare = old; pk->spare_fence = g_fence + 1; pk->tex = nt; res_add(nt); ser_bump(t->serial); pk->stamp = st; pk->seen = nvn_dirty_now(); pk->tracked = !pk->hashed && nvn_dirty_tracked(t->mem, t->size); if (pk->hashed) pk->chash = h; g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->size); }
+                      pk->spare = old; pk->spare_fence = g_fence + 1; pk->tex = nt; res_add(nt); ser_bump(t->serial); pk->stamp = st; pk->seen = st; pk->tracked = !pk->hashed && nvn_dirty_tracked(t->mem, t->size); if (pk->hashed) pk->chash = h; g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->size); }
             return pk->tex;
         }
         pk = [NvPkg new]; pk->dspan = -1;
         if (counts_on()) { if (!g_pkgs) g_pkgs = [NSHashTable weakObjectsHashTable]; [g_pkgs addObject:pk]; }
         pk->tex = pkg_upload(t, &pk->stamp, nil);
         if (!pk->tex) return nil;
-        pk->seen = nvn_dirty_now(); g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->size);
+        // seen: the upload's stamp, not the clock after it (here and at a re-upload above): a write released during the upload moved the clock, and
+        // "the clock has not moved since seen" would have skipped its check (seedds/nxnative 5b0c11a, MIT)
+        pk->seen = pk->stamp; g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->size);
         if ((pk->hashed = pkg_hashed(t))) pk->chash = pkg_hash(t->mem, t->size); else pk->tracked = nvn_dirty_tracked(t->mem, t->size);
         if (on_sub_thread()) pk->csub = g_sub_serial;
         serial_put(t->serial, pk);

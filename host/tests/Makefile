@@ -20,6 +20,8 @@ run: \
 	$(B)/t_cloudsync \
 	$(B)/t_cmdchan \
 	$(B)/t_cmdchan_partial \
+	$(B)/t_codesig \
+	$(B)/t_codesig_broken \
 	$(B)/t_cmdchan_noreopen \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
@@ -544,6 +546,11 @@ run: \
 	   cat $(B)/t_rundiag_noredact.log; echo "t_rundiag_noredact: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_rundiag_noredact: an unredacted report gives away paths, addresses and the user, as expected"
 	$(B)/t_sead 2>/dev/null
+	$(B)/t_codesig $(B)/t_codesig_true $(B)/t_codesig_false $(B)/t_codesig
+	@status=0; $(B)/t_codesig_broken $(B)/t_codesig_true $(B)/t_codesig_false $(B)/t_codesig > $(B)/t_codesig_broken.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || ! grep -q "✗ signed with it false" $(B)/t_codesig_broken.log; then \
+	   cat $(B)/t_codesig_broken.log; echo "t_codesig_broken: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_codesig_broken: a key present with <false/> read as true, as expected"
 	@status=0; $(B)/t_sead_broken > $(B)/t_sead_broken.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ an address past A's end" $(B)/t_sead_broken.log; then \
 	   cat $(B)/t_sead_broken.log; echo "t_sead_broken: unexpected negative-control result ($$status)"; exit 1; \
@@ -768,6 +775,14 @@ $(B)/t_cheats_norw: t_cheats.c ../game/cheats.c ../game/cheat_vm.c ../cheat_vm.h
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CHEATS_NO_REWRITE_CHECK -I.. -o $@ t_cheats.c ../game/cheat_vm.c
 $(B)/t_padmap_posall: t_padmap.c ../gamepad_map.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_FACE_POS_ALL -I.. -o $@ t_padmap.c
+$(B)/t_codesig: t_codesig.c ../../ios/Sources/codesig.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_codesig.c
+	printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>com.apple.developer.kernel.increased-memory-limit</key>\n\t<true/></dict></plist>\n' > $(B)/ent_true.plist
+	printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>com.apple.developer.kernel.increased-memory-limit</key><false/></dict></plist>\n' > $(B)/ent_false.plist
+	cp $@ $(B)/t_codesig_true && codesign -s - -f --entitlements $(B)/ent_true.plist $(B)/t_codesig_true 2>/dev/null
+	cp $@ $(B)/t_codesig_false && codesign -s - -f --entitlements $(B)/ent_false.plist $(B)/t_codesig_false 2>/dev/null
+$(B)/t_codesig_broken: t_codesig.c ../../ios/Sources/codesig.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_CODESIG_ANY_VALUE -o $@ t_codesig.c
 $(B)/t_sead: t_sead.c ../diag/sead.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_sead.c
 $(B)/t_sead_broken: t_sead.c ../diag/sead.c ../dm.h | $(B)

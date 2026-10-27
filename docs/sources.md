@@ -17,43 +17,46 @@ d2r-mobile and its derivatives (MIT, keeping jhaizhou's LICENSE; the derivatives
 
 | Project | Last read | Notes |
 |---|---|---|
-| [jhaizhou-ops/d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile) (upstream, fetch only) | main eb3fe37 (10-23 evening) | v2.0 b811b90 (Android and HarmonyOS on a Vulkan engine, Korean, Xbox layout, iPhone Duo) and PRs #119-#121, #126; open #104, #111, #127. d2r-mobile/d2r-mobile is a rewritten copy of its history up to 21cf97b |
-| [seedds/nxnative](https://github.com/seedds/nxnative) | main e454ac9 (10-23); 56704a0 read on its own (10-23 night, main then 4c7adf4) | PRs to #64, #62 open; branches `main`, `chain-refresh`. Its history was rewritten on 10-22 (b932024's tree is 5dae4db). No Android port; its "Vulkan layer" runs Switch games that use Vulkan on Metal. seedds/smbw-mobile is the same repository renamed |
-| [ly05010419/MacNativeGames](https://github.com/ly05010419/MacNativeGames) | main a988b5e (10-23) | Tears of the Kingdom 1.0.0 / 1.1.2 / 1.4.3 on the Mac; PRs to #287, #222 / #257 / #286 open |
-| MacNativeGames forks | 10-23 | tvc97 e8bd37d; DavidZande/MacNativeGames `performance` a60cdb3; BennettStaley/NativeTOTK-Apple-Silicon 47c261f (base e55ad1c); dnlflores/MacNativeGames c098279 (base 4fdda41); NicholasDominici/totk-ios (1.0.0 on iPad and iPhone; its aspect data is GPL-3.0); colonnellotong/MacNativePorts |
+| [jhaizhou-ops/d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile) (upstream, fetch only) | main d93985b (10-27); `android-pipe-guard` d4275cd, `android-warm-seed-pack` 9625ef3, `experiment/over-the-shoulder-camera` 62e7fc4 | v2.0 b811b90 (Android and HarmonyOS on a Vulkan engine, Korean, Xbox layout, iPhone Duo); since: Adreno 740-799 rewrite policy, subgroup helper inlining (#156 open), BC4 / BC5 8-bit fallback, a pipeline crash guard (Vulkan); PRs to #165, #144 (MetalFX, open). d2r-mobile/d2r-mobile is a rewritten copy of its history up to 21cf97b |
+| [seedds/nxnative](https://github.com/seedds/nxnative) | main b7a5cd4 (10-27) | PRs to #371, issues to #373; `chain-refresh` gone. Its history was rewritten on 10-22 (b932024's tree is 5dae4db). No Android port; its "Vulkan layer" runs Switch games that use Vulkan on Metal. seedds/smbw-mobile is the same repository renamed |
+| [ly05010419/MacNativeGames](https://github.com/ly05010419/MacNativeGames) | main aaf6ba1 (10-27) | Tears of the Kingdom 1.0.0 / 1.1.2 / 1.4.3 on the Mac, the iPhone and Vision Pro; PRs to about #1046 (#257, #751, #753, #787 open); no Android (#151, #357) |
+| MacNativeGames forks | 10-27 | tvc97 e8bd37d; DavidZande/MacNativeGames `performance` a60cdb3 (unchanged); BennettStaley/NativeTOTK-Apple-Silicon 6762840 (115 of its own since 47c261f); dnlflores/MacNativeGames 1cb53f0; NicholasDominici/totk-ios b3de471 (its aspect data is GPL-3.0); colonnellotong/MacNativePorts d2e1e6d (unchanged); Sacrappy/NativeTOTK gone (404) |
 | [T5eng/nxnative_totk](https://github.com/T5eng/nxnative_totk) (MIT with a note) | 057575d | Tears of the Kingdom 1.4.3 on an iPhone Air (iOS 27.0.1) as patches on MacNativeGames |
-| [atone/nxnative](https://github.com/atone/nxnative) | 185cfda | Pro Controller motion and HD rumble |
-| [chayan-bit/AnySwitch](https://github.com/chayan-bit/AnySwitch) | 30f6a8a (10-23) | base nxnative 23a11da; its Tears of the Kingdom entry is nxnative's |
-| LNPANDY/nxnative-romfs-archive | 5738460 (10-23) | |
-| [Nishikori-Yui/lordran-native](https://github.com/Nishikori-Yui/lordran-native) | 1e6b2cf (10-22) | Dark Souls Remastered, from nxnative; PR #40 open on 10-23 |
-| [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) | `codex/p5r-runtime` c5538d3 (10-23) | Persona 5 Royal |
-| [huajiaoshu520/acnh-mobile](https://github.com/huajiaoshu520/acnh-mobile) | 1c0293b (10-23), `ios18-compat` a98d127 | Animal Crossing; its base is now nxnative e72a065 |
+| [atone/nxnative](https://github.com/atone/nxnative) | e3144b7 (an upstream merge only) | Pro Controller motion and HD rumble |
+| [chayan-bit/AnySwitch](https://github.com/chayan-bit/AnySwitch) | 29d88a4 (10-27) | base nxnative 23a11da; render-target heaps in any pool, heap members without lossless compression (8ba3c71), `DM_INTERNAL_RES` |
+| LNPANDY/NX2Apple (was nxnative-romfs-archive) | 1f15ad6 (10-27) | MIT with its RomFS archive's copyright; a one-click Mac app; issue #23: an A20 Pro limit of 8191 MB |
+| [Nishikori-Yui/lordran-native](https://github.com/Nishikori-Yui/lordran-native) | 85220ca (10-27); PR #40 419f0dc | Dark Souls Remastered, from nxnative; pool base snapshots at record time (c400b58) |
+| [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) | `codex/p5r-runtime` 4062bf4 (10-27) | Persona 5 Royal |
+| [huajiaoshu520/acnh-mobile](https://github.com/huajiaoshu520/acnh-mobile) | fd7b16f (10-27), `ios18-compat` a98d127 | Animal Crossing; its base is now nxnative e72a065 |
 | ha7rock/blade2-mobile | a7dff99 (10-23) | Blade II, UE4 4.17 |
 | enginefuture/bayonetta3-mobile, enginefuture/dr3-mobile | e5ce116, a31c36c | dr3: Diablo III on nxnative 9579030, with LDN |
-| MZhao-ouo/Touchable | 04b6c1c (10-22) | Rhythm Heaven and Silksong; touch controls |
+| MZhao-ouo/Touchable | 8b22a49 (10-27) | Rhythm Heaven and Silksong (Unity: its render height, capped by the 1920-wide guest window textures); touch controls; MIT |
 | kuosuko/tomodachi-native | 5587d1b | Tomodachi Life, SDK 20 |
 | armyja/nxnative-aa-port, armyja/nxnative-cuphead | df997fa, a393de4 | Ace Attorney (Unity, RE Engine); Cuphead |
 | shh632058099/d2r-mobile | e460049 (10-23) | iOS |
-| dodola, n2ray (d2r-mobile forks) | cc01ec6; main ce813ca, `fix/x18-context-cache-collisions` 8e58df8 | dodola: the newest write per 64-page block, an ordered NVN worker |
+| xinerqu/ns2ios-shell, Xc1Ym/LumaNX, IMTHECOOLEST/NXNATIVE-1.43.1 | f575b12, db3bc99, 1780c28 (10-27) | an IPA packed on Windows (its table of signers that keep the increased memory limit, ios/README.md); a Mac GUI; a 1.43:1 view |
+| kxn/d2r-mobile `codex/*` (146 own; `codex/android-native-backup-20261019` c704ff7), kxn/nvn-kgsl, n3crosis, TIMYW2K `lang-voice` 2d9ac3a, ghostyshell/nx2apk | 10-27 | Android measurements on an Adreno 735 (the translation on the calling thread 43 against 32 fps); NVN on KGSL; a browser IPA packager; portrait D2R; nxnative for Android with Darwin shim headers |
+| littckerQiu/witchspringr-ios | b276bc4 (10-27) | a fork of this repository with an nxnative overlay for WitchSpring R |
+| dodola, n2ray (d2r-mobile forks) | 573106f; main 346b37e, `generic/android` 60c720f | dodola: the newest write per 64-page block, an ordered NVN worker |
 | hyc1743/super-mario-odyssey-ios | 3ef14d3, `codex/nxnative-verify-once` 103329c (10-22) | |
 | q520asdf0123/nsCHaojIMaLiAo, DanielZhangyc/smbw-mobile | 10-22, 56737aa | Super Mario 3D World on upstream; Super Mario Bros. Wonder on the Mac |
 | realskyrin/ns-game-apple-arm-port | 4d2986e | MIT since that commit |
 | yokeyhh/switch-port-to-apple, aerolithink, bluewater0121 | 8e1d2af, 43cde9a, 30ca74e (10-22) | a porting playbook; two A12Z iPad Pro D2R ports |
-| Johnoooob/nx-port, Kamisorara/d2r-mobile, 4ppp44/d2r-mobile-ios17 | 3e6366b, 1539d80, 2a7b1c6 | unchanged since 10-19; 4ppp44 is an iOS 17 build (iOS 17 is not supported here) |
+| Johnoooob/nx-port, Kamisorara/d2r-mobile, 4ppp44/d2r-mobile-ios17 | 3e6366b, 1539d80, cb21bec | 4ppp44 (an iOS 17 build): argument blocks reused across passes, the driver segment filled per vec4 offset, capped speculative pipeline workers |
 | TommyLau/botw-mobile | gone (404 since 10-17) | its commits named in this file can no longer be fetched |
 
 Independent projects:
 
 | Project | Last read | Notes |
 |---|---|---|
-| [c22dev/mush8](https://github.com/c22dev/mush8) | 9f6e2b7 (10-22) | **GPL-3.0: ideas and behaviour only.** Mario Kart 8 Deluxe in Rust; its IPA is ad-hoc signed with the increased memory limit for signers that read the app's own entitlements ([ios/README.md](../ios/README.md)) |
-| peiikai/LASRecomp (MIT for its own code, with a note) | main 466fee6, `beta_5` f7b986e (10-23) | Link's Awakening static recompilation; PRs to #331, `metal-overlap` 5d17070 unmerged; hjqcan's fork is a copy |
-| Apolinario-coder/SkyRecomp (MIT with a note) | b3e22ed (10-22) | Skyward Sword HD; much of it is LASRecomp's |
+| [c22dev/mush8](https://github.com/c22dev/mush8) | c27579d (10-27) | **GPL-3.0: ideas and behaviour only.** Mario Kart 8 Deluxe in Rust; its IPA is ad-hoc signed with the increased memory limit for signers that read the app's own entitlements ([ios/README.md](../ios/README.md)) |
+| peiikai/LASRecomp (MIT for its own code, with a note) | main a4b53a3, `beta_6` b2e8af2 (10-27) | Link's Awakening static recompilation; the GPU overlap merged (#333), Vulkan executor, iOS (PR #238 dac664c: "Match display" render-target scaling); hjqcan's fork is a copy |
+| Apolinario-coder/SkyRecomp (MIT with a note) | 506a9bc (10-27) | Skyward Sword HD; much of it is LASRecomp's |
 | IshaanKalra2103/BotWRecomp | 2b84b82 | MIT; its Cemu-derived parts (MPL) and `fps.cpp`: ideas only |
 | [OJZen/totk-mobile](https://github.com/OJZen/totk-mobile) | 6d4c1d3 (10-22) | Apache-2.0 (its `core/` is upstream's MIT code); Tears of the Kingdom 1.4.3 on a Mac and M1+ iPads |
-| nxporting/nxport | main 0ec6d37 (10-23) | MIT, Rust, Tears of the Kingdom 1.1.2 only |
-| itzzslimechisel/totkrecomp, fedebuonco/nxrt, MayBAMemory/nvn-metal | read 10-23 | MIT (Windows through dynarmic and Vulkan); Unlicense (a runtime for static recompilations); MIT (Kirby) |
-| [catoncat/d2r-port-radar](https://github.com/catoncat/d2r-port-radar) | c6ea97c (10-23, 318 entries) | an index of derivative ports |
+| nxporting/nxport | main 2536313 (10-27) | MIT, Rust, Tears of the Kingdom 1.1.2 only; a Vulkan backend, frame capture with pass-by-pass replay against both backends |
+| itzzslimechisel/totkrecomp, fedebuonco/nxrt, MayBAMemory/nvn-metal | b1b3d2d, f658d74 (10-27), 10-23 | MIT (Windows through dynarmic and Vulkan); Unlicense (a runtime for static recompilations, macOS only since 20360ec); MIT (Kirby) |
+| [catoncat/d2r-port-radar](https://github.com/catoncat/d2r-port-radar) | 5f8571b (10-27, 370 entries) | an index of derivative ports |
 | masagrator's FPSLocker-Warehouse, alanyangcn/smbwonder-ios | | no licence: facts only |
 | vecStardo/VA-11_ns2ios | | GameMaker through GLES, no NVN: little to take |
 
@@ -79,6 +82,8 @@ Seen, not reviewed: CODPHISH/ns2app (Silksong on iOS), WangTingYeYe/rtg-mobile, 
 - 2026-10-23, seventh review (five reviewers) and a deep review of the new Tears of the Kingdom projects (five reviewers, layer by layer
   against ours): 231-259. Below the shaders none of the new projects does more than ours.
 - 2026-10-23 evening, upstream v2.0: nothing to port then (see Not taken); its NaN rule became 260 that night, after nxnative 56704a0.
+- 2026-10-27, ninth review (six reviewers; the A20 Pro "MetalFX to 1080p at a steady 60" claim is in none of them: nxnative #183 has
+  Tears of the Kingdom at about 30 fps on an iPhone 18 Pro): 265-284.
 
 The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](../DEVELOPMENT.md#open-work).
 
@@ -99,6 +104,12 @@ The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](.
   Android and HarmonyOS; separate base and update packages with title keys from tickets are in `tools/game_extract`; VP9 on iOS is ours since
   batch 54. For 190: its dropped-frame rule (a run counts only its first 3 frames unless it lasts 1 s) fits; its GPU-time controller skips
   CPU-bound frames, which is how the iPhone's power split looks (230).
+- The ninth review (10-27): MacNativeGames' `TOTK_SYNC_LAG` (#680) and frame pipelining (#753, open), our 224 / 227 (declined on the phone; their
+  own median improved and p95 worsened); its driver-segment cache (its own A/B found no gain) and present ring (#749: only when the game outruns
+  the display); 4ppp44's GPU-time dynamic resolution (190's rule that does not fit); GirlNet's compute batching (no sustained benefit); nxnative's
+  offline Metal 4 pipeline archive for now (615-850 MB of footprint while open, Tears of the Kingdom's 1,306 MiB); nxnative 82ab25b's present
+  allocator by its own completion (268: here the drawable is taken first, and each of the layer's three returns only after the present that showed
+  it, so the allocator three presents back has finished).
 - Equal or better here: the Opus table leak (we run the SDK's decoder), macOS 27 fixed reservations (ours are anywhere), a Metal 3 backend, one
   descriptor pool, lordran's deswizzle and in-place re-upload (ours waits for the fence / keeps a spare, 16), the audio mixers and renderers of
   LASRecomp, SkyRecomp, MacNativeGames, nx-port, totk-mobile and blade2 (our in-process SDK renderer is closer), saves (transactional), the condvar

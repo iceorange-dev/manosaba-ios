@@ -13,6 +13,7 @@
 //   boot.interrupted.txt (host/rundiag.h); the home screen quick action Export Diagnostics shares the logs with the device's details (diag_export.m).
 #import <UIKit/UIKit.h>
 #import <Metal/Metal.h>
+#include "codesig.h"
 #include "envfile.h"
 #include "logstamp.h"
 #include "rundiag.h"
@@ -528,5 +529,14 @@ int main(int argc, char *argv[]) {
       plog("boot: %s %s, app %s (%s), %s, %s, GPU %s (BC textures %s), %s", dm_game.title, dm_game.version, [inf[@"CFBundleShortVersionString"] description].UTF8String ?: "?",
            [inf[@"CFBundleVersion"] description].UTF8String ?: "?", hw, NSProcessInfo.processInfo.operatingSystemVersionString.UTF8String, dev.name.UTF8String,
            dev.supportsBCTextureCompression ? "yes" : "no", [df stringFromDate:NSDate.date].UTF8String); }
+    // The memory limit this launch got (footprint + what is left, as host/diag/memstat.m reads it) and whether the signer kept the increased memory
+    // limit (ns2ios-shell 8160029's boot line, MIT, written anew): signing tools differ (ios/README.md), and the limit alone does not say why it is low
+    { struct task_vm_info vi; mach_msg_type_number_t vn = TASK_VM_INFO_COUNT;
+      uint64_t fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vn) == KERN_SUCCESS ? vi.phys_footprint : 0, av = os_proc_available_memory();
+      NSData *exe = [NSData dataWithContentsOfFile:NSBundle.mainBundle.executablePath options:NSDataReadingMappedIfSafe error:nil];
+      int iml = exe ? dm_codesig_bool(exe.bytes, exe.length, "com.apple.developer.kernel.increased-memory-limit") : -1;
+      plog("boot: memory limit %llu MB (footprint %llu MB + %llu MB available), RAM %llu MB; the increased memory limit in the app's signature: %s", (unsigned long long)((fp + av) >> 20),
+           (unsigned long long)(fp >> 20), (unsigned long long)(av >> 20), (unsigned long long)(NSProcessInfo.processInfo.physicalMemory >> 20),
+           iml > 0 ? "yes" : iml == 0 ? "no (the signer left it out)" : "no entitlements found"); }
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(App.class)); }
 }

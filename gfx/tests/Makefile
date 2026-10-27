@@ -15,6 +15,8 @@ t_dirty_shared: t_dirty_shared.c ../nvn/nvn_dirty.c ../../host/runtime/crash.c .
 	clang $(CFLAGS) -o $@ t_dirty_shared.c ../../host/runtime/crash.c ../nvn/nvn_dirty.c
 t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/runtime/crash.c ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_race.c ../../host/runtime/crash.c
+t_dirty_stamp: t_dirty_stamp.c ../nvn/nvn_dirty.c ../../host/runtime/crash.c ../nvn/nvn_dirty.h
+	clang $(CFLAGS) -o $@ t_dirty_stamp.c ../../host/runtime/crash.c
 t_deswz_gpu: t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../tex/nvn_deswizzle.h ../tex/nvn_deswizzle_gpu.h ../nvn/nvn_tex.c ../nvn/nvn_tex.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../nvn/nvn_tex.c -framework Metal -framework Foundation
 t_tex_auto: t_tex_auto.c ../nvn/nvn_tex.c ../nvn/nvn_tex.h ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle.h
@@ -136,6 +138,8 @@ t_psouser: t_psouser.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_psouser.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_uppool: t_uppool.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_uppool.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_upbound: t_upbound.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_upbound.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_retire: t_retire.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_retire.m ../../host/runtime/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ppred: t_ppred.m ../../host/runtime/crash.c $(GFX) $(GFX_H)
@@ -292,6 +296,7 @@ run: \
 	t_cubearr \
 	t_deswz_gpu \
 	t_dirty_race \
+	t_dirty_stamp \
 	t_dirty_slots \
 	t_esfilter \
 	t_vbelide \
@@ -373,6 +378,7 @@ run: \
 	t_ub \
 	t_ubren \
 	t_uppool \
+	t_upbound \
 	t_upwait \
 	t_usnap \
 	t_vfetch \
@@ -388,6 +394,7 @@ run: \
 	./t_nvn
 	./t_dirty_slots
 	./t_dirty_race
+	./t_dirty_stamp
 	./t_dirty_shared
 	./t_deswz_gpu
 	./t_pace
@@ -515,6 +522,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_sbufpast
 	./t_psouser
 	./t_uppool
+	./t_upbound
 	./t_upwait
 	MTL_DEBUG_LAYER=1 ./t_restart
 	MTL_DEBUG_LAYER=1 ./t_drvseg

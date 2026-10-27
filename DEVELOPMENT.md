@@ -74,7 +74,9 @@ iPad mini 7 (iOS 18.6.2) and an iPad Pro M4 (iOS 18.5, the unsigned IPA) up to 2
 2. **A trial's loading peak on 8 GB iPads.** Without the increased memory limit an iPad mini 7 gives about 3.35–3.4 GB; a trial's start adds
    about 1.4 GB in 0.2 s (about 116 character render targets, 0.9 GB of Metal memory). A fresh session keeps about 725 MB of headroom, a two-hour
    one does not (the leak). A free account signs the increased memory limit since plan item 65 (the iPhone 17 Pro went from 3.4 to 6.1 GB), and
-   `ios/tools/ipa_sign.py` signs the unsigned IPA with it (211); neither was tried on the iPad mini.
+   `ios/tools/ipa_sign.py` signs the unsigned IPA with it (211); neither was tried on the iPad mini. 2026-10-25, an A16 iPad (iPad15,7, iOS
+   27.0.1, the 10-23 IPA, signer not known): a limit of 3071 MB, killed at a trial's start 52 s into a fresh session (footprint 2069 → 2951 MB
+   in 0.5 s; 82 colour targets 588 MB and 42 depth / stencil targets 546 MB, the largest 1372x2930 Depth32Float_Stencil8).
 3. Smaller: 13 NVN functions looked up but unknown (NULL, never called); compute dispatch never seen; keyboard, mouse and controller untested
    with this game.
 
@@ -96,7 +98,7 @@ system layer). The parts below are the reference; each plan item's details are i
 **Running it.** After `make -C host GAME=totk`:
 `DM_GAME=totk DM_ROOT=$PWD/work DM_SHDUMP=$PWD/work/build/totk/shader_capture DM_SAVE=… DM_TEMP=… DM_CACHE=… DM_WATCH=120 host/dmhost` (stage
 map and library from the profile; rebuild them with `shmap_from_capture.py` and `DM_GAME=totk dmsh_build.py`).
-- Products: `work/build/totk/product` stays at 30 fps on purpose (the blood moon crash, 72, is not retried with it yet); `work/build/totk/product60`
+- Products: `work/build/totk/product` stays at 30 fps (the batches' smoke runs use it); `work/build/totk/product60`
   carries the frame-rate rules and the code options (57): `fps60`, `realtime`, `scene` (the iPhone's set: `DM_PRODUCT=build/totk/product60
   DM_OPTIONS=fps60,realtime,scene ios/run.sh …`, 62l), `output` and `aspect`; `options.default` all of them, `DM_OPTIONS=none` none.
   `DM_RENDER_RES=<w>x<h>` sets the scene size (52), `DM_RENDER_HEIGHT` its lines at 16:9, `DM_OUTPUT_RES=<w>x<h>` the output (63); the command
@@ -213,9 +215,10 @@ decide):
   replay loop in `core/exec.c` (batch 100), SetRenderTargets, the clears and conditional rendering (batch 101), `mtl/draw.inc` split (batch
   102), the backend's private header with the first part a translation unit of its own (batch 103), three more (batch 104); next the other
   parts outside the draw's path as translation units of their own (the draw's path stays one for inlining): the rest use the encoder layer,
-  the texture registry or the draw's state, which want headers of their own first. `hle_nvn.c` in parts by its sections (batch 105); next
-  `host/` in directories (batch 106), the core tests' shared fakes (batch 107). The Vulkan backend later (the user, 2026-10-24: no Android
-  for now, a clean base first).
+  the texture registry or the draw's state, which want headers of their own first (next, the user 2026-10-24: worth it, an Android version of
+  manosaba is planned; design them with a Vulkan backend in mind). `hle_nvn.c` in parts by its sections (batch 105), `host/` in directories
+  (batch 106), the core tests' shared fakes (batch 107). The Vulkan backend later (the user, 2026-10-24: no Android for now, a clean base
+  first).
 
 The iPhone's frame rate (the current focus; the power split above decides what helps):
 - 190 a scene size driven by dropped frames, now that the scene size can change while the game runs (240; 960x540 holds 59.6 fps on the island
@@ -225,6 +228,8 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   Nothing in main was found to set its enable bit (0x8c4eb0, +0x1c bit 0); look again from those dumps.
 - 226 the submit call's capture on the game's thread: it walks every command of the frame (52 % of the call) and copies 1.5 MB of uniforms the
   snapshot copies again; snapshot lookups miss between draws binding several blocks; texture views are checked again in 6 % of the thread.
+  Next (the user, 2026-10-24: worth it); measure again first, the numbers predate the capture's move to core (batch 93). It runs for
+  Tears of the Kingdom, whose defaults turn the translation thread on; manosaba's do not.
 - 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its middle,
   and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576).
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
@@ -236,8 +241,6 @@ The iPhone's frame rate (the current focus; the power split above decides what h
 - 221 fewer triangles through the game's own LOD and draw distance settings: the user's call on picture against frame rate.
 
 Correctness that needs play, saves or the console:
-- 72 the blood moon crash (Mac, 2026-10-19: the resource control thread read a null resource 3 s after the second blood moon movie was skipped).
-  Skipped on the iPhone with the 60 fps product and the movie hold (130), no crash; left: a skip with the 30 fps product.
 - 94a GPU write-back of idle textures (`DM_NVN_WB_IDLE=1`, totk-mobile's rule): it makes Link close to the camera solid instead of a translucent
   ghost. Needs console footage of Link close to the camera and of the island's grass, and what the RG8 256x256 texture the CPU rewrites is; then
   on by default or a narrower rule.
@@ -260,6 +263,44 @@ At the Mac or with hardware:
 
 The user's choices: 192 touch controls after Touchable (its 8-way D-pad, Liquid Glass, face-button slides and layout; the stick, the camera
 drag and opacity are open); 221 above; `DM_FRAME_STEP=vsync` as iOS's default (133: 35 % less CPU than the mean step on the Mac).
+
+From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test phone is the iPhone Air (iOS 27.0.1) from 2026-10-27:
+- 270 the iPhone's drawable at the game picture's rows (MacNativeGames `TOTK_IOS_DRAWABLE_H`, 720 by default; kxn on an Adreno 735: 9.5 %
+  fewer GPU writes): ours has the screen's pixels (`ios/Sources/front_ios.m`), so our GPU scales 1280x720 to the panel every frame. An A/B.
+- 271 CPU per draw, 226's area. MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook Air): resolved uniform addresses
+  cached (`TOTK_CBUF_CACHE`; encode_args was 21 % of its translating thread), argument bytes equal to the shader's last block bind that block
+  (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), the border key kept per shader (ours builds a string at each pso_get with
+  a border sampler bound, `mtl/border_warm.inc`), dispatch arguments before the encode stage's wait, generation maxima per 64 pages
+  (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as one word (`nvn_hmap.h`). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the
+  passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (our build writes them; `mtl/args.inc` fills all).
+- 272 226 itself: nxport 9c5463d keeps each command list's pre-scan while the list lives.
+- 273 the translation thread against the game's thread, sustained, on the phone (kxn, Adreno 735: 43 against 32 fps on the calling thread).
+- 274 compute dispatches run before their pass (nxnative `cs_hoist_try`; with its slice merge an iPhone's GPU p95 18-19 → 13.5-14.5 ms in Breath
+  of the Wild); 218's case.
+- 275 SyncWait woken from the queue's shared event (nxnative `post_early`: 0.15 ms a wait on an iPhone 17 Pro Max), once a frame here.
+- 276 131a: MacNativeGames found the controller (main+0x584300, called from main+0x58196c; 24 samples, 100 / 90 / 80 %; the scale leaves at
+  main+0x5848a8 for renderer +0xccc; `TOTK_FIXED_RES` writes 1.0 there).
+- 277 render-target heap members without lossless compression (AnySwitch 8ba3c71: a view of another format over compressed bytes read garbage;
+  ours places them with the plain descriptor, `mtl/rtheap.inc`); `MTL4VisibilityOptionResourceAlias` in barriers while aliasing heaps exist
+  (nxnative c1b7eff; ours: Device only). A/B of the GPU time with each.
+- 278 small render targets (64 KiB and less) written back after the game's SyncWait / QueueFinish (MacNativeGames 1bffa28: the grass cut
+  reaction reads a 128x128 RGBA8 target); 94a's and 161's area, nxport's render-target guard the other design.
+- 279 the GPU memory budget waits up to 2 s and drains deferred releases before it stops (MacNativeGames 4de7b4e; ours stops at once, which
+  166's soak hit); `newBufferWithBytesNoCopy` retried while pages are protected (11ea252).
+- 280 manosaba's trial peak (item 2 above): a census of which of the 124 targets share pool storage, then heaps for them (nxnative c484b13: 101
+  descriptions at one address, Luigi's Mansion 3 5,507 → 2,125 MiB of GPU memory; AnySwitch's heaps in any pool); the characters' pixels per
+  unit lowered (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100; the Switch's
+  `resources.assets` has the same 50 entries); depth / stencil that no pass keeps made memoryless.
+- 281 native resolution for manosaba (the user, 2026-10-27): render targets of the screen's shape made at the screen's size while the game
+  keeps its 1920x1080 (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's `render_scale` is 1.0,
+  `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB). No Unity port renders above 1920 wide (Touchable's Silksong is capped
+  by the guest window textures).
+- 282 `@autoreleasepool` in res_add / res_remove on guest threads (nxnative 7d368c4: Ghost Trick 8.3 → 1.7 GB allocated); DM_RES_CENSUS first.
+- 283 pipelines: the tile-read pipelines in the warm-up seed (MacNativeGames 59e240a: in-world builds 58 → 21 on its Mac); at most 2
+  speculative compile workers, the submit thread compiling an unclaimed job (4ppp44 cb21bec; ours a dispatch_async each, `mtl/pipeline.inc`).
+- 284 for 264's Vulkan backend: nxport's frame capture replayed pass by pass on both backends; Adreno 740-799 without the quad / warp32
+  rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
+  shim headers.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -501,3 +542,30 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   `make run-m3` copies the tests' headers too (core_test.h): without it the batch's Metal 3 suite found no recipe and the batch script took
   that for no failure (it fails on it now); the suite ran again, 148 commands, the same results as batch 106. Smoke: the same red lines and
   frames.
+- [x] batch 108 · 265 GPU write-back records that outlived their pool (MacNativeGames 0930478 / 873edff, MIT, written anew: after a warp, Tears
+  of the Kingdom's heap blocks, an allocator node and index buffers were overwritten with an old rendering): a finalized pool takes the records of
+  the textures in its memory with it (`wb_drop_range` from `mtl_pool_del`), and a dirty-tracking range keeps the clock it was registered at, so a
+  stamp older than its range counts as written (`range_t.born`; a new range's generations used to start at 0, so a stale record read as
+  fresh). `gfx/tests/t_wb` (+2: -DDM_TEST_WB_KEEP_DEAD fails 1, with -DDM_TEST_DIRTY_NO_BORN as well 2, the old rendering then written over the
+  game's data) and t_dirty_stamp (-DDM_TEST_DIRTY_NO_BORN fails 1).
+- [x] batch 108 · 266 the dirty-page stamps around an upload (seedds/nxnative 5b0c11a, MIT: Tears of the Kingdom's glyph letters missing): the
+  stamp is taken before the pages are protected (`nvn_dirty_protect_stamp`, for the packaged-texture upload, the CPU-filled texture watch and
+  the write-back note; a write that faulted in between took the generation the stamp then read); a packaged texture's `seen` is its upload's
+  stamp, not the clock after it; a page another thread is releasing when the protection comes is waited for and protected, no longer left
+  writable with a generation older than the stamp. `gfx/tests/t_dirty_stamp` stages each interleaving at two hook points nvn_dirty.c leaves
+  empty: -DDM_TEST_DIRTY_STAMP_AFTER and -DDM_TEST_DIRTY_SKIP_BUSY fail 1 each.
+- [x] batch 108 · 267 upload batches bounded (nxnative 7dc250e, MIT: Tears of the Kingdom peaked at 10.7 / 12.8 GiB on its Mac, an A20 Pro
+  iPhone was killed at 8.09 GiB with 1.1 GB re-uploaded in one frame): an upload batch is committed once its staging would pass
+  `DM_NVN_UP_BATCH_MB` (128; 0 unbounded), the three batch slots in flight holding the next back, and a committed batch's one-off blocks and
+  CPU-path buffers are released when that batch completes (`up_retire`), no longer after the next render fence. `gfx/tests/t_upbound`:
+  -DDM_TEST_UP_UNBOUNDED fails 3, -DDM_TEST_UP_RETIRE_AT_FENCE 1.
+- [-] 268 nxnative 82ab25b's present allocator reused only after its own present completed: not reachable here. The drawable is taken before
+  the allocator is waited for and reset, and each of the layer's three drawables returns only after the present that showed it, so the
+  allocator of three presents back has finished. Left as it is.
+- [x] batch 108 · 269 the memory limit in the iOS boot log (xinerqu/ns2ios-shell 8160029's line, MIT, written anew): `boot: memory limit <N> MB
+  (footprint + available), RAM, and whether the increased memory limit is in the app's signature`, read back from the executable's own code
+  signature (`ios/Sources/codesig.h`), so a low limit says whether the signer left the entitlement out. `host/tests/t_codesig` (copies signed
+  ad hoc true / false / without entitlements; -DDM_TEST_CODESIG_ANY_VALUE fails 1). ios/README.md lists which signers keep it (the ninth
+  review). Also: the batch script's host build takes the run target's prerequisites only (names in its recipe gave three "No rule" lines).
+  gfx 150 commands on Metal 4 and 150 on Metal 3, host 175, as before plus the new tests; both IPAs built. Smoke: the same red lines, frames
+  within the usual spread, instructions a draw as before.

@@ -85,5 +85,17 @@ int main(int argc, char **argv) { @autoreleasepool {
     int lv_ok = 1; for (unsigned l = 1; l < 4; l++) { nvn_deswizzle(&m.d, l, 0, m.mem, ml, (16 >> l) * 4); for (unsigned i = 0; i < (16u >> l) * (16u >> l); i++) lv_ok &= ml[i] == (0xa0a0a000u | l); }
     EXPECT("191: ... its levels 1-3 the CPU's bytes as uploaded (every texel)", 1, lv_ok);
     EXPECT("191: ... the other texture blue (texel 3,5)", 0xffff0000, texel(&s2, 3, 5));
+    // A pool finalized while a GPU write-back record of a texture in it is pending, a new pool made on the same memory and the game's own data
+    // put there: an invalidate of the new pool writes no old rendering back (MacNativeGames 0930478 / 873edff: heap corruption after a warp in
+    // Tears of the Kingdom). The record goes with the pool [-DDM_TEST_WB_KEEP_DEAD: 1 fails]; with it kept and a new range's generations from 0
+    // [-DDM_TEST_WB_KEEP_DEAD -DDM_TEST_DIRTY_NO_BORN] the rendering is written over the data: 2 fail
+    render_clear(&t, 1, 0, 1);
+    uint64_t key = t.serial;
+    nvn_dirty_remove_range(mem); mtl_pool_del(mem);   // nvnMemoryPoolFinalize
+    EXPECT("a pool finalized: its textures' write-back records go with it [-DDM_TEST_WB_KEEP_DEAD]", 0, nvn_hm_get(&g_wb, &key) != NULL);
+    mtl_pool_add(mem, 1 << 20); nvn_dirty_add_range(mem, 1 << 20);   // nvnMemoryPoolInitialize on the same memory
+    memset(mem, 0xcc, 0x30000);
+    mtl_pool_invalidate(&pl, 0, 0x30000);
+    EXPECT("... an invalidate of the pool made on its memory leaves the game's data (texel 3,5)", 0xcccccccc, texel(&t, 3, 5));
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
 } }

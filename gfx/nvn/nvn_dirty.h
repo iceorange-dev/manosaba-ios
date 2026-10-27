@@ -9,6 +9,7 @@ void nvn_dirty_remove_range(const void *mem);                     // Pool destru
 int nvn_dirty_tracked(const void *addr, size_t len);
 void nvn_dirty_protect(const void *addr, size_t len);              // Set the covered pages read-only
 uint64_t nvn_dirty_now(void);                                      // Current generation: taken before upload, as the stamp of that content
+uint64_t nvn_dirty_protect_stamp(const void *addr, size_t len);    // The stamp of the content about to be read, then the pages set read-only (in this order)
 int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp); // Covered pages were written after the stamp -> 1
 int nvn_dirty_state(const void *addr, size_t len, uint64_t stamp); // nvn_dirty_tracked and nvn_dirty_since in one lookup: 0 = clean, 1 = written after the stamp, 2 = not tracked
 int nvn_dirty_state_hint(const void *addr, size_t len, uint64_t stamp, int *hint);   // the same, remembering the range's slot in *hint (-1 at first)

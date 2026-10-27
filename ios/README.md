@@ -77,6 +77,20 @@ entitlements there is no save sync (`host/cloud/cloud.m` asks for the default co
 build. Tools that change the bundle ID are fine: nothing in the app depends on it. Tried on 2026-10-16 with LCSign on an iPad Pro (iOS 18.5):
 it signed with every entitlement of its profile (increased memory limit included, `get-task-allow` false), and the app ran.
 
+Which signers keep the increased memory limit (read 2026-10-27; measured by others unless said):
+- Xcode with a free personal team: kept (here: an iPhone 17 Pro went from about 3.4 to 6.1 GB).
+- AltStore 2.2 and later: kept. It turns the App ID's capability on from the app's own signature (AltSign `ALTAppleAPI.m`, `ALTApplication.mm`),
+  which is why this IPA carries it ad hoc, and its signer drops a profile entitlement that signature lacks (`ALTSigner.mm`); about 6 GB with
+  free accounts. AltStore 2.3.1 fixed the sign-in error -80045.
+- SideStore 0.7.0 with a free Apple ID: dropped (SideSign's free features; SideStore#1616: about 3.3 GB), unless the App ID's capability is
+  turned on once (hugeBlack/GetMoreRam, whose sign-in failed with -80045 from about 10-12) or a SideSign build with its PR #4 signs it.
+- LiveContainer: an app inside it runs with LiveContainer's own entitlements (its README).
+- zsign signers (Feather, KSign): what the imported profile has.
+- Sideloadly: the sources disagree (NicholasDominici/totk-ios's README: kept; xinerqu/ns2ios-shell's table: dropped, about 3.4 GB).
+
+The boot log says what a launch got: `boot: memory limit <N> MB (footprint … + … available), RAM … MB; the increased memory limit in the
+app's signature: yes / no` (the entitlements read back from the executable's own signature, `Sources/codesig.h`).
+
 - The iOS 26 build is compiled with `-mcpu=apple-a18`, the iOS 18 build (`DM_IOS_M3=1`) with `-mcpu=apple-a14`; build the one that fits the
   device's chip and iOS version.
 - The IPA contains the rewritten game code and the game's icon (with `DM_IPA_DATA=1` the whole game): it is for your own devices, from your

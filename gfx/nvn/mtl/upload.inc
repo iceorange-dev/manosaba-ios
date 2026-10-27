@@ -141,6 +141,23 @@ static NSMutableArray *g_up_texs;   // Target textures in the batch: before the 
 static id<MTLBuffer> g_up_block;
 static size_t g_up_block_off, g_up_block_size;
 static NSMutableArray *g_up_keep;
+// Upload batches bounded (seedds/nxnative 7dc250e, MIT, written anew): a batch took staging for every upload of a submission, and its one-off
+// blocks and CPU-path buffers lived until the next render fence, so a frame that uploads a lot held all of it at once (nxnative: Tears of the
+// Kingdom on the Mac peaked at 10.7 / 12.8 GiB of footprint, 4.24 GiB after; an A20 Pro iPhone was killed at 8.09 GiB with 1.1 GB re-uploaded in
+// one frame). Now a batch is committed once its staging would pass DM_NVN_UP_BATCH_MB (128; 0: unbounded, as before) and the next one begins, the
+// three batch slots in flight holding it back, and a committed batch's staging is released when that batch has completed on the GPU (t_upbound)
+static size_t g_up_batch_bytes; static uint64_t g_up_batch_no, g_up_splits; static _Atomic uint64_t g_up_done_batch;
+static NSMutableArray *g_up_retire;   // [batch number, its staging objects], oldest first
+static size_t up_batch_limit(void) { static long v = -1; if (v < 0) { const char *e = getenv("DM_NVN_UP_BATCH_MB"); v = e ? atol(e) : 128; if (v < 0) v = 0; } return (size_t)v << 20; }
+static void up_retire(void) {   // the owner thread: staging of completed batches released, out of the residency set (committed now: the set holds
+    int n = 0;                     // what it lists until then)
+    while (g_up_retire.count) {
+        NSArray *e = g_up_retire[0]; if ([e[0] unsignedLongLongValue] > atomic_load(&g_up_done_batch)) break;
+        for (id o in e[1]) { pthread_mutex_lock(&g_res_mu); int reg = [g_res_objects containsObject:o]; pthread_mutex_unlock(&g_res_mu); if (reg) res_remove((id<MTLResource>)o); }
+        [g_up_retire removeObjectAtIndex:0]; n++;
+    }
+    if (n) res_commit();
+}
 // Pooled staging blocks (MacNativeGames, MIT): a fresh 32 MiB private block per upload batch, added to and later removed from the residency set, made
 // every batch flush commit the residency set (Tears of the Kingdom: 2091 blocks in about 4000 frames). Up to UP_POOL blocks are made once and stay
 // resident; a block is free again when the batch that used it has completed on the GPU. Larger requests, or every block in flight, use a one-off
@@ -230,7 +247,7 @@ static void up_flush(void) {
     MTL4CommitOptions *o = [MTL4CommitOptions new];
 #endif
     atomic_fetch_add(&g_up_pending, 1);
-    uint32_t pool_mask = g_up_batch_mask;
+    uint32_t pool_mask = g_up_batch_mask; uint64_t bno = g_up_batch_no;
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
         if (f.error) MLOG("[red] upload command buffer execution error: %s", f.error.description.UTF8String);
         if (f.error || fake_lost) {
@@ -242,6 +259,7 @@ static void up_flush(void) {
         if (d > 0) atomic_fetch_add(&g_upload_gpu_ns, (uint64_t)(d * 1e9));
         atomic_store(&g_up_alloc_busy[slot], 0);
         for (int i = 0; i < UP_POOL; i++) if (pool_mask >> i & 1) atomic_store(&g_up_pool_busy[i], 0);   // pooled staging blocks of this batch are free again
+        uint64_t dn = atomic_load(&g_up_done_batch); while (dn < bno && !atomic_compare_exchange_weak(&g_up_done_batch, &dn, bno)) {}   // its staging may go (up_retire)
         atomic_fetch_sub(&g_up_pending, 1);
         up_notify();
     }];
@@ -254,8 +272,15 @@ static void up_flush(void) {
     [g_q4 commit:buffers count:1 options:o];
 #endif
     cb_committed();
-    g_up_cb = nil; if (g_up_block && !g_up_block_pooled) defer_obj_release(g_up_block); g_up_block = nil; g_up_block_pooled = 0; g_up_block_off = g_up_block_size = 0; g_up_batch_mask = 0;
+    g_up_cb = nil;
+#ifndef DM_TEST_UP_RETIRE_AT_FENCE   // negative control of t_upbound only: the staging released after the next render fence, as before
+    { NSMutableArray *st = [NSMutableArray arrayWithArray:g_up_keep]; if (g_up_block && !g_up_block_pooled) [st addObject:g_up_block];
+      if (st.count) { if (!g_up_retire) g_up_retire = [NSMutableArray array]; [g_up_retire addObject:@[@(bno), st]]; } }
+#else
+    if (g_up_block && !g_up_block_pooled) defer_obj_release(g_up_block);
     for (id obj in g_up_keep) defer_obj_release(obj);
+#endif
+    g_up_block = nil; g_up_block_pooled = 0; g_up_block_off = g_up_block_size = 0; g_up_batch_mask = 0; g_up_batch_bytes = 0;
     [g_up_keep removeAllObjects];
     up_diag();
     g_nup_blits = 0; g_nup_decs = 0; g_nup_a1s = 0; g_nup_posts = 0;
@@ -265,6 +290,7 @@ static void up_flush(void) {
 static void up_begin(void) {
     up_owner_check("up_begin");
     if (g_up_cb) return;
+    up_retire(); g_up_batch_no++;
     unsigned slot = g_up_seq++ % 3;
     up_wait_zero(&g_up_alloc_busy[slot]);
     atomic_store(&g_up_alloc_busy[slot], 1);
@@ -282,6 +308,14 @@ static void up_begin(void) {
     if (!g_up_texs) g_up_texs = [NSMutableArray array];
     if (!g_up_keep) g_up_keep = [NSMutableArray array];
 }
+static void up_bound(size_t n) {   // before an upload that cuts n bytes of staging: the open batch committed first if it would pass the bound
+#ifndef DM_TEST_UP_UNBOUNDED   // negative control of t_upbound only: one batch for the whole submission, as before
+    size_t lim = up_batch_limit();
+    if (lim && g_up_cb && g_up_batch_bytes && g_up_batch_bytes + n > lim) { g_up_splits++; up_flush(); }
+#else
+    (void)n;
+#endif
+}
 
 // Diagnostic readout (low frequency; printed only when the block switch count changed and ≥ 1 second since the last line, at most 200 lines per game): how many times an upload batch ran out of staging block and switched blocks midway; GPU allocated, residency set object count, deferred-release queue length.
 // If the old block is not retired on a switch it stays in the residency set and can never be freed, and "GPU allocated" climbs one block at a time with the switch count
@@ -294,8 +328,8 @@ static void up_diag(void) {
     unsigned long alive = 0, inres = 0; uint64_t abytes = 0; NSArray *olds = g_up_old.allObjects;
     pthread_mutex_lock(&g_res_mu); unsigned long nres = (unsigned long)g_res_objects.allObjects.count; for (id<MTLBuffer> o in olds) { alive++; abytes += o.length; inres += [g_res_objects containsObject:o]; } pthread_mutex_unlock(&g_res_mu);
     pthread_mutex_lock(&g_deferred_mu); unsigned long ndef = (unsigned long)g_deferred.count; pthread_mutex_unlock(&g_deferred_mu);
-    MLOG("upload staging blocks%s: %llu created in total, %llu block switches within a batch (swapped-out old blocks %llu MB in total); swapped-out old blocks still alive now: %lu blocks %llu MB, still in the residency set: %lu blocks; GPU allocated %llu MB, residency set %lu objects, deferred-release queue %lu", fol && !chg ? " (after settling)" : "",
-         (unsigned long long)g_up_blocks_new, (unsigned long long)g_up_swaps, (unsigned long long)(g_up_swap_bytes >> 20), alive, (unsigned long long)(abytes >> 20), inres, (unsigned long long)(g_dev.currentAllocatedSize >> 20), nres, ndef);
+    MLOG("upload staging blocks%s: %llu created in total, %llu block switches within a batch (swapped-out old blocks %llu MB in total); swapped-out old blocks still alive now: %lu blocks %llu MB, still in the residency set: %lu blocks; GPU allocated %llu MB, residency set %lu objects, deferred-release queue %lu; %llu batches committed at the bound (DM_NVN_UP_BATCH_MB)", fol && !chg ? " (after settling)" : "",
+         (unsigned long long)g_up_blocks_new, (unsigned long long)g_up_swaps, (unsigned long long)(g_up_swap_bytes >> 20), alive, (unsigned long long)(abytes >> 20), inres, (unsigned long long)(g_dev.currentAllocatedSize >> 20), nres, ndef, (unsigned long long)g_up_splits);
 }
 static id<MTLBuffer> up_alloc(size_t n, size_t *off) {
     size_t need = (n + 255u) & ~((size_t)255u);
@@ -318,7 +352,7 @@ static id<MTLBuffer> up_alloc(size_t n, size_t *off) {
         g_up_block_off = 0;
     }
     *off = g_up_block_off;
-    g_up_block_off += need;
+    g_up_block_off += need; g_up_batch_bytes += need;
     return g_up_block;
 }
 
@@ -384,8 +418,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     id<MTLTexture> mt = same ? reuse : [g_dev newTextureWithDescriptor:d];
     if (!mt) { RED_ONCE(2, "failed to create MTLTexture %ux%u format %#x target %d", t->d.width, t->d.height, t->d.format, t->d.target); return nil; }
     res_add(mt);   // Both first upload and re-upload register residency here (Metal 4 does not make resources resident automatically; a missed registration = GPU address page fault)
-    if (!pkg_hashed(t)) nvn_dirty_protect(t->mem, t->size);
-    *stamp = nvn_dirty_now();
+    *stamp = pkg_hashed(t) ? nvn_dirty_now() : nvn_dirty_protect_stamp(t->mem, t->size);   // the stamp before the protection (nvn_dirty.c)
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     unsigned layers = (t->d.target == 4 || t->d.target == 9) ? t->d.depth : t->d.target == 8 ? 6 : t->d.target == 3 ? t->d.height : 1;   // a cube array's depth is its faces
     uint32_t upf; int ubpp = 0, unp = bc_unpack(t->d.format, &upf, &ubpp);   // No BC: decompress on the CPU after deswizzling, with the staging area sized for the decompressed data
@@ -405,9 +438,9 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     if (g_nvn_deswz_gpu && !use_gpu && !unp) RED_ONCE(40, "swizzled texture storage is not in a memory pool, falling back to the CPU");
     if (use_gpu) {
         // The GPU reads the memory pool at execution time, which is closer to a real Switch than a snapshot at CPU upload time; the dirty-page stamp is still taken before encoding, and later writes still trigger a re-upload.
-        up_begin();
-        size_t stg_off;
-        id<MTLBuffer> stg = up_alloc(ga1 ? ctotal + total : gdec ? ctotal : total ? total : 16, &stg_off);
+        size_t stg_off, stg_n = ga1 ? ctotal + total : gdec ? ctotal : total ? total : 16;
+        up_bound(stg_n); up_begin();
+        id<MTLBuffer> stg = up_alloc(stg_n, &stg_off);
         size_t off = 0, aoff = ctotal; int enc_ok = g_up_ce != nil, nb0 = g_nup_blits, nd0 = g_nup_decs, na0 = g_nup_a1s, np0 = g_nup_posts;
         for (unsigned l = 0; enc_ok && l < d.mipmapLevelCount; l++) {
             uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
@@ -451,9 +484,9 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         RED_ONCE(41, "swizzled texture: GPU deswizzle does not support format %#x target %d, falling back to the CPU", t->d.format, t->d.target);
     }
 
-    up_begin();
+    up_bound(total ? total : 16); up_begin();
     id<MTLBuffer> stg = [g_dev newBufferWithLength:total ? total : 16 options:MTLResourceStorageModeShared];
-    res_add(stg); [g_up_keep addObject:stg];
+    res_add(stg); [g_up_keep addObject:stg]; g_up_batch_bytes += total ? total : 16;
     size_t off = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
