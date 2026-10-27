@@ -271,15 +271,16 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   power). What holds 60 for the first minutes: the option hold60 (batch 118) keeps the controller at 1, about 60 fps until thermal state serious
   (720 rows: p50 17.7-18 ms, p95 25 ms, GPU 14.6-15.4 ms, for a minute and more on USB power; 540 rows: 16.6-16.9 ms for 35 s), then our hold
   and the GPU's lowered clock (27 ms) give 30. Left: those runs off USB power, from a cool phone.
-- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off; the translation
-  thread standing on Great Sky Island (M5) is now about 24 % busy: render encoders made 19 % (the driver's, one a pass: fewer passes are 219's),
+- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off, batch 119 the
+  memcmp call of 8-byte hash keys (`nvn_hmap.h`, one word); the translation thread standing on Great Sky Island (M5) is now about 24 % busy:
+  render encoders made 19 % (the driver's, one a pass: fewer passes are 219's),
   encode_args 17 % (texture IDs 6 %), the uniform updates' private copies 7 % (copied whole from the range's previous copy, 225), dispatches
   5 %. Not taken from MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook Air) yet: resolved uniform addresses cached
   (`TOTK_CBUF_CACHE`; pc_get is 2 % here), argument bytes equal to the shader's last block bind that block (`TOTK_AB_SAME`), a 256-entry pool
   table by page (`TOTK_POOL_HASH`), the border key kept per shader (`mtl/border_warm.inc` builds a string at each pso_get with a border sampler
-  bound), dispatch arguments before the encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as
-  one word (`nvn_hmap.h`); 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the passes of a submission, the driver segment filled only at
-  the vec4 offsets a shader reads (`mtl/args.inc` fills all).
+  bound), dispatch arguments before the encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`); 4ppp44 cb21bec / d0d3cb1:
+  argument blocks reused across the passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (`mtl/args.inc`
+  fills all).
 - 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
   colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
   1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
@@ -665,3 +666,8 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   the minute), 35 s at 540 rows, until thermal state serious, where the hot hold and the GPU's lowered clock (27 ms) give 30. Not a default:
   its frames are less even than the game's 30 while the GPU cannot keep 60. Both products rebuilt (binaries the same; the old as `.prev285`),
   `verify/regress.sh --fuzz` OK. `tools/tests/t_totk_options.py` (was t_totk_fixedres.py) +3 (T_HOLD60_ORIGINAL=1 fails 1).
+- [x] batch 119 · 271, part: 8-byte hash keys compared as one word (`gfx/nvn/nvn_hmap.h` nvn_hm_keq; MacNativeGames PR #750, MIT, written anew),
+  longer keys by memcmp as before. The tables keyed by serial or object address use it (the texture registry by serial, the live and finalized
+  tables, write-back, the store's objects, the compute pipelines, the programs' functional keys). A lookup in a 4,000-key table 4.35 → 1.68 ns on the M5; in
+  batch 116's profile the memcmp of these tables was 0.2 % of the translation thread (pso_get's long key, 0.8 %, is unchanged). `t_hmap` +1:
+  2,000 keys apart only in their high half (-DDM_TEST_HM_KEQ_HALF, the low half compared: fails 1).

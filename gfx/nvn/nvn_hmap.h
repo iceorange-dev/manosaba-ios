@@ -15,12 +15,22 @@ static inline uint64_t nvn_hm_hash(const void *k, uint32_t len) {
     h ^= h >> 33; h *= 0xc4ceb9fe1a85ec53ull; h ^= h >> 33;
     return h;
 }
+// Key equality: an 8-byte key (serials, object addresses: most of the tables) as one word, longer ones by memcmp, which is a call (plan item 271;
+// MacNativeGames PR #750, MIT, written anew)
+static inline int nvn_hm_keq(const uint8_t *a, const void *b, uint32_t klen) {
+#ifndef DM_TEST_HM_KEQ_HALF   // negative control of t_hmap only: an 8-byte key compared by its low half
+    if (klen == 8) { uint64_t x, y; memcpy(&x, a, 8); memcpy(&y, b, 8); return x == y; }
+#else
+    if (klen == 8) { uint32_t x, y; memcpy(&x, a, 4); memcpy(&y, b, 4); return x == y; }
+#endif
+    return !memcmp(a, b, klen);
+}
 static inline void nvn_hm_init(nvn_hmap *m, uint32_t klen) { memset(m, 0, sizeof *m); m->klen = klen; }
 static inline void *nvn_hm_get(const nvn_hmap *m, const void *k) {
     if (!m->n) return NULL;
     for (uint32_t i = (uint32_t)nvn_hm_hash(k, m->klen) & (m->cap - 1);; i = (i + 1) & (m->cap - 1)) {
         if (!m->vals[i]) return NULL;
-        if (!memcmp(m->keys + (size_t)i * m->klen, k, m->klen)) return m->vals[i];
+        if (nvn_hm_keq(m->keys + (size_t)i * m->klen, k, m->klen)) return m->vals[i];
     }
 }
 static inline void *nvn_hm_put(nvn_hmap *m, const void *k, void *v);
@@ -38,7 +48,7 @@ static inline void *nvn_hm_put(nvn_hmap *m, const void *k, void *v) {
     for (uint32_t i = (uint32_t)nvn_hm_hash(k, m->klen) & (m->cap - 1);; i = (i + 1) & (m->cap - 1)) {
         uint8_t *ki = m->keys + (size_t)i * m->klen;
         if (!m->vals[i]) { memcpy(ki, k, m->klen); m->vals[i] = v; m->n++; return NULL; }
-        if (!memcmp(ki, k, m->klen)) { void *old = m->vals[i]; m->vals[i] = v; return old; }
+        if (nvn_hm_keq(ki, k, m->klen)) { void *old = m->vals[i]; m->vals[i] = v; return old; }
     }
 }
 // After deletion, shift back later entries on the same probe chain to fill the hole, so that a lookup can stop at the first empty slot
@@ -47,7 +57,7 @@ static inline void *nvn_hm_del(nvn_hmap *m, const void *k) {
     uint32_t mask = m->cap - 1, i = (uint32_t)nvn_hm_hash(k, m->klen) & mask;
     for (;; i = (i + 1) & mask) {
         if (!m->vals[i]) return NULL;
-        if (!memcmp(m->keys + (size_t)i * m->klen, k, m->klen)) break;
+        if (nvn_hm_keq(m->keys + (size_t)i * m->klen, k, m->klen)) break;
     }
     void *old = m->vals[i];
     for (uint32_t j = i;;) {
