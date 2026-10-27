@@ -259,10 +259,6 @@ The user's choices: 192 touch controls after Touchable (its 8-way D-pad, Liquid 
 drag and opacity are open); 221 above; `DM_FRAME_STEP=vsync` as iOS's default (133: 35 % less CPU than the mean step on the Mac).
 
 From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test phone is the iPhone Air (iOS 27.0.1) from 2026-10-27:
-- 270 the iPhone's drawable at the game picture's rows (MacNativeGames `TOTK_IOS_DRAWABLE_H`; kxn on an Adreno 735: 9.5 % fewer GPU writes):
-  `DM_IOS_DRAWABLE_H=<rows>` exists since batch 109 (the compositor scales the layer). On the iPhone Air (2026-10-27) every run sat at 30 fps
-  (285), where the GPU time follows the clock iOS gives, not the work: native 27.6 / 28.3 ms, 720 rows 27.7 / 27.8 ms. Measure it again where
-  60 holds.
 - 285 Tears of the Kingdom on the iPhone Air (iOS 27.0.1; its A19 Pro has 5 GPU cores against the 17 Pro's 6, and no vapor chamber): on Great Sky
   Island the game's own controller picks interval 2 within the first minute (thermal state 0-1; the 17 Pro went back to 1 within 0.1-0.7 s each
   time), the GPU's time then follows its lowered clock (25-28 ms), and from thermal state serious, 1-2.5 minutes in with the phone on USB power,
@@ -682,3 +678,7 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   30 rounds, not the mean: in the first run of this batch, beside the IPA builds, one or two rounds preempted for a millisecond put the mean at
   0.180 ms against 0.1 (it passed alone); -DDM_TEST_UPWAIT_POLL (the usleep(1000) polling it replaced, `nvn_mtl.m` up_wait_zero) fails 1 with a
   median of 1.04 ms.
+  [-] 270 measured on the iPhone Air after the batch: a 720-row drawable (`DM_IOS_DRAWABLE_H=720`, the compositor scales it) against the
+  native one, standing on Great Sky Island, a b b a with 300 s rests. At 60 fps (a test build with hold60, frames 1800 on until thermal state
+  serious): GPU p50 15.57 / 15.13 ms native against 15.64 / 15.57 ms, frame p50 18.6 / 18.5 against 18.6 / 18.3 ms; at 30 fps (the default
+  build, frames 2100-6000): GPU p50 27.62 / 28.25 against 27.60 / 27.07 ms. No gain the runs tell apart from their spread: the switch stays, off.
