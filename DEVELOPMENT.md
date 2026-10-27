@@ -290,9 +290,11 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   target is drawn at most 1260 rows high on a phone), an asset change for the user to decide; the depth / stencil targets made memoryless, which
   needs each pass's store decided at its begin (now at its end), as 264's Vulkan backend needs too. Heaps buy little: in the census the targets'
   pools overlap in two pairs (9 MB).
-- 281 native resolution: done for manosaba in batch 109 (below). For other games the backend route stays: render targets of the screen's shape
-  made at the screen's size while the game keeps its size (LASRecomp's "Match display", AnySwitch's `DM_INTERNAL_RES`; our support buffer's
-  `render_scale` is 1.0, `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB).
+- 281 native resolution: done for manosaba in batch 109 and for Tears of the Kingdom up to 1920x1080 in batch 121 (below). Left: Tears of the
+  Kingdom above 1080 (the heap overlay of `games/totk/heapdef.py`, which on iOS also needs a larger application pool than `ios_pool_add_mb` 0 and a
+  heap region above `guest_heap_mb` 2176 inside the 6144 MB reservation: none of it tried on a device), and for other games the backend route:
+  render targets of the screen's shape made at the screen's size while the game keeps its size (LASRecomp's "Match display", AnySwitch's
+  `DM_INTERNAL_RES`; our support buffer's `render_scale` is 1.0, `mtl/args.inc`), with a headroom guard (AnySwitch: none below 768 MB).
 - 284 for 264's Vulkan backend: nxport's frame capture replayed pass by pass on both backends; Adreno 740-799 without the quad / warp32
   rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
   shim headers.
@@ -682,3 +684,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   native one, standing on Great Sky Island, a b b a with 300 s rests. At 60 fps (a test build with hold60, frames 1800 on until thermal state
   serious): GPU p50 15.57 / 15.13 ms native against 15.64 / 15.57 ms, frame p50 18.6 / 18.5 against 18.6 / 18.3 ms; at 30 fps (the default
   build, frames 2100-6000): GPU p50 27.62 / 28.25 against 27.60 / 27.07 ms. No gain the runs tell apart from their spread: the switch stays, off.
+- [x] batch 121 · 281 the iOS setting "Native" (was "Native (manosaba)") for Tears of the Kingdom: docked, a 1920x1080 scene and canvas.
+  Native sets `DM_RENDER_HEIGHT` and `DM_DISPLAY_SIZE` to the screen's 16:9 picture (an iPhone Air: 1260, 2240x1260); the game refused the 1260
+  lines (above the 1920x1080 its heap holds) and drew its own 1280x720. Now `games/totk/frame_step.c` takes the largest 16:9 the heap holds
+  (1920x1080 without the heap overlay, the note's with it) for the scene from `DM_RENDER_HEIGHT` and for the output from `DM_DISPLAY_SIZE` (when
+  the option output is on and `DM_OUTPUT_RES` unset), and a display size without `DM_OPMODE` runs the game docked (`dm_set_opmode`). Docked
+  because handheld's heap does not hold the sizes: on the Mac in handheld a 1920x1080 canvas beside a 1920x1080 or a 1600x900 scene crashed at
+  main+0x1c2f20 (the texture heap run out) within seconds, while a 1920x1080 canvas beside the game's 1280x720 scene and a 1920x1080 scene beside
+  handheld's 1280x720 canvas held; docked, a 1920x1080 scene beside its 1920x1080 canvas held (GPU p50 7.11 against the docked default's 7.05 ms).
+  The phone's build keeps the options fps60,realtime,scene: docked, the game's own canvas is 1920x1080 (the option output, on or off, presented
+  1920x1080 in handheld with GPU p50 6.11 against 6.22 ms, so 62l's note that it makes the handheld swapchain 1080p did not hold). The iPhone
+  Air standing on Great Sky Island: Native docked at 1920x1080, frame p50 46.4 ms (the game's controller at 3 intervals, about 21 fps), GPU p50
+  30.6 ms, peak RSS 3552 MB; the default 33.3 ms, GPU 28.2 ms, 3474 MB. `t_frame_step` +9 (-DDM_TEST_SCENE_HEIGHT_NO_FIT fails 2,
+  -DDM_TEST_OUTPUT_NO_DISPLAY fails 3, -DDM_TEST_NATIVE_HANDHELD fails 1). `games/totk/check_frame_rate.py` applied every option, hold60 too, and
+  3 of its checks failed since batch 118: hold60 left out now (its own check is `tools/tests/t_totk_options.py`); the five
+  `games/totk/check_*.py` run in the batch's tool step from now on (`work/scripts/batch_fast.sh`).

@@ -48,7 +48,10 @@ def expect(what, want, got):
     n += 1; ok = want == got; fail += not ok
     print(f'{what:<88} expected {want!s:<12} got {got!s:<12} {"✓" if ok else "✗"}')
 
-prod = nsoimg.product_image(sys.argv[1], 'main')   # (its options applied: rules.py OPTIONS)
+# Its options applied (rules.py OPTIONS) but hold60, which takes the raising branch out on purpose (plan item 285, off by default; its own check is
+# tools/tests/t_totk_options.py): with every option the heavy frames below stayed at interval 1 and 3 checks failed (batch 118 to 121)
+opts = sorted({l.split('\t')[0] for l in open(os.path.join(sys.argv[1], 'main.options.tsv')) if not l.startswith('#')})
+prod = nsoimg.product_image(sys.argv[1], 'main', [o for o in opts if o != 'hold60'])
 orig = nsoimg.load(sys.argv[2])
 light, heavy, heavier = [10.0] * 40, [25.0] * 40, [40.0] * 40   # ms: desired = trunc(ms * 60 / 1000) + 1 = 1, 2, 3
 seq = light + heavy + heavier + light + light

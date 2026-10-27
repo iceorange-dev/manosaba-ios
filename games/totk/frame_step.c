@@ -14,10 +14,12 @@
 // handheld 1280x720), so the game looks as before unless asked. Above 1920x1080 with the RomFS overlay games/totk/heapdef.py writes (plan item 95):
 // its HeapDef grows the heap for a scene size it notes beside it (.dm_scene), up to which DM_RENDER_RES is then taken. Without DM_RENDER_RES,
 // DM_RENDER_HEIGHT=<lines> (the iOS app's render resolution setting, Settings → the app; manosaba's graphics.c reads it too) asks for that many
-// lines at 16:9 (540 → 960x540), so the 60 fps iPhone build can trade resolution for GPU time (plan item 62l).
+// lines at 16:9 (540 → 960x540), so the 60 fps iPhone build can trade resolution for GPU time (plan item 62l), at most the largest 16:9 the heap
+// holds (the setting "Native" asks for the screen's lines, plan item 281: an iPhone Air's 1260 become 1920x1080 without the heap overlay).
 // +24 / +32: the swapchain and the canvas size, each width | height << 32 (rules.py option output, plan item 63: main 0xbdb578 / 0xbdb584 read the
 // swapchain's, the code cave at 0x3dcb28 the canvas's, which the game composes its UI and the scene's final upscale in). DM_OUTPUT_RES=<w>x<h>
-// (640x360 up to 1920x1080, or up to the size the heap overlay notes, .dm_output: games/totk/heapdef.py --output) makes both that size; else the
+// (640x360 up to 1920x1080, or up to the size the heap overlay notes, .dm_output: games/totk/heapdef.py --output) makes both that size; without
+// it DM_DISPLAY_SIZE (the iOS setting "Native": the screen's 16:9 picture, plan item 281) does, at most the largest 16:9 the heap holds; else the
 // swapchain 1920x1080 (the game's constant) and the canvas 0, which the cave leaves as the game laid it out, so the game looks as before.
 // +48 / +56: a live scene size (plan item 240, scene_latch_step below): the renderer the game picked a size for, and the flags asking for a pick.
 // +40: the factor on the cameras' aspect ratio (rules.py option aspect, plan item 154: four code caves multiply by it, by 1 while it is 0):
@@ -31,6 +33,7 @@
 #include "game.h"
 #include "aspect.h"
 int dm_opmode(void);   // hle_oe.c
+void dm_set_opmode(int m);   // hle_oe.c
 int dm_overlay_file(const char *rel, char *out, size_t n);   // hle_fs.c: the file in the RomFS overlay layers
 
 typedef struct { uint64_t last_ns; double dt[5]; unsigned n, next; } frame_mean;
@@ -50,14 +53,34 @@ static double frame_mean_add(frame_mean *m, uint64_t now_ns) {
     double mean = sum / m->n;
     return mean < 1.0 / 120 ? 1.0 / 120 : mean > 1.0 / 15 ? 1.0 / 15 : mean;
 }
-// The size asked for: DM_RENDER_RES as it is, else DM_RENDER_HEIGHT's lines at 16:9 (width rounded to even) written into buf, else NULL
-static const char *scene_env(const char *res, const char *height, char *buf, size_t n) {
+// The largest size the heap holds: the heap overlay's note "<w>x<h>" (1920x1080 up to 3840x2160), else 1920x1080
+static void heap_max(const char *max, unsigned *mw, unsigned *mh) {
+    char extra; *mw = 1920; *mh = 1080;
+    if (max && (sscanf(max, "%ux%u%c", mw, mh, &extra) != 2 || *mw < 1920 || *mh < 1080 || *mw > 3840 || *mh > 2160)) { *mw = 1920; *mh = 1080; }
+}
+// The largest even 16:9 size of at most h lines within mw x mh (the width from the height, rounded to even as the setting's lines always were)
+static void fit_16_9(unsigned h, unsigned mw, unsigned mh, unsigned *ow, unsigned *oh) {
+    if (h > mh) h = mh;
+    if ((uint64_t)h * 16 > (uint64_t)mw * 9) h = mw * 9 / 16;
+    *oh = h & ~1u; *ow = (*oh * 16 / 9 + 1) & ~1u;
+}
+// The size asked for: DM_RENDER_RES as it is, else DM_RENDER_HEIGHT's lines at 16:9 (width rounded to even) written into buf, else NULL. The lines
+// are at most the largest 16:9 the heap holds (max as scene_size's): the iOS setting "Native" asks for the screen's (an iPhone Air 1260, plan item
+// 281), which past 1080 the game's own heap cannot hold, and the size was then refused and the game's own 1280x720 drawn
+static const char *scene_env(const char *res, const char *height, const char *max, char *buf, size_t n) {
     if (res && *res) return res;
 #ifndef DM_TEST_SCENE_NO_HEIGHT   // negative control of t_frame_step only: DM_RENDER_HEIGHT ignored, as before
-    char extra; unsigned h;
-    if (height && sscanf(height, "%u%c", &h, &extra) == 1 && h > 0) { snprintf(buf, n, "%ux%u", (h * 16 / 9 + 1) & ~1u, h); return buf; }
+    char extra; unsigned h, w, mw, mh;
+    if (height && sscanf(height, "%u%c", &h, &extra) == 1 && h > 0) {
+#ifndef DM_TEST_SCENE_HEIGHT_NO_FIT   // negative control of t_frame_step only: the lines asked as they are (and above the heap's refused)
+        heap_max(max, &mw, &mh);
 #else
-    (void)height; (void)buf; (void)n;
+        mw = mh = 65535;
+#endif
+        fit_16_9(h, mw, mh, &w, &h); snprintf(buf, n, "%ux%u", w, h); return buf;
+    }
+#else
+    (void)height; (void)max; (void)buf; (void)n;
 #endif
     return NULL;
 }
@@ -68,18 +91,33 @@ static int scene_size(const char *env, int opmode, const char *max, float out[2]
     if (!env || !*env || !strcmp(env, "0")) return 0;
     unsigned w, h, mw = 1920, mh = 1080; char extra;
 #ifndef DM_TEST_SCENE_NO_HEAP   // negative control of t_frame_step only: the overlay's note ignored
-    if (max && (sscanf(max, "%ux%u%c", &mw, &mh, &extra) != 2 || mw < 1920 || mh < 1080 || mw > 3840 || mh > 2160)) { mw = 1920; mh = 1080; }
+    heap_max(max, &mw, &mh);
 #endif
     if (sscanf(env, "%ux%u%c", &w, &h, &extra) != 2 || w < 64 || h < 64 || w > mw || h > mh) return -1;
     out[0] = (float)w; out[1] = (float)h; return 1;
+}
+// The output asked for: DM_OUTPUT_RES as it is, else the display the iOS setting "Native" reports (DM_DISPLAY_SIZE, the screen's 16:9 picture,
+// plan item 281: the UI composed at the screen's size, as manosaba's is) at most the largest 16:9 the heap holds (max as output_size's), written
+// into buf, else NULL
+static const char *output_env(const char *res, const char *display, const char *max, char *buf, size_t n) {
+    if (res && *res) return res;
+#ifndef DM_TEST_OUTPUT_NO_DISPLAY   // negative control of t_frame_step only: DM_DISPLAY_SIZE ignored, as before
+    unsigned w, h, mw, mh; char extra;
+    if (display && sscanf(display, "%ux%u%c", &w, &h, &extra) == 2 && w >= 640 && h >= 360) {
+        heap_max(max, &mw, &mh); fit_16_9(h, w < mw ? w : mw, mh, &w, &h); snprintf(buf, n, "%ux%u", w, h); return buf;
+    }
+#else
+    (void)display; (void)max; (void)buf; (void)n;
+#endif
+    return NULL;
 }
 // The output size for the page; returns 1 when it comes from env (DM_OUTPUT_RES), 0 for the game's own, -1 for a value it refused (the game's own).
 // max: the largest the heap allows, "<w>x<h>" (the overlay's .dm_output note), NULL for the game's own 1920x1080. out: {swapchain, canvas} packed
 static int output_size(const char *env, const char *max, uint64_t out[2]) {
     out[0] = (uint64_t)1080 << 32 | 1920; out[1] = 0;
     if (!env || !*env || !strcmp(env, "0")) return 0;
-    unsigned w, h, mw = 1920, mh = 1080; char extra;
-    if (max && (sscanf(max, "%ux%u%c", &mw, &mh, &extra) != 2 || mw < 1920 || mh < 1080 || mw > 3840 || mh > 2160)) { mw = 1920; mh = 1080; }
+    unsigned w, h, mw, mh; char extra;
+    heap_max(max, &mw, &mh);
     if (sscanf(env, "%ux%u%c", &w, &h, &extra) != 2 || w < 640 || h < 360 || w > mw || h > mh) return -1;
     out[0] = (uint64_t)h << 32 | w;
 #ifndef DM_TEST_OUTPUT_NO_CANVAS   // negative control of t_frame_step only: the canvas left to the game (only the swapchain grows)
@@ -142,6 +180,17 @@ static void frame_step_store(_Atomic uint64_t *page, double seconds) {   // page
     atomic_store_explicit(page, bits, memory_order_release);
 }
 
+// The iOS setting "Native" (DM_DISPLAY_SIZE, plan item 281) runs the game in the console's docked mode unless DM_OPMODE says otherwise: docked, the
+// shipped heap holds a 1920x1080 scene beside the 1920x1080 canvas the game lays out there; handheld (the phone's build otherwise, plan item 62d)
+// it does not: on the Mac a 1920x1080 canvas beside a 1920x1080 or 1600x900 scene ran it out at main+0x1c2f20 within seconds (beside the
+// game's own 1280x720 scene it held, and so did a 1920x1080 scene beside handheld's 1280x720 canvas)
+static int native_docked(const char *display, const char *opmode) {
+#ifndef DM_TEST_NATIVE_HANDHELD   // negative control of t_frame_step only: the mode left as it was
+    return display && *display && !opmode;
+#else
+    (void)display; (void)opmode; return 0;
+#endif
+}
 #ifndef FRAME_STEP_TEST
 static _Atomic uint64_t *g_page;
 static frame_mean g_mean;
@@ -155,14 +204,20 @@ void dm_game_boot(void) {
     if (!g_page) { LOG("[red] frame step: main has no host page (product built without rules.py HOSTREFS): the game's step stays at its chosen interval"); return; }
     const char *e = getenv("DM_FRAME_STEP_MS"); g_pin = e ? atof(e) / 1000 : 0;
     frame_step_store(g_page, g_pin > 0 ? g_pin : 1.0 / 30);   // the controller starts at interval 2
+    if (native_docked(getenv("DM_DISPLAY_SIZE"), getenv("DM_OPMODE")) && dm_opmode() != 1) {
+        dm_set_opmode(1); LOG("[scene size] DM_DISPLAY_SIZE (the setting Native): docked, whose heap holds a 1920x1080 scene and canvas (DM_OPMODE sets a mode)");
+    }
     if (dm_option_on("scene")) {
         char note[1024], max[32] = ""; FILE *f = dm_overlay_file("System/HeapSize/Product.Nin_NX_NVN.HeapDef.dm_scene", note, sizeof note) ? fopen(note, "r") : NULL;
         if (f) { if (!fgets(max, sizeof max, f)) max[0] = 0; fclose(f); max[strcspn(max, "\r\n")] = 0; }
-        char hb[32]; const char *want = scene_env(getenv("DM_RENDER_RES"), getenv("DM_RENDER_HEIGHT"), hb, sizeof hb), *src = want == hb ? "DM_RENDER_HEIGHT" : "DM_RENDER_RES";
+        char hb[32]; const char *rh = getenv("DM_RENDER_HEIGHT"), *want = scene_env(getenv("DM_RENDER_RES"), rh, max[0] ? max : NULL, hb, sizeof hb),
+                                *src = want == hb ? "DM_RENDER_HEIGHT" : "DM_RENDER_RES";
         float sz[2]; int from = scene_size(want, dm_opmode(), max[0] ? max : NULL, sz); memcpy((uint8_t *)g_page + 16, sz, sizeof sz);
         if (from < 0) LOG("[red] %s=%s: expected <width>x<height>, from 64x64 up to %s; the game's own size", src, want,
                           max[0] ? max : "1920x1080 (more needs the heap overlay of games/totk/heapdef.py)");
         else if (max[0]) LOG("[scene size] the RomFS overlay's heap allows up to %s", max);
+        if (from > 0 && want == hb && (unsigned)atoi(rh) > (unsigned)sz[1])
+            LOG("[scene size] DM_RENDER_HEIGHT=%s is more than the heap holds: the largest 16:9 it does, %s", rh, max[0] ? max : "1920x1080");
         LOG("[scene size] %.0fx%.0f (%s)", sz[0], sz[1], from > 0 ? src : dm_opmode() ? "the game's own, docked" : "the game's own, handheld");
         g_scene_boot = g_latch.latched = (uint64_t)(uint32_t)sz[1] << 32 | (uint32_t)sz[0]; atomic_store(&g_scene_want, g_scene_boot);
         strlcpy(g_scene_max, max, sizeof g_scene_max); g_scene = 1;
@@ -170,11 +225,14 @@ void dm_game_boot(void) {
     if (dm_option_on("output")) {
         char note[1024], max[32] = ""; FILE *f = dm_overlay_file("System/HeapSize/Product.Nin_NX_NVN.HeapDef.dm_output", note, sizeof note) ? fopen(note, "r") : NULL;
         if (f) { if (!fgets(max, sizeof max, f)) max[0] = 0; fclose(f); max[strcspn(max, "\r\n")] = 0; }
-        uint64_t sz[2]; int from = output_size(getenv("DM_OUTPUT_RES"), max[0] ? max : NULL, sz); memcpy((uint8_t *)g_page + 24, sz, sizeof sz);
-        if (from < 0) LOG("[red] DM_OUTPUT_RES=%s: expected <width>x<height>, from 640x360 up to %s; the game's own", getenv("DM_OUTPUT_RES"),
+        char ob[32]; const char *ds = getenv("DM_DISPLAY_SIZE"), *want = output_env(getenv("DM_OUTPUT_RES"), ds, max[0] ? max : NULL, ob, sizeof ob),
+                                *src = want == ob ? "DM_DISPLAY_SIZE" : "DM_OUTPUT_RES";
+        uint64_t sz[2]; int from = output_size(want, max[0] ? max : NULL, sz); memcpy((uint8_t *)g_page + 24, sz, sizeof sz);
+        if (from < 0) LOG("[red] %s=%s: expected <width>x<height>, from 640x360 up to %s; the game's own", src, want,
                           max[0] ? max : "1920x1080 (more needs the heap overlay of games/totk/heapdef.py --output)");
         else if (max[0]) LOG("[output size] the RomFS overlay's heap allows up to %s", max);
-        if (from > 0) LOG("[output size] swapchain and canvas %ux%u (DM_OUTPUT_RES)", (unsigned)sz[0], (unsigned)(sz[0] >> 32));
+        if (from > 0 && want == ob && strcmp(ds, ob)) LOG("[output size] DM_DISPLAY_SIZE=%s: the largest 16:9 the heap holds within it, %s", ds, ob);
+        if (from > 0) LOG("[output size] swapchain and canvas %ux%u (%s)", (unsigned)sz[0], (unsigned)(sz[0] >> 32), src);
         else LOG("[output size] the game's own (swapchain 1920x1080, the canvas as the game lays it out)");
     } else if (getenv("DM_OUTPUT_RES")) LOG("[red] DM_OUTPUT_RES needs the option output (DM_OPTIONS)");
     if ((g_aspect = dm_option_on("aspect"))) dm_aspect_init();

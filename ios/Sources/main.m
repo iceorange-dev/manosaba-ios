@@ -296,8 +296,9 @@ static void gfx_settings_boot(void) {
     g_gfx_fps = fps_afforded([d integerForKey:@"dm.fps"] == 30 ? 30 : 60, &why); g_gfx_fx = [d boolForKey:@"dm.metalfx"];
     NSInteger h = [d integerForKey:@"dm.render_height"];
     if (g_gfx_fps == 30) setenv("DM_FPS", "30", 0);
-    if (h == -1) {   // "Native" (plan item 281, manosaba): the 16:9 picture the screen's pixels hold, reported as the display (DM_DISPLAY_SIZE,
-                     // games/manosaba/graphics.c) and rendered at (DM_RENDER_HEIGHT; the width as Screen.SetResolution's hook scales 2560x1440)
+    if (h == -1) {   // "Native" (plan item 281): the 16:9 picture the screen's pixels hold, reported as the display (DM_DISPLAY_SIZE) and rendered
+                     // at (DM_RENDER_HEIGHT). manosaba renders it (games/manosaba/graphics.c; the width as Screen.SetResolution's hook scales 2560x1440);
+                     // Tears of the Kingdom goes docked and renders the largest 16:9 its heap holds, 1920x1080 (games/totk/frame_step.c)
         UIWindowScene *ws = nil; for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) if ([sc isKindOfClass:UIWindowScene.class]) { ws = (UIWindowScene *)sc; break; }
         CGSize nb = ws ? ws.screen.nativeBounds.size : CGSizeZero; double lng = MAX(nb.width, nb.height), sht = MIN(nb.width, nb.height);
         unsigned H = (unsigned)MIN(sht, floor(lng * 9 / 16)) & ~1u, W = ((2560u * H + 720u) / 1440u) & ~1u;

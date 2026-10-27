@@ -5,7 +5,10 @@
 // (-DDM_TEST_OUTPUT_NO_CANVAS) fails 3. DM_RENDER_HEIGHT at 16:9 when DM_RENDER_RES is unset (plan item 62l); ignored (-DDM_TEST_SCENE_NO_HEIGHT)
 // fails 3. The mean of the intervals before the 1/120 floor (plan item 250); each interval clamped first (-DDM_TEST_FSTEP_CLAMP_EACH) fails 3.
 // A live scene size (plan item 240, scene_latch_step / scene_live_size): the mode-change path not asked for (-DDM_TEST_SCENE_LATCH_NO_KICK) fails
-// 2; +56 left set after the pick (-DDM_TEST_SCENE_LATCH_NO_CLEAR) fails 3.
+// 2; +56 left set after the pick (-DDM_TEST_SCENE_LATCH_NO_CLEAR) fails 3. The iOS setting "Native" (plan item 281): DM_RENDER_HEIGHT's lines at
+// most the largest 16:9 the heap holds (asked as they are, -DDM_TEST_SCENE_HEIGHT_NO_FIT, fails 2); the output from DM_DISPLAY_SIZE, fitted the
+// same way (ignored, -DDM_TEST_OUTPUT_NO_DISPLAY, fails 3); docked when a display size is reported and DM_OPMODE is unset (the mode left as it was,
+// -DDM_TEST_NATIVE_HANDHELD, fails 1).
 #include <stdio.h>
 #include <math.h>
 #define FRAME_STEP_TEST 1
@@ -54,11 +57,19 @@ int main(void) {
         expect(what, 1280 * 10 - 1, sz[0] * 10 + r, 0); }
     // The heap overlay's note (games/totk/heapdef.py, plan item 95) raises the largest size to its own, never above 3840x2160
     { char b[32]; const char *w;
-      w = scene_env(NULL, "540", b, sizeof b); r = scene_size(w, 0, NULL, sz); expect("DM_RENDER_HEIGHT=540 alone: 960 ...", 960, sz[0], 0); expect("... x 540, taken (1)", 540 * 10 + 1, sz[1] * 10 + r, 0);
-      w = scene_env(NULL, "900", b, sizeof b); r = scene_size(w, 0, NULL, sz); expect("DM_RENDER_HEIGHT=900 alone: 1600x900 (width 1600)", 1600, sz[0], 0);
-      w = scene_env("1280x720", "540", b, sizeof b); r = scene_size(w, 0, NULL, sz); expect("DM_RENDER_RES=1280x720 wins over DM_RENDER_HEIGHT=540", 1280, sz[0], 0);
-      w = scene_env(NULL, "0", b, sizeof b); expect("DM_RENDER_HEIGHT=0: nothing asked (the game's own)", 1, w == NULL, 0);
-      w = scene_env(NULL, "720p", b, sizeof b); expect("DM_RENDER_HEIGHT=720p: not a number, nothing asked", 1, w == NULL, 0); }
+      w = scene_env(NULL, "540", NULL, b, sizeof b); r = scene_size(w, 0, NULL, sz); expect("DM_RENDER_HEIGHT=540 alone: 960 ...", 960, sz[0], 0); expect("... x 540, taken (1)", 540 * 10 + 1, sz[1] * 10 + r, 0);
+      w = scene_env(NULL, "900", NULL, b, sizeof b); r = scene_size(w, 0, NULL, sz); expect("DM_RENDER_HEIGHT=900 alone: 1600x900 (width 1600)", 1600, sz[0], 0);
+      w = scene_env("1280x720", "540", NULL, b, sizeof b); r = scene_size(w, 0, NULL, sz); expect("DM_RENDER_RES=1280x720 wins over DM_RENDER_HEIGHT=540", 1280, sz[0], 0);
+      w = scene_env(NULL, "0", NULL, b, sizeof b); expect("DM_RENDER_HEIGHT=0: nothing asked (the game's own)", 1, w == NULL, 0);
+      w = scene_env(NULL, "720p", NULL, b, sizeof b); expect("DM_RENDER_HEIGHT=720p: not a number, nothing asked", 1, w == NULL, 0);
+      // The iOS setting "Native" (plan item 281): the screen's lines, at most the largest 16:9 the heap holds
+      w = scene_env(NULL, "1260", NULL, b, sizeof b); r = scene_size(w, 0, NULL, sz);
+      expect("Native on an iPhone Air (1260 lines), no overlay: 1920x1080, taken [-DDM_TEST_SCENE_HEIGHT_NO_FIT: refused]", 1, sz[0] == 1920 && sz[1] == 1080 && r == 1, 0);
+      w = scene_env(NULL, "1260", "2560x1440", b, sizeof b); r = scene_size(w, 0, "2560x1440", sz);
+      expect("1260 lines with an overlay for 2560x1440: 2240x1260, taken", 1, sz[0] == 2240 && sz[1] == 1260 && r == 1, 0);
+      w = scene_env(NULL, "1548", "2560x1440", b, sizeof b); r = scene_size(w, 0, "2560x1440", sz);
+      expect("1548 lines (a 13-inch iPad) with an overlay for 2560x1440: 2560x1440 [-DDM_TEST_SCENE_HEIGHT_NO_FIT: refused]", 1, sz[0] == 2560 && sz[1] == 1440 && r == 1, 0);
+      w = scene_env(NULL, "750", NULL, b, sizeof b); expect("750 lines (below the heap's): 1334x750 as asked", 1, w && !strcmp(w, "1334x750"), 0); }
     r = scene_size("2560x1440", 1, "2560x1440", sz); expect("2560x1440 with an overlay for 2560x1440: taken (1)", 1440 * 10 + 1, sz[1] * 10 + r, 0);
     r = scene_size("2560x1440", 1, "1920x1080", sz); expect("2560x1440 with an overlay for 1920x1080: refused (-1)", 1600 * 10 - 1, sz[0] * 10 + r, 0);
     r = scene_size("3200x1800", 1, "2560x1440", sz); expect("3200x1800 above the overlay's 2560x1440: refused (-1)", 1600 * 10 - 1, sz[0] * 10 + r, 0);
@@ -76,6 +87,20 @@ int main(void) {
         expect(what, 1, o[0] == hd && !o[1] && r == -1, 0); }
     r = output_size("2560x1440", "1920x1080", o); expect("2560x1440 with an overlay for 1920x1080: refused (-1)", 1, o[0] == hd && !o[1] && r == -1, 0);
     r = output_size("3840x2160", "9999x9999", o); expect("a note above 3840x2160 is ignored: 3840x2160 refused (-1)", 1, !o[1] && r == -1, 0);
+    expect("Native (a display size, DM_OPMODE unset): docked [-DDM_TEST_NATIVE_HANDHELD: as it was]", 1, native_docked("2240x1260", NULL), 0);
+    expect("Native with DM_OPMODE set: the mode it says", 0, native_docked("2240x1260", "0"), 0);
+    expect("no display size: the mode as it was", 0, native_docked(NULL, NULL) + native_docked("", NULL), 0);
+    // The output from the display the iOS setting "Native" reports (DM_DISPLAY_SIZE, plan item 281), when DM_OUTPUT_RES is unset
+    { char b[32]; const char *w; const uint64_t air = (uint64_t)1260 << 32 | 2240;
+      w = output_env(NULL, "2240x1260", NULL, b, sizeof b); r = output_size(w, NULL, o);
+      expect("Native on an iPhone Air, no overlay: swapchain and canvas 1920x1080 [-DDM_TEST_OUTPUT_NO_DISPLAY: the game's own]", 1, o[0] == hd && o[1] == hd && r == 1, 0);
+      w = output_env(NULL, "2240x1260", "2560x1440", b, sizeof b); r = output_size(w, "2560x1440", o);
+      expect("... with an overlay for 2560x1440: both 2240x1260 [-DDM_TEST_OUTPUT_NO_DISPLAY: the game's own]", 1, o[0] == air && o[1] == air && r == 1, 0);
+      w = output_env("1280x720", "2240x1260", NULL, b, sizeof b); r = output_size(w, NULL, o);
+      expect("DM_OUTPUT_RES=1280x720 wins over DM_DISPLAY_SIZE", 1, o[0] == hd7 && o[1] == hd7 && r == 1, 0);
+      w = output_env(NULL, "1334x750", NULL, b, sizeof b); expect("a 1334x750 display: 1334x750 as reported [-DDM_TEST_OUTPUT_NO_DISPLAY: nothing]", 1, w && !strcmp(w, "1334x750"), 0);
+      w = output_env(NULL, "2240x", NULL, b, sizeof b); expect("a display size that is not <w>x<h>: nothing asked", 1, w == NULL, 0);
+      w = output_env(NULL, NULL, NULL, b, sizeof b); expect("no display size: nothing asked (the game's own)", 1, w == NULL, 0); }
     // A live scene size (plan item 240): the page, the renderer's cached mode index (+0xcd0) and the flags the cave ORs in (+56)
     {   _Alignas(16) static uint8_t pg[64]; _Alignas(16) static uint8_t rend[0x1000]; float f[2]; uint32_t k; int st;
         const uint64_t s720 = (uint64_t)720 << 32 | 1280, s540 = (uint64_t)540 << 32 | 960;
