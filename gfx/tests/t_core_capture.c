@@ -3,8 +3,10 @@
 // bound uniform ranges' bytes are taken (merged), a range in no pool is left to be read live, nothing is taken with snapshots off. At the replay:
 // the handles go into the records with the submission's generation, the snapshot holds the bytes of the call (not what the game wrote after), and
 // a range a GPU write reaches that had not completed at the call is not copied even when it has completed since; without a capture the snapshot
-// reads memory; the test hook sees the bytes at a watched address.
-// Only the writes still running at the replay counting (-DDM_TEST_XLAT_CAP_STALE, t_xlat's broken variant): 1 fails.
+// reads memory; the test hook sees the bytes at a watched address. Lists reached through calls (plan item 226): gone through breadth first (the
+// submitted list's records, then those of the lists it calls, then theirs), a list called twice twice, to call depth 32 and not 33.
+// Only the writes still running at the replay counting (-DDM_TEST_XLAT_CAP_STALE, t_xlat's broken variant): 1 fails. A called list walked as its
+// call is met (-DDM_TEST_CAP_DEPTH_FIRST): 1 fails.
 #include "../nvn/core/capture.h"
 #include "core_test.h"
 #include "../../host/dm.h"
@@ -22,7 +24,7 @@ void nvn_be_arena(size_t len, uint8_t **cpu, uint64_t *gpu, void **buf) { g_aren
 static uint64_t g_done;
 uint64_t nvn_be_done_fence(void) { return g_done; }
 
-static uint8_t g_mem[4096] __attribute__((aligned(8))); static size_t g_len;
+static uint8_t g_mem[8192] __attribute__((aligned(8))); static size_t g_len;
 static uint8_t *rec(uint32_t op, const void *pl, size_t sz) {
     uint8_t *p = g_mem + g_len; uint32_t size = (uint32_t)((8 + sz + 7) & ~(size_t)7);
     op_hdr h = {op, size}; memcpy(p, &h, 8); memset(p + 8, 0, size - 8); if (sz) memcpy(p + 8, pl, sz); g_len += size; return p + 8;
@@ -64,6 +66,25 @@ int main(void) {
     g_us.n = 0; mtl_sub_snapshot(&h, 1);
     check("without a capture the snapshot reads memory (the write has completed: copied)", 1, us_find(A(0x800), 4) != NULL);
     g_us.on = 0; c = mtl_sub_capture(&h, 1, 11); check("snapshots off: no range taken at the call", 0, c->nr); mtl_cap_free(c);
+    // calls: l0 calls la, lb, then binds, then calls lb again; la calls lc
+    static uint64_t dh[1] = {0x5555}; p_bind_handles d = {0}; d.stage = 1; d.n = 1; d.defer = 1; d.src = (uint64_t)(uintptr_t)dh;
+    g_len = 0; uint64_t t;
+    uint64_t lc = (uint64_t)(uintptr_t)(g_mem + g_len); void *rc = rec(OP_BIND_TEX, &d, sizeof d); rec(OP_END, NULL, 0);
+    uint64_t la = (uint64_t)(uintptr_t)(g_mem + g_len); rec(OP_CALL, &lc, 8); void *ra = rec(OP_BIND_TEX, &d, sizeof d); rec(OP_END, NULL, 0);
+    uint64_t lb = (uint64_t)(uintptr_t)(g_mem + g_len); void *rb = rec(OP_BIND_TEX, &d, sizeof d); rec(OP_END, NULL, 0);
+    h = (uint64_t)(uintptr_t)(g_mem + g_len); rec(OP_CALL, &la, 8); rec(OP_CALL, &lb, 8); void *r0 = rec(OP_BIND_TEX, &d, sizeof d); rec(OP_CALL, &lb, 8); rec(OP_END, NULL, 0);
+    c = mtl_sub_capture(&h, 1, 12);
+    check("through calls: the list called twice taken twice, the one a called list calls taken", 5, c->nbh);
+    { void *want[5] = {r0, ra, rb, rb, rc}; int ok = c->nbh == 5; for (int i = 0; ok && i < 5; i++) ok = c->bh[i].rec == want[i];
+      check("breadth first: the submitted list's record, then its called lists' (in call order), then theirs [-DDM_TEST_CAP_DEPTH_FIRST]", 1, ok); }
+    mtl_cap_free(c);
+    // a chain of calls 33 deep: the list at depth 32 is gone through, the one at 33 is not
+    g_len = 0; uint64_t next = (uint64_t)(uintptr_t)(g_mem + g_len); rec(OP_BIND_TEX, &d, sizeof d); rec(OP_END, NULL, 0);
+    t = (uint64_t)(uintptr_t)(g_mem + g_len); rec(OP_CALL, &next, 8); void *r32 = rec(OP_BIND_TEX, &d, sizeof d); rec(OP_END, NULL, 0); next = t;
+    for (int k = 31; k >= 0; k--) { t = (uint64_t)(uintptr_t)(g_mem + g_len); rec(OP_CALL, &next, 8); rec(OP_END, NULL, 0); next = t; }
+    h = next; c = mtl_sub_capture(&h, 1, 13);
+    check("call depth: the list at 32 gone through, the one at 33 not", 1, c->nbh == 1 && c->bh[0].rec == r32);
+    mtl_cap_free(c);
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }

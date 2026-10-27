@@ -226,10 +226,10 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   not fit, since under the power split the frame looks CPU-bound.
 - 131a the game's own dynamic resolution: two of four pass dumps on the iPhone (240) were at 0.8 of the page's size, which the Mac never showed.
   Nothing in main was found to set its enable bit (0x8c4eb0, +0x1c bit 0); look again from those dumps.
-- 226 the submit call's capture on the game's thread: it walks every command of the frame (52 % of the call) and copies 1.5 MB of uniforms the
-  snapshot copies again; snapshot lookups miss between draws binding several blocks; texture views are checked again in 6 % of the thread.
-  Next (the user, 2026-10-24: worth it); measure again first, the numbers predate the capture's move to core (batch 93). It runs for
-  Tears of the Kingdom, whose defaults turn the translation thread on; manosaba's do not.
+- 226 the submit call's capture on the game's thread, after batch 110's walk (below; about 265 us a call on the M5 Mac): the uniforms it copies
+  (0.9 MB a call, with the allocation 77 us) the snapshot copies again on the translation thread; snapshot lookups miss between draws binding
+  several blocks; texture views are checked again in 6 % of the thread. It runs for Tears of the Kingdom, whose defaults turn the translation
+  thread on; manosaba's do not.
 - 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its middle,
   and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576).
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
@@ -281,7 +281,6 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   a border sampler bound, `mtl/border_warm.inc`), dispatch arguments before the encode stage's wait, generation maxima per 64 pages
   (`TOTK_DIRTY_FAST`), 8-byte hash keys compared as one word (`nvn_hmap.h`). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the
   passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (our build writes them; `mtl/args.inc` fills all).
-- 272 226 itself: nxport 9c5463d keeps each command list's pre-scan while the list lives.
 - 273 the translation thread against the game's thread, sustained, on the phone (kxn, Adreno 735: 43 against 32 fps on the calling thread).
 - 274 compute dispatches run before their pass (nxnative `cs_hoist_try`; with its slice merge an iPhone's GPU p95 18-19 → 13.5-14.5 ms in Breath
   of the Wild); 218's case.
@@ -586,5 +585,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   panel; `dm.render_height` -1) reports the 16:9 picture the screen's pixels hold and renders at it (an iPhone Air: 2240x1260). Memory grows with
   the picture (the 3071 MB A16 iPad above has no room for it). `host/tests/t_mano_display` (unset, 2241x1261 → 2240x1260, malformed;
   -DDM_TEST_DISPLAY_CONST fails the second); `verify/regress.sh --fuzz` OK (main: 6 cuts, 3 gates). Also 270's `DM_IOS_DRAWABLE_H`. gfx 150
-  commands on Metal 4 and Metal 3, host 179; both IPAs; smoke as batch 108. Not yet run on a device: the manosaba build for the iPhone Air
-  needs Xcode's account again ("No Accounts").
+  commands on Metal 4 and Metal 3, host 179; both IPAs; smoke as batch 108. On the iPhone Air after the commit: Native renders 2240x1260,
+  the picture whole and in place, GPU memory 515 against 496 MB at the game's size.
+- [x] batch 110 · 226 the submit call's capture walks its lists breadth first (`gfx/nvn/core/capture.c`). Tears of the Kingdom submits one
+  list a call, which reaches about 3,300 lists of two to five records through four levels of calls (by depth 1 / 13 / 58 / 2,301 / 951), and
+  the walk, going into each call as it met it, waited on memory at every list. On the M5 Mac standing on Great Sky Island (means of 3,000
+  calls): the capture 350 us, of it the lists 246, sort and merge 29, the allocation and the uniforms' copy 77 (0.9 MB). Calls now go on a
+  queue and the list 48 places on is fetched as one is taken; in one build the lists took 215 us depth first, 190 with the queue, 167 fetched
+  16 ahead, 161 fetched 48 ahead (the capture 322 → 265 us). Tried and left: notes made at recording of where the records the capture needs are
+  (with a table big enough every list found its notes and a check against the walk found 0 of 3,000 calls differing, but 359 against 347 us:
+  each list's lookup waits on memory as its walk did); 272, each list's walk kept while it lives (nxport 9c5463d; the lists that cost are
+  recorded anew every frame); no de-duplication of the uniform ranges before the sort (364 us). `t_core_capture` +3 (breadth-first order, a
+  list called twice, call depth 32 and not 33; -DDM_TEST_CAP_DEPTH_FIRST fails 1). gfx 150 commands on Metal 4 and Metal 3; host 179, of which
+  t_fs_kill failed once under the run's load (its writer got through 59 commits; the check wants more than 60) and passed alone; both IPAs. Smoke: the
+  same red lines, Tears of the Kingdom's frames the same by eye, manosaba's within 1.1, instructions a draw as before.
