@@ -256,4 +256,13 @@ HLE_FORCE_OPT("_ZN2nn5audio25ListAudioOutputDeviceNameEPNS0_15AudioDeviceNameEi"
 HLE_FORCE_OPT("_ZN2nn5audio30GetActiveAudioOutputDeviceNameEPNS0_15AudioDeviceNameE", "active output device: built-in speaker", void, h_ad_Active, char *name) { out_devname(name); }
 HLE_FORCE_OPT("_ZN2nn5audio41GetActiveAudioDeviceChannelCountForOutputEv", "output channels: 2", int, h_ad_Channels, void) { return 2; }
 HLE_FORCE_OPT("_ZN2nn5audio26SetAudioDeviceOutputVolumeEPKNS0_15AudioDeviceNameEf", "device volume: ignored", void, h_ad_SetVol, const char *name, float v) { (void)name; (void)v; }
-HLE_FORCE_OPT("_ZN2nn5audio39AcquireAudioDeviceNotificationForOutputEPNS_2os11SystemEventE", "output device change notification: bound, never signalled", void, h_ad_Notify, void *ev) { hle_bind_system_event(ev, 0); }
+// It returns a Result (the SDK reference; plan item 288, after seedds/nxnative 971d336, MIT): as a void function it left x0 as it came, the event's
+// address, which the caller took for a failed Result. -DDM_TEST_ADNOTIFY_VOID answers that address the same way
+HLE_FORCE_OPT("_ZN2nn5audio39AcquireAudioDeviceNotificationForOutputEPNS_2os11SystemEventE", "output device change notification: bound, never signalled", Result, h_ad_Notify, void *ev) {
+    hle_bind_system_event(ev, 0);
+#ifdef DM_TEST_ADNOTIFY_VOID
+    return (Result)(uintptr_t)ev;
+#else
+    return RES_OK;
+#endif
+}

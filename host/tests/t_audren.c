@@ -1,7 +1,8 @@
 // Closing the audio renderer (hle_audren.c h_ar_Close, nxnative 8530042): the host render thread has ended its round, closed its PCM output and exited
 // before the SDK's CloseAudioRenderer runs, even when a round takes 30 ms. The close used to give the thread 20 ms: the SDK tore the renderer down
 // under a round still running, and the output was never closed (it kept its sink and one of the AudioOut slots). SDK functions, guest threads and the
-// PCM output are stand-ins here.
+// PCM output are stand-ins here. AcquireAudioDeviceNotificationForOutput's Result (plan item 288); answering the event's address as a void function
+// leaves it (-DDM_TEST_ADNOTIFY_VOID): 1 fails.
 #include "../hle/hle_audren.c"
 #include <pthread.h>
 struct dm_flags g_flag;
@@ -40,5 +41,8 @@ int main(void) {
     CHECK(g_close_in_exec == 0, "no round is running when the SDK closes the renderer");
     CHECK(g_close_thread_done == 1, "the render thread has exited by then");
     CHECK(g_close_out_closed == 1, "and has closed its PCM output");
+    // AcquireAudioDeviceNotificationForOutput returns a Result (plan item 288): success, the event bound
+    uint8_t ev[0x40] = {0};
+    CHECK(h_ad_Notify(ev) == 0, "AcquireAudioDeviceNotificationForOutput: success, as a Result");
     printf("t_audren: %d checks, %d failed\n", n, fail); return fail != 0;
 }

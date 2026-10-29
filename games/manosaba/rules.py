@@ -27,6 +27,13 @@ CUTS = {
         # for both (plan item 281)
         (0x90c990, '08f08052280000b9', '211000d4c0035fd6', 'screen manager display size: mov w8, #0x780; str w8, [x1] → svc #0x81; ret (host call: the size reported)'),
         (0x99bcc0, '08f08052280000b9', '211000d4c0035fd6', 'graphics device display size: mov w8, #0x780; str w8, [x1] → svc #0x81; ret (host call: the size reported)'),
+    ],    # sdk (plan item 289, after nx2android 8056043, MIT, the words checked here): the same node area cut as Tears of the Kingdom's (games/totk/rules.py).
+    # Unity 6 takes all its memory through AllocateAddressRegion, and the first trial reached +4904 MB of the 5376 MB alias region on the iPhone Air
+    # (472 MB left). The constructor is at sdk+0x14fbe0 (+0x14fbf0 the limit, +0x14fc5c the area registered as occupied); VammManager::AllocateAddressRegion
+    # (sdk+0x14fd00) aligns regions to 64 KB or 2 MB only
+    'ab3835b2a37b1916e296f27e82dd4e36': [
+        (0x14fbf0, '08fca752', '087ca052', 'AddressRegionManager constructor: node area limit mov w8, #0x3fe00000 → mov w8, #0x3e00000'),
+        (0x14fc5c, '09fca752', '097ca052', 'AddressRegionManager constructor: the node area registered as occupied, mov w9, #0x3fe00000 → mov w9, #0x3e00000'),
     ],
 }
 OBS = {}

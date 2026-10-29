@@ -10,7 +10,18 @@
 #   aspect    the cameras' aspect ratio × the host page +40, for a wide picture (DM_ASPECT, the Mac's View → Wide Picture; CAVES)
 #   fixedres  the dynamic resolution held at 100 % (plan item 276): every tier of the game's controller scales by 1.0
 #   hold60    with fps60, the frame-rate controller's interval never raised again (plan item 285): it stays at 1 whatever the frame costs
-CUTS = {}
+CUTS = {
+    # sdk (SDK 20.5.22; plan item 289, after seedds/nxnative 7deea8e, MIT, the words checked here): the AddressRegionManager constructor (sdk+0x145cfc)
+    # keeps the first 0x3fe00000 (1022 MB) of the alias region for its node heap (a unit heap of 0x30-byte nodes, mapped only as used), so every address
+    # region starts after it; 0x3e00000 (62 MB) holds about 1.35 million nodes, where a few hundred regions are live. Both words change together:
+    # +0x145d0c sets the limit (alias start + it), +0x145d78 registers the area as occupied. VammManager::AllocateAddressRegion (sdk+0x145df0) aligns
+    # regions to 64 KB or 2 MB only, so no alignment cut. Upstream's game reached +2.25 GB of a 2.375 GB alias region and took the memory-shortage
+    # Blood Moon without it (its issue #70); ours has 3456 MB on iOS
+    '574284b40c06cf1821a44857939083be': [
+        (0x145d0c, '08fca752', '087ca052', 'AddressRegionManager constructor: node area limit mov w8, #0x3fe00000 → mov w8, #0x3e00000'),
+        (0x145d78, '09fca752', '097ca052', 'AddressRegionManager constructor: the node area registered as occupied, mov w9, #0x3fe00000 → mov w9, #0x3e00000'),
+    ],
+}
 OBS = {}
 PARAMS = {}
 HOSTREFS = {}

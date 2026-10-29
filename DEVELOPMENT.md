@@ -299,16 +299,7 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
   shim headers.
 
-From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); the order the user chose: these two first, then 301):
-- 288 SDK functions with the wrong return type (seedds/nxnative 971d336, MIT, written anew; the SDK reference checked): `nn::time::CalculateSpanBetween`
-  returns bool (true: computed), ours returned a Result, so a span computed read as false and a failure as true;
-  `nn::audio::AcquireAudioDeviceNotificationForOutput` returns a Result, ours was void and left the caller its own first argument (the event's
-  address) as the result. Tears of the Kingdom's main imports both; manosaba's neither.
-- 289 the SDK's address-region node area cut from 0x3fe00000 (1022 MB) to 0x3e00000 (62 MB) for both games' sdk builds (nxnative 7deea8e / d1b7444,
-  nx2android 8056043, MIT; the words checked here): Unity 6 takes all its memory through AllocateAddressRegion, and manosaba's trial reaches
-  +4904 MB of its 5376 MB alias region on the iPhone Air (472 MB left); upstream's Tears of the Kingdom took the memory-shortage Blood Moon at
-  +2.25 GB of 2.375 GB (its issue #70, #639). Both games' AllocateAddressRegion align to 64 KB or 2 MB only: no alignment cut. A refused region
-  is logged red (it had no line).
+From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 289 done in batch 122, the user's order: 301 next):
 - 290 texture reads of guest memory the game unmapped, guarded (MacNativeGames f3bb714, PR #1232, MIT: SIGBUS in the deswizzle, the Depths):
   `gfx/nvn/mtl/upload.inc` reads `t->mem` unguarded on the translation thread.
 - 291 quad strips as triangles, plain and indexed (MacNativeGames bff585f, PR #1216: the Hero's Path); ours skips the draw (`mtl/draw.inc`).
@@ -747,3 +738,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   -DDM_TEST_OUTPUT_NO_DISPLAY fails 3, -DDM_TEST_NATIVE_HANDHELD fails 1). `games/totk/check_frame_rate.py` applied every option, hold60 too, and
   3 of its checks failed since batch 118: hold60 left out now (its own check is `tools/tests/t_totk_options.py`); the five
   `games/totk/check_*.py` run in the batch's tool step from now on (`work/scripts/batch_fast.sh`).
+- [x] batch 122 · 288 SDK functions with the wrong return type (seedds/nxnative 971d336, MIT, written anew; the SDK reference checked):
+  `nn::time::CalculateSpanBetween` returns bool, true when computed, and ours returned a Result (0 on success), so every span read as failed and a
+  failure as computed; `nn::audio::AcquireAudioDeviceNotificationForOutput` returns a Result, and ours was void, which left the caller x0 as it
+  came, the event's address: a failed Result. Tears of the Kingdom's main imports both, manosaba's neither. `t_time` +3 (-DDM_TEST_SPAN_RESULT,
+  the old Result answers: 3 fail), `t_audren` +1 (-DDM_TEST_ADNOTIFY_VOID, the event's address as the answer: 1 fails).
+  289 the SDK's address-region node area cut from 0x3fe00000 (1022 MB) to 0x3e00000 (62 MB) for both games' sdk builds (nxnative 7deea8e /
+  d1b7444, nx2android 8056043, MIT; the words and the constructor checked here): `games/totk/rules.py` sdk 574284b40c06 +0x145d0c / +0x145d78,
+  `games/manosaba/rules.py` sdk ab3835b2a37b +0x14fbf0 / +0x14fc5c; both games' AllocateAddressRegion align to 64 KB or 2 MB only, so no
+  alignment cut. The rebuilt products differ from the old in those two words of sdk and the rewriter stamp alone. On the Mac smoke runs the
+  highest offset used fell with the same use: Tears of the Kingdom 1715 → 749 MB (512 MB used), manosaba 2460 → 1518 MB (1166 MB used); on the
+  Air manosaba's trial reached +4904 MB of 5376 before. `hle_svc.c` passes nn::os::AllocateAddressRegion to the SDK and logs the highest region
+  end at each 512 MB and a refusal red (it had no line). `tools/tests/t_node_area.py` (8 checks: each pair, its words' encodings, and with the
+  game files each module's original words in the constructor's shape; T_NODE_AREA_BROKEN=1, a cut that changes nothing: 1 fails),
+  `t_guest_mem` +3 (-DDM_TEST_AR_UNLOGGED, a refusal unseen: 1 fails). verify/regress.sh --fuzz for both games: all OK. Smoke: Tears of the
+  Kingdom's two red lines as before, frame 1300 the same scene a few frames of animation apart (looked at), manosaba's shots as batch 121's.

@@ -15,7 +15,7 @@
 
 // One reserved block of guest address space, partitioned the Horizon way (address values are the host's real mmap addresses). It takes address space, not memory.
 // Unity never calls SetHeapSize: its memory comes from the alias region through the SDK's VammManager, which keeps the first 0x3fe00000 of that region for its
-// own node heap. A real 39-bit process has a 64 GB alias region; here Mac reserves 12 GB (alias 4 GB) and iOS steps down from 6 GB (see mem_init).
+// own node heap (0x3e00000 where a game's rules cut it: plan item 289, both games). A real 39-bit process has a 64 GB alias region; here Mac reserves 12 GB (alias 4 GB) and iOS steps down from 6 GB (see mem_init).
 // DM_GUEST_AS_GB=<n> (n >= 6) sets the total.
 static size_t g_reserve;
 
@@ -78,7 +78,7 @@ static void mem_init(void) {
     // below 2^39 (guest_as.h, plan item 62a; done at the top of main(), before UIKit and Metal map theirs: svc_reserve_early), the free gaps logged
     // when it is less than 6 GB; mmap's own choice if that fails. Everything except the 256 MB prefix, the 256 MB stack region and the profile's
     // heap (guest_heap_mb) goes to the alias region (manosaba on the Mac: a 90 s story run peaks at 1166 MB of alias used, highest offset 2460 MB),
-    // which needs 1.5 GB at least (VammManager keeps ~1 GB)
+    // which needs 1.5 GB at least (VammManager keeps ~1 GB where no cut makes it 62 MB, plan item 289)
     if (!e) {
         size_t heap = (size_t)(dm_game.guest_heap_mb ? dm_game.guest_heap_mb : 256) << 20, want = g_reserve, least = 0x20000000ull + heap + 0x60000000ull;
         if (least > want) die("reserve guest AS: a %zu MB heap needs %zu MB, more than the %zu MB asked for", heap >> 20, least >> 20, want >> 20);
@@ -140,6 +140,31 @@ HLE_FORCE("_ZN2nn3mem17StandardAllocator8AllocateEmm", "the SDK allocator, loggi
     void *p = orig(self, size, align);
     if (!p && size) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) LOG("[red] game heap allocation returned null: %zu bytes (alignment %zu), allocator %p", size, align, self); }
     return p;
+}
+// Address regions (plan item 289, after nx2android 8056043, MIT, written anew): nn::os::AllocateAddressRegion places a region in the alias region (the SDK's
+// VammManager, after its node area), and only the pages mapped into it later reach MapPhysicalMemory, so a refused region left nothing in the log. Unity 6
+// takes all its memory so; with no region left its allocator returns null and IL2CPP's collector aborts (Graveyard Keeper 2, about 24 minutes in). The SDK's
+// own, called as is: the highest region end logged at each 512 MB it passes, a refusal red (the first 8). -DDM_TEST_AR_UNLOGGED: a refusal as before, unseen
+static _Atomic uint64_t g_ar_top; static _Atomic int g_ar_refused;
+void svc_region_stat(uint64_t *top, int *refused) { *top = atomic_load(&g_ar_top); *refused = atomic_load(&g_ar_refused); }   // highest region end (offset in the alias region), refusals
+HLE_FORCE_OPT("_ZN2nn2os21AllocateAddressRegionEPmm", "the SDK's own, the highest region end and refusals logged", Result, hle_os_alloc_region, uint64_t *out, size_t size) {
+    static Result (*orig)(uint64_t *, size_t);
+    if (!orig && !(orig = (Result (*)(uint64_t *, size_t))module_sym(mod_named("sdk"), "_ZN2nn2os21AllocateAddressRegionEPmm"))) die("nn::os::AllocateAddressRegion not found in sdk");
+    Result r = orig(out, size);
+#ifdef DM_TEST_AR_UNLOGGED
+    if (r) return r;
+#endif
+    uint64_t base = (uint64_t)(uintptr_t)g_alias;
+    if (r) {
+        if (atomic_fetch_add(&g_ar_refused, 1) < 8)
+            LOG("[red] address region of %.1f MB refused (result %#x): regions end up to %llu MB of the %zu MB alias region, %zu MB of it mapped", size / 1048576.0, r,
+                (unsigned long long)(atomic_load(&g_ar_top) >> 20), g_alias_cap >> 20, g_alias_mapped >> 8);
+    } else if (*out >= base && size <= g_alias_cap && *out - base <= g_alias_cap - size) {
+        uint64_t end = *out - base + size, t = atomic_load(&g_ar_top);
+        while (end > t && !atomic_compare_exchange_weak(&g_ar_top, &t, end)) {}
+        if (end > t && end >> 29 != t >> 29) LOG("address regions end up to %llu MB of the %zu MB alias region", (unsigned long long)(end >> 20), g_alias_cap >> 20);
+    }
+    return r;
 }
 
 // For memory accounting (memstat.m): the range of the whole guest address space block (base = NULL when not initialized)

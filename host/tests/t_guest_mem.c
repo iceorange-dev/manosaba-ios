@@ -25,6 +25,8 @@
 // QueryMemory beside MapMemory / UnmapMemory (nxnative 8530042): (10) with 512 other mappings in the registry, four threads query their own mapped
 //   stacks while two others unmap and map again those 512: every query reports the querying thread's own range as a stack. Reads without the registry lock
 //   saw entries move under them (an unmap moves the last entry into the freed slot): another mapping, or the stack reported free.
+// Address regions (plan item 289): (11) the SDK's AllocateAddressRegion as is, the highest region end kept, a refusal counted for its red line;
+//   a refusal unseen as before (-DDM_TEST_AR_UNLOGGED): 1 fails.
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -40,7 +42,13 @@ uint64_t guest_ns(void) { return 0; }
 int svc_thread(int num, uint64_t *regs) { (void)num; (void)regs; return 0; }
 module_t *module_of(const void *a) { (void)a; return NULL; }
 static uint64_t g_fake_ra;   // the SDK's g_AbortImplReturnAddress for section 9
-void *module_sym(module_t *m, const char *n) { (void)m; return g_fake_ra && !strcmp(n, "_ZN2nn4diag6detail24g_AbortImplReturnAddressE") ? &g_fake_ra : NULL; }
+static Result g_fake_ar_result; static uint64_t g_fake_ar_at;   // the SDK's AllocateAddressRegion for section 11: its answer and the address it gives
+static Result fake_alloc_region(uint64_t *out, size_t size) { (void)size; if (g_fake_ar_result) return g_fake_ar_result; *out = g_fake_ar_at; return 0; }
+void *module_sym(module_t *m, const char *n) {
+    (void)m;
+    if (!strcmp(n, "_ZN2nn2os21AllocateAddressRegionEPmm")) return (void *)fake_alloc_region;
+    return g_fake_ra && !strcmp(n, "_ZN2nn4diag6detail24g_AbortImplReturnAddressE") ? &g_fake_ra : NULL;
+}
 void dm_backtrace(uint64_t fp) { (void)fp; }
 void hlecount_svc(int n) { (void)n; }
 uint64_t dm_entropy64(void) { return 0; }
@@ -276,6 +284,18 @@ int main(void) {
 #undef PHYS
 #undef GI
 #undef HEAP
+    }
+
+    // (11) Address regions (plan item 289): the SDK's AllocateAddressRegion called as is, its region's end in the alias region kept as the highest,
+    // and a refusal passed back and counted (the log's red line)
+    {   uint64_t at = 0, top; int refused; g_fake_ar_at = (uint64_t)(uintptr_t)g_alias + 0x3e00000;
+        Result r = hle_os_alloc_region(&at, 0x10000000);
+        svc_region_stat(&top, &refused);
+        CHECK(r == 0 && at == g_fake_ar_at && top == 0x3e00000 + 0x10000000, "an address region: the SDK's address, its end (%llu MB) the highest", (unsigned long long)(top >> 20));
+        g_fake_ar_at -= 0x1000000; hle_os_alloc_region(&at, 0x100000); svc_region_stat(&top, &refused);
+        CHECK(top == 0x3e00000 + 0x10000000, "... a region ending lower leaves the highest end");
+        g_fake_ar_result = 0x1803; r = hle_os_alloc_region(&at, 0x40000000); svc_region_stat(&top, &refused); g_fake_ar_result = 0;
+        CHECK(r == 0x1803 && refused == 1, "a refused address region: its result passed back, and counted (logged red)");
     }
 
     printf("t_guest_mem: %d checks, %d failed\n", checks, fails);

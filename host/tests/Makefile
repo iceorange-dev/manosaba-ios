@@ -12,6 +12,7 @@ run: \
 	$(B)/t_audio_extras_vol \
 	$(B)/t_audio_extras_kept \
 	$(B)/t_audren \
+	$(B)/t_audren_void \
 	$(B)/t_audren_pace \
 	$(B)/t_audren_pace_out \
 	$(B)/t_audren_pace_sink \
@@ -55,6 +56,7 @@ run: \
 	$(B)/t_guest_mem_heapold \
 	$(B)/t_guest_mem_physold \
 	$(B)/t_guest_mem_getinfoold \
+	$(B)/t_guest_mem_arold \
 	$(B)/t_hid_receipt \
 	$(B)/t_hid_receipt_oneslot \
 	$(B)/t_hid_applet \
@@ -171,6 +173,7 @@ run: \
 	$(B)/t_time \
 	$(B)/t_time_one \
 	$(B)/t_time_ctxold \
+	$(B)/t_time_span \
 	$(B)/t_tzrule \
 	$(B)/t_tzrule_dev \
 	$(B)/t_touch \
@@ -192,6 +195,10 @@ run: \
 	   cat $(B)/t_audio_extras_$$t.log; echo "t_audio_extras_$$t: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audio_extras_$$t: $$want fail, as expected"; done
 	$(B)/t_audren 2>/dev/null
+	@status=0; $(B)/t_audren_void > $(B)/t_audren_void.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || ! grep -q "✗ AcquireAudioDeviceNotificationForOutput: success" $(B)/t_audren_void.log; then \
+	   cat $(B)/t_audren_void.log; echo "t_audren_void: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_audren_void: a void notification leaves the event's address as the result, as expected"
 	$(B)/t_audren_pace
 	@status=0; $(B)/t_audren_pace_out > $(B)/t_audren_pace_out.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "no two frames under 1 ms apart *✗" $(B)/t_audren_pace_out.log; then \
@@ -286,6 +293,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "FAIL an unknown type: InvalidEnumValue" $(B)/t_guest_mem_getinfoold.log; then \
 	   cat $(B)/t_guest_mem_getinfoold.log; echo "t_guest_mem_getinfoold: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_guest_mem_getinfoold: an unknown GetInfo type that succeeds with 0, as expected"
+	@status=0; $(B)/t_guest_mem_arold > $(B)/t_guest_mem_arold.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || ! grep -q "FAIL a refused address region" $(B)/t_guest_mem_arold.log; then \
+	   cat $(B)/t_guest_mem_arold.log; echo "t_guest_mem_arold: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_guest_mem_arold: a refused address region left unseen, as expected"
 	@status=0; $(B)/t_guest_mem_physold > $(B)/t_guest_mem_physold.log 2>&1 || status=$$?; \
 	 if [ "$$status" -eq 0 ] || ! grep -q "address / size not 4 KB aligned" $(B)/t_guest_mem_physold.log; then \
 	   tail -5 $(B)/t_guest_mem_physold.log; echo "t_guest_mem_physold: unexpected negative-control result ($$status)"; exit 1; \
@@ -591,9 +602,13 @@ run: \
 	   cat $(B)/t_time_one.log; echo "t_time_one: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_time_one: local time tried as standard time only misses the repeated hour, as expected"
 	@status=0; $(B)/t_time_ctxold > $(B)/t_time_ctxold.log 2>/dev/null || status=$$?; \
-	 if [ "$$status" -ne 1 ] || ! grep -q "t_time: 16 checks, 2 failed" $(B)/t_time_ctxold.log; then \
+	 if [ "$$status" -ne 1 ] || ! grep -q "t_time: 19 checks, 2 failed" $(B)/t_time_ctxold.log; then \
 	   cat $(B)/t_time_ctxold.log; echo "t_time_ctxold: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_time_ctxold: the old user clock context has no time point, as expected"
+	@status=0; $(B)/t_time_span > $(B)/t_time_span.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || ! grep -q "t_time: 19 checks, 3 failed" $(B)/t_time_span.log; then \
+	   cat $(B)/t_time_span.log; echo "t_time_span: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_time_span: CalculateSpanBetween answering a Result reads backwards, as expected"
 	$(B)/t_tzrule 2>/dev/null
 	@status=0; $(B)/t_tzrule_dev > $(B)/t_tzrule_dev.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_tzrule_dev.log)" -ne 7 ]; then \
@@ -692,6 +707,8 @@ $(B)/t_audren_pace_sink: t_audren_pace.c ../audren_pace.h | $(B)
 	clang -O1 -Wall -DDM_TEST_SINK_NO_RESYNC -I.. -o $@ t_audren_pace.c
 $(B)/t_audren: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audren.c
+$(B)/t_audren_void: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_ADNOTIFY_VOID -I.. -o $@ t_audren.c
 $(B)/t_audio_extras: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 $(B)/t_audio_extras_vol: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
@@ -752,6 +769,8 @@ $(B)/t_time_one: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_TOPOSIX_ONE -I.. -o $@ t_time.c -framework CoreFoundation
 $(B)/t_time_ctxold: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_CTX_OLD -I.. -o $@ t_time.c -framework CoreFoundation
+$(B)/t_time_span: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_SPAN_RESULT -I.. -o $@ t_time.c -framework CoreFoundation
 $(B)/t_watchdog: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_watchdog.c t_altstack_stub.c ../runtime/crash.c
 $(B)/t_watchdog_nobg: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
@@ -868,6 +887,8 @@ $(B)/t_guest_mem_heapold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle
 	clang -O1 -Wno-unused-function -DDM_TEST_HEAP_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
 $(B)/t_guest_mem_physold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_PHYS_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
+$(B)/t_guest_mem_arold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_AR_UNLOGGED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
 $(B)/t_coremask: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c
 $(B)/t_coremask_noproc: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)

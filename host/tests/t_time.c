@@ -4,6 +4,7 @@
 // with room for one only the earlier, with none none; 02:30 on 2026-03-08, skipped, gives none; February 30 gives none with success (the SDK's
 // documented result; acnh-mobile refuses it). Standard time only (-DDM_TEST_TOPOSIX_ONE: an hour repeated gives one, summer instants do not come back): 4 fail. The user clock context
 // (plan item 158): Horizon's layout, kept while both clocks move together, made again on a jump; the old layout (-DDM_TEST_CTX_OLD): 2 fail.
+// CalculateSpanBetween's bool (plan item 288); the old Result answers (-DDM_TEST_SPAN_RESULT): 3 fail.
 #include "../hle/hle_time.c"
 #include <stdio.h>
 struct dm_flags g_flag; uint64_t g_t0_ns;
@@ -42,6 +43,16 @@ int main(void) {
         CHECK(!memcmp(a, b, sizeof a), "... the same bytes a second later on both clocks (a game compares all 0x20)");
         g_guest += 60000000000ull; h_time_GetSystemClockContext(c); SystemClockContext cc; memcpy(&cc, c, sizeof cc); now = time(NULL);
         CHECK(memcmp(a, c, sizeof a) && cc.steady.timepoint == 161 && llabs(cc.offset + cc.steady.timepoint - now) <= 1, "... made again when the guest clock jumps 60 s (time point %lld)", (long long)cc.steady.timepoint); }
+
+    // CalculateSpanBetween returns bool (plan item 288): true with the span when both snapshots have the same steady clock source or both have a
+    // network time, false otherwise
+    {   ClockSnapshot a = {0}, b = {0}; int64_t span = 0; a.steady.timepoint = 100; b.steady.timepoint = 130;
+        CHECK(h_time_SpanBetween(&span, &a, &b) == true && span == 30000000000ll, "span between: the same steady source, true and 30 s (%lld ns)", (long long)span);
+        b.steady.source[0] = 1; a.net_time = 1000; b.net_time = 1045; span = 0;
+        CHECK(h_time_SpanBetween(&span, &a, &b) == true && span == 45000000000ll, "... other sources and both network times: true and 45 s (%lld ns)", (long long)span);
+        b.net_time = 0;
+        CHECK(h_time_SpanBetween(&span, &a, &b) == false, "... other sources and one network time missing: false");
+    }
 
     printf("t_time: %d checks, %d failed\n", n, fail); return fail != 0;
 }

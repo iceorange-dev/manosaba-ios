@@ -166,11 +166,19 @@ HLE_FORCE_OPT("_ZN2nn4time26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9Pos
 // TimeSpan in nanoseconds. Span between: from the steady time points when they come from the same clock source, else from the network times when both are set
 // (Ryujinx CalculateSpanBetween); the host has one source. Difference by user: the user contexts' offsets, 0 when the sources differ or both have automatic
 // correction on (Ryujinx CalculateStandardUserSystemClockDifferenceByUser)
-#define RES_TIME_NOT_FOUND (116u | 200u << 9)   // time module 116, description 200 (Ryujinx Time ResultCode.TimeNotFound)
-HLE_FORCE_OPT("_ZN2nn4time20CalculateSpanBetweenEPNS_8TimeSpanERKNS0_13ClockSnapshotES5_", "span between two snapshots", Result, h_time_SpanBetween, int64_t *out, const ClockSnapshot *a, const ClockSnapshot *b) {
-    if (!memcmp(a->steady.source, b->steady.source, 16)) { *out = (b->steady.timepoint - a->steady.timepoint) * 1000000000ll; return RES_OK; }
-    if (a->net_time && b->net_time) { *out = (b->net_time - a->net_time) * 1000000000ll; return RES_OK; }
-    return RES_TIME_NOT_FOUND;
+// It returns bool, true when the span was computed (the SDK reference; plan item 288, after seedds/nxnative 971d336, MIT): a Result's 0 read as false
+// told the game every span had failed. -DDM_TEST_SPAN_RESULT: the old Result answers (0 on success, TimeNotFound otherwise)
+#ifdef DM_TEST_SPAN_RESULT
+#define SPAN_OK 0
+#define SPAN_FAILED (116u | 200u << 9)   // time module 116, description 200 (Ryujinx Time ResultCode.TimeNotFound)
+#else
+#define SPAN_OK true
+#define SPAN_FAILED false
+#endif
+HLE_FORCE_OPT("_ZN2nn4time20CalculateSpanBetweenEPNS_8TimeSpanERKNS0_13ClockSnapshotES5_", "span between two snapshots", bool, h_time_SpanBetween, int64_t *out, const ClockSnapshot *a, const ClockSnapshot *b) {
+    if (!memcmp(a->steady.source, b->steady.source, 16)) { *out = (b->steady.timepoint - a->steady.timepoint) * 1000000000ll; return SPAN_OK; }
+    if (a->net_time && b->net_time) { *out = (b->net_time - a->net_time) * 1000000000ll; return SPAN_OK; }
+    return SPAN_FAILED;
 }
 HLE_FORCE_OPT("_ZN2nn4time48CalculateStandardUserSystemClockDifferenceByUserERKNS0_13ClockSnapshotES3_", "user clock difference between two snapshots", int64_t, h_time_UserDiff, const ClockSnapshot *a, const ClockSnapshot *b) {
     if (memcmp(a->user_ctx.steady.source, b->user_ctx.steady.source, 16) || (a->auto_correct && b->auto_correct)) return 0;
