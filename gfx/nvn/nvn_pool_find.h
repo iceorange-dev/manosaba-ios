@@ -17,10 +17,9 @@ typedef struct { int *idx; uintptr_t *slo; int cap, sorted, last; uint64_t rescu
 
 static inline uintptr_t pool_find_lo_(const void *pools, size_t stride, int i) { return ((const uintptr_t *)((const char *)pools + stride * (size_t)i))[0]; }
 static inline uintptr_t pool_find_hi_(const void *pools, size_t stride, int i) { return ((const uintptr_t *)((const char *)pools + stride * (size_t)i))[1]; }
-typedef struct { const void *pools; size_t stride; } pool_find_ctx_;
-static inline int pool_find_cmp_(void *ctx, const void *a, const void *b) {
-    const pool_find_ctx_ *c = ctx; uintptr_t x = pool_find_lo_(c->pools, c->stride, *(const int *)a), y = pool_find_lo_(c->pools, c->stride, *(const int *)b);
-    return x < y ? -1 : x > y;
+typedef struct { uintptr_t lo; int i; } pool_find_pair_;   // sorted with plain qsort (bionic has no qsort_r of Apple's form)
+static inline int pool_find_pcmp_(const void *a, const void *b) {
+    uintptr_t x = ((const pool_find_pair_ *)a)->lo, y = ((const pool_find_pair_ *)b)->lo; return x < y ? -1 : x > y;
 }
 static inline void pool_find_reset(pool_find_t *f) { f->sorted = 0; f->last = -1; memset(f->hc, 0, sizeof f->hc); }
 static inline unsigned pool_find_hslot_(uint64_t addr) { return (unsigned)((addr >> 14) * 0x9E3779B1u) >> 22; }   // 10 bits: POOL_FIND_HC
@@ -40,9 +39,11 @@ static inline int pool_find(pool_find_t *f, const void *pools, size_t stride, in
             int *p = realloc(f->idx, (size_t)n * 2 * sizeof *p); if (!p) goto scan; f->idx = p;
             uintptr_t *q = realloc(f->slo, (size_t)n * 2 * sizeof *q); if (!q) goto scan; f->slo = q; f->cap = n * 2;
         }
-        for (int i = 0; i < n; i++) f->idx[i] = i;
-        pool_find_ctx_ c = {pools, stride}; qsort_r(f->idx, (size_t)n, sizeof *f->idx, &c, pool_find_cmp_);
-        for (int i = 0; i < n; i++) f->slo[i] = pool_find_lo_(pools, stride, f->idx[i]);
+        pool_find_pair_ *pp = malloc((size_t)(n ? n : 1) * sizeof *pp); if (!pp) goto scan;
+        for (int i = 0; i < n; i++) pp[i] = (pool_find_pair_){pool_find_lo_(pools, stride, i), i};
+        qsort(pp, (size_t)n, sizeof *pp, pool_find_pcmp_);
+        for (int i = 0; i < n; i++) { f->idx[i] = pp[i].i; f->slo[i] = pp[i].lo; }
+        free(pp);
         f->sorted = 1;
     }
     {   // the last pool whose start ≤ addr

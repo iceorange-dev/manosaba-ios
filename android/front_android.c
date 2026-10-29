@@ -1,5 +1,5 @@
 // The Android app's front end (host/front.h; plan item 301d), with app_android.c: the window, the activity's lifecycle and input.
-//   Window: kept for the graphics backend (front_android_window); until the Vulkan one (301e) nothing draws, so the window is filled black once.
+//   Window: kept for the graphics backend's swapchain (front_android_window, gfx/nvn/vk/vk_present.c); when it goes the swapchain is dropped first.
 //   Lifecycle → host, as the iPhone's scene events (ios/Sources/front_ios.m front_ios_focus_event): onPause = resign active (touches and the
 //   controller's held state released, out of focus), onStop = the background (suspended, sound paused, the guest clock and graphics held),
 //   onStart = back in front, onResume = active (in focus). onDestroy (the activity finished) stops the host in order (hle_lifecycle.c).
@@ -50,25 +50,21 @@ void dm_front_controller_key(void) {}
 // ---------- window ----------
 static pthread_mutex_t g_win_mu = PTHREAD_MUTEX_INITIALIZER;
 static ANativeWindow *g_win; static _Atomic int g_win_w, g_win_h;
-ANativeWindow *front_android_window(void) { return g_win; }   // (for 301e's swapchain; under g_win_mu's rules then)
-static void fill_black(ANativeWindow *w) {
-    ANativeWindow_setBuffersGeometry(w, 0, 0, WINDOW_FORMAT_RGBX_8888); ANativeWindow_Buffer b;
-    if (ANativeWindow_lock(w, &b, NULL)) { LOG("[red] front: the window cannot be drawn by the CPU"); return; }
-    for (int y = 0; y < b.height; y++) memset((uint8_t *)b.bits + (size_t)y * b.stride * 4, 0, (size_t)b.width * 4);
-    ANativeWindow_unlockAndPost(w);
-}
+ANativeWindow *front_android_window(void) { pthread_mutex_lock(&g_win_mu); ANativeWindow *w = g_win; pthread_mutex_unlock(&g_win_mu); return w; }
+void vk_window_gone(void);   // gfx/nvn/vk/vk_present.c: the swapchain on it dropped (it must go before the window)
 static void on_window(ANativeActivity *a, ANativeWindow *w) {
     (void)a; pthread_mutex_lock(&g_win_mu); g_win = w;
-    atomic_store(&g_win_w, ANativeWindow_getWidth(w)); atomic_store(&g_win_h, ANativeWindow_getHeight(w));
-    fill_black(w); pthread_mutex_unlock(&g_win_mu);
+    atomic_store(&g_win_w, ANativeWindow_getWidth(w)); atomic_store(&g_win_h, ANativeWindow_getHeight(w)); pthread_mutex_unlock(&g_win_mu);
     LOG("front: window %d x %d", atomic_load(&g_win_w), atomic_load(&g_win_h));
 }
-static void on_window_gone(ANativeActivity *a, ANativeWindow *w) { (void)a; (void)w; pthread_mutex_lock(&g_win_mu); g_win = NULL; pthread_mutex_unlock(&g_win_mu); LOG("front: window gone"); }
+static void on_window_gone(ANativeActivity *a, ANativeWindow *w) {
+    (void)a; (void)w; pthread_mutex_lock(&g_win_mu); g_win = NULL; pthread_mutex_unlock(&g_win_mu);
+    vk_window_gone(); LOG("front: window gone");
+}
 static void on_window_resized(ANativeActivity *a, ANativeWindow *w) {
     (void)a; atomic_store(&g_win_w, ANativeWindow_getWidth(w)); atomic_store(&g_win_h, ANativeWindow_getHeight(w));
     LOG("front: window resized to %d x %d", atomic_load(&g_win_w), atomic_load(&g_win_h));
 }
-static void on_redraw(ANativeActivity *a, ANativeWindow *w) { (void)a; pthread_mutex_lock(&g_win_mu); if (g_win == w) fill_black(w); pthread_mutex_unlock(&g_win_mu); }
 
 // ---------- input ----------
 #define NPAD 4
@@ -192,7 +188,7 @@ void front_android_install(ANativeActivity *a) {
     c->onStart = on_start; c->onResume = on_resume; c->onPause = on_pause; c->onStop = on_stop; c->onDestroy = on_destroy;
     c->onSaveInstanceState = on_save; c->onWindowFocusChanged = on_focus;
     c->onNativeWindowCreated = on_window; c->onNativeWindowDestroyed = on_window_gone; c->onNativeWindowResized = on_window_resized;
-    c->onNativeWindowRedrawNeeded = on_redraw; c->onInputQueueCreated = on_queue; c->onInputQueueDestroyed = on_queue_gone;
+    c->onInputQueueCreated = on_queue; c->onInputQueueDestroyed = on_queue_gone;
     static int once; if (once++) return;
     pthread_t th; if (pthread_create(&th, NULL, input_main, NULL)) LOG("[red] front: cannot start the input thread"); else pthread_detach(th);
 }

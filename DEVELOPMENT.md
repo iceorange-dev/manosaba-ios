@@ -39,8 +39,8 @@ Check a working copy with `make -C host/tests run`, `make -C host/tests run-ubsa
 GAME=manosaba`, `apk` and `test` (NDK r30; the APK's checks in `tools/tests/t_apk.py`), and with the test phone connected `make -C android
 run-tests`, a headless run of manosaba under adb (`work/scripts/android_smoke.sh <dir> <seconds>`: the RomFS and system font pushed once to
 `/data/local/tmp/dm`) and a run of the app (`work/scripts/android_app_smoke.sh <dir> <seconds>`: installed through the phone's root, a test save of its
-own; it needs the phone unlocked, since HyperOS keeps the app behind the lock screen, and says so as skipped). `android/run.sh` builds,
-installs and runs the app by hand.
+own, shown over the lock screen: HyperOS allows it with its "show on lock screen" setting for the app, on on the test phone; a locked phone
+without it is reported as skipped). `android/run.sh` builds, installs and runs the app by hand; `t_vk_be` tests the Vulkan backend there.
 
 **How a change is made.** One plan item at a time, each with a unit test and a broken version of the change that must fail it. A batch of
 items ends with the gfx tests (Metal 4 and Metal 3), the texture tests, the host tests and their sanitizer run, the public audit and the tool
@@ -343,11 +343,17 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   software keyboard (`front_text_input` says nothing is shown: a NativeActivity without code is no text editor, so the system shows no
   keyboard for it; nx2android draws its own); the phone's motion sensors (ASensorManager → `dm_motion_set`) and vibration (`dm_vibration_take`
   → the Vibrator through JNI).
-  301e the Vulkan backend, in `gfx/nvn/vk/` in the null backend's place (`gfx/nvn/null/null.c` lists the set: `nvn_backend.h`, the core
-  headers' and nvn_mtl.h / nvn_obj.h's `mtl_*`, to be named for any backend when the second one lands): the NVN fence on the game's last own
-  submission (LASRecompAndroid 54686f6), the swapchain in the window texture's sRGB format with a present semaphore per image (nx2android
-  e27a2d4, nxport 426ec48), storage buffers at 64-byte alignment (the translator's `sb_align`), subgroups (64 lanes, none in vertex shaders on
-  the 840: the warp32 rewrite), 284's items.
+  301e the Vulkan backend, `gfx/nvn/vk/` (the app's; adb shell's host keeps the null one). Of the other Android ports (2026-10-30 survey,
+  docs/sources.md) none keeps pools at their addresses on Qualcomm's driver; the 840's has `VK_EXT_map_memory_placed`, so ours does, as on Metal.
+  301e2 shaders and drawing: a Vulkan bundle from the translation chain's SPIR-V (dmsh_build.py's jobs, the SPIR-V kept, one set with each
+  stage's bindings shifted, reflection from the SPIR-V names, spirv-val from the NDK), pipelines (dynamic rendering, extended dynamic state 1 / 2,
+  dynamic vertex input, a pipeline cache), push descriptors (32 on the 840; sets beyond), draws, dispatches, clears with a channel mask; the Adreno
+  findings to check for: a varying the next stage reads that this one does not write (pipeline creation fails), more than about 700 draws in one
+  command buffer, LRZ across passes, subgroup instructions in called functions (the 750-799 compiler); storage buffers at 64-byte alignment
+  (the translator's `sb_align`), subgroups (64 lanes, none in vertex shaders on the 840: the warp32 rewrite), 284's items.
+  301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the TBDR rewrites and the write-back
+  of GPU-written CPU-visible memory, re-uploads of CPU-written textures (dirty tracking), the 5-bit formats, pre-rotation, screenshots,
+  the readings; the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
@@ -847,3 +853,30 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   locked, as in this batch). gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs; the
   headless run 40 s at 60 fps with 4 save commits. Smoke: Tears of the Kingdom's two red lines, frame 1300 the same scene (looked at), manosaba's
   shots as batch 124's.
+- [x] batch 126 · 301e1 the Vulkan backend's base (`gfx/nvn/vk/`, the app's; adb shell's host keeps the null backend): the app presents through
+  Vulkan on the K100 at 60 fps (nothing drawn yet: the game's window texture is the clears' black; a test fill of it came out letterboxed
+  2133x1200 at 237, 0 as computed). After a survey of the other Android ports' Vulkan backends (docs/sources.md).
+  - `vk_device.c`: Vulkan 1.3 on the 840's 1.4.295, each feature and extension taken when the device has it (placed memory with unmap reserving,
+    push descriptors 32, BC, custom border colours, dynamic vertex input, extended dynamic state 2, depth clip control, null descriptors).
+  - `vk_pools.c`: memory pools placed at the guest's addresses (VK_EXT_map_memory_placed into memory type 6, device-local, host-visible,
+    coherent, cached; one buffer over each pool; its content copied in first and out again when it goes); a pool's memory is freed after the GPU
+    is done and before anonymous memory takes the range back (freeing it unmapped the range the driver had reserved, the anonymous mapping
+    with it: the first try lost the content); the argument arena; `nvn_pool_find.h` sorts with plain qsort (bionic has no qsort_r of Apple's form).
+  - `vk_submit.c`: a ring of 8 command buffers, a timeline semaphore whose value is the NVN fence, a completion thread that lands event writes
+    and counter reports after the GPU (the counter half at once, the timestamp from the guest clock, samples passed a constant until queries),
+    command buffers of their own outside submissions.
+  - `vk_tex.c` and `vk_fmt.c`: images by serial in the GENERAL layout, the NVN → Vulkan format table (D24 / D24S8 / BC1 without alpha natively,
+    the 4444 order, ASTC; three-component and 5-bit formats none yet), uploads of what the storage holds (deswizzled on the CPU) before the GPU's
+    first read, views (the texture's and the view's swizzles composed), sRGB twins listed instead of free mutable formats (UBWC), texel reads
+    (the image read back once the GPU wrote it), writes and flushes, the texture and sampler pools for 301e2.
+  - `vk_ops.c`: copies (buffer, uniform update through the arena, buffer ↔ texture, texture → texture with a blit when scaled), clears
+    (pending ones landed when the replay ends their pass, partial ones by vkCmdClearAttachments), full barriers around each, the TBDR rewrites
+    off (DM_NVN_TBDR=0's plain replay); draws and dispatches dropped with a red line until 301e2.
+  - `vk_present.c`: a swapchain on the app's window in the window texture's sRGB-ness, FIFO, identity (Android's suboptimal answer kept), the
+    crop letterboxed by a linear blit; dropped before the window goes; drains before the device exists do nothing (a crash on an early pause).
+  - The app's window is no longer filled by the CPU (a CPU producer would hold the window from the swapchain).
+  Tests: on the phone `t_vk_be` 11 (`-DDM_TEST_VK_EVENT_EARLY`, landed when recorded: 2 fail). The app smoke runs over the lock screen now
+  (HyperOS's show-on-lock-screen setting for the app, on on the test phone): 40 s at 60 fps, 4 save commits, the one red line of the dropped
+  draws. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs, the headless run.
+  Smoke: Tears of the Kingdom's two red lines, frame 1300 the same scene in another pose (looked at); manosaba's shots as batch 125's but
+  s600, the title in its fade (looked at: the same picture, brightness 63.1 against 61.1).

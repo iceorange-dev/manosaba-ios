@@ -165,7 +165,7 @@ static void boot(ANativeActivity *a) {
     { char p[600]; snprintf(p, sizeof p, "%s/env.txt", g_ext); int n = dm_env_file_apply(p, say_env); LOG("app: %s: %d switches%s", p, n < 0 ? 0 : n, n < 0 ? " (none: no file)" : ""); }
     // DM_TEST_SHOW_WHEN_LOCKED=1 (unattended tests on the phone): the activity shows over the lock screen and turns the screen on (Activity.
     // setShowWhenLocked / setTurnScreenOn, API 27); the phone stays locked, nothing else of it opens. Never on by default. HyperOS also wants its
-    // own app op for it (MIUIOP 10020), off on the test phone: there the app is held behind the lock screen all the same
+    // own app op for it (MIUIOP 10020, the phone owner's "show on lock screen" setting): while it is off the app is held behind the lock screen
     { const char *e = getenv("DM_TEST_SHOW_WHEN_LOCKED"); if (e && atoi(e)) {
         jclass C = (*E)->GetObjectClass(E, a->clazz);
         jmethodID sw = (*E)->GetMethodID(E, C, "setShowWhenLocked", "(Z)V"), ts = (*E)->GetMethodID(E, C, "setTurnScreenOn", "(Z)V");

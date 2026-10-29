@@ -60,7 +60,13 @@ Independent projects:
 | masagrator's FPSLocker-Warehouse, alanyangcn/smbwonder-ios | | no licence: facts only |
 | vecStardo/VA-11_ns2ios | | GameMaker through GLES, no NVN: little to take |
 
-Android ports (the tenth review, 2026-10-30; none of their code was run):
+Android ports (the tenth review, 2026-10-30; none of their code was run). Their NVN → Vulkan backends surveyed the same day for 301e (facts
+taken, nothing copied): nx2android (AHardwareBuffer pools in 256 MB chunks, Ryujinx SPIR-V with one set per stage, VkRenderPass, a timeline
+semaphore, command buffers cut every 128 draws: Adreno refused one of about 700 draws, LRZ and binning workarounds), d2r-mobile 2.1 (pools
+copied per draw, one set by binding × 6 + stage, load-time SPIR-V rewrites for the Adreno 740-799 policy and helper inlining for the 750-799
+compiler, a pipeline crash guard), PKShield (exported-fd / mremap / mirrored pools, push descriptors, dynamic rendering, a shader translation
+on the phone), RogelioLB/nxnative-android (copies into an arena, Adreno 619 fixes: a vec4 component by dynamic index, unwritten varyings),
+mamcjr's Recomps (a placed heap only on Mesa's driver, the stock driver copies), kxn/nvn-kgsl (NVN on KGSL, no frame yet):
 
 | Project | Last read | Notes |
 |---|---|---|

@@ -25,13 +25,16 @@ HOST_SRC = $(sort $(wildcard $(H)/hle/hle_*.c)) $(H)/hle/hle.c \
 	$(sort $(wildcard $(H)/game/*.c)) $(addprefix $(H)/diag/,diag.c memsnap.c sdktest.c sead.c) $(addprefix $(H)/front/,cmdchan.c touchpad.c) \
 	$(H)/media/movie_webm.c $(H)/cloud/cloudsync.c
 # The graphics layer without its Metal backend: the display and GPU driver glue takeovers (nn::vi, nv::), NVN's takeover and the replay core
-# (gfx/nvn/hle_nvn.c, core/), the pool write tracking, texture layouts, the format table and the trace, on the null backend (gfx/nvn/null) until
-# the Vulkan one (301e)
+# (gfx/nvn/hle_nvn.c, core/), the pool write tracking, texture layouts and deswizzling, the format table and the trace. The backend: the null one
+# (gfx/nvn/null: nothing drawn) under adb, the Vulkan one (gfx/nvn/vk, plan item 301e) in the app
 GFX_SRC = ../gfx/hle_vi.c ../gfx/hle_nv.c $(addprefix ../gfx/nvn/,hle_nvn.c nvn_dirty.c nvn_tex.c nvn_trace.c nvn_entry.S nvn_thunks.S) \
-	$(sort $(wildcard ../gfx/nvn/core/*.c)) ../gfx/tex/nvn_fmt_mtl.c ../gfx/nvn/null/null.c
+	$(sort $(wildcard ../gfx/nvn/core/*.c)) ../gfx/tex/nvn_fmt_mtl.c ../gfx/tex/nvn_deswizzle.c ../gfx/nvn/null/readings.c
 ANDROID_SRC = $(addprefix ../android/,diag_android.c movie_android.c plat_linux.c slots.c compat/sha256.c)
 GAME_SRC = $(sort $(wildcard $(GAMEDIR)/*.c))
+VK_SRC = $(sort $(wildcard ../gfx/nvn/vk/*.c))
 OBJ = $(patsubst ../%,$(B)/obj/%.o,$(HOST_SRC) $(GFX_SRC) $(ANDROID_SRC) $(GAME_SRC)) $(B)/obj/game_profile.c.o
+NULL_OBJ = $(B)/obj/gfx/nvn/null/null.c.o
+VK_OBJ = $(patsubst ../%,$(B)/obj/%.o,$(VK_SRC))
 .DEFAULT_GOAL := $(B)/dmhost
 
 # Every object depends on the flags it was built with (the rewriter stamp among them) and on the headers it read (-MMD)
@@ -49,16 +52,16 @@ $(B)/game_profile.c: $(GAMEDIR)/game.json ../tools/gen_game.py
 $(B)/obj/game_profile.c.o: $(B)/game_profile.c $(B)/flags.txt
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
--include $(OBJ:.o=.d) $(B)/obj/android/front_headless.c.d $(B)/obj/android/app_android.c.d $(B)/obj/android/front_android.c.d
-$(B)/dmhost: $(OBJ) $(B)/obj/android/front_headless.c.o
+-include $(OBJ:.o=.d) $(NULL_OBJ:.o=.d) $(VK_OBJ:.o=.d) $(B)/obj/android/front_headless.c.d $(B)/obj/android/app_android.c.d $(B)/obj/android/front_android.c.d
+$(B)/dmhost: $(OBJ) $(NULL_OBJ) $(B)/obj/android/front_headless.c.o
 	$(CC) -o $@ $^ -lm -ldl -laaudio -lmediandk
 
 # The app's library: NativeActivity loads it and calls ANativeActivity_onCreate (app_android.c). -Bsymbolic: the assembly's branches and adrp to
 # the library's own global symbols (dm_hcall, nvn_slot ...) bind inside it, with no PLT stub (one would take x16 / x17, which the thunks pass) and
 # no text relocation; its symbols stay in the dynamic table for dladdr and dlsym (the crash report, the thread dumps)
 APP_OBJ = $(B)/obj/android/app_android.c.o $(B)/obj/android/front_android.c.o
-$(B)/libdmhost.so: $(OBJ) $(APP_OBJ)
-	$(CC) -shared -o $@ $^ -Wl,-soname,libdmhost.so -Wl,-Bsymbolic -Wl,--no-undefined -landroid -llog -laaudio -lmediandk -lm -ldl
+$(B)/libdmhost.so: $(OBJ) $(VK_OBJ) $(APP_OBJ)
+	$(CC) -shared -o $@ $^ -Wl,-soname,libdmhost.so -Wl,-Bsymbolic -Wl,--no-undefined -landroid -llog -laaudio -lmediandk -lvulkan -lm -ldl
 
 # The APK (android/tools/apk.py): the library, the product's files the loader reads (the modules' images and what ios/tools/product_files.py lists), the icon.
 # PRODUCT: the android product (default $DM_ROOT/build/android/<game>.b301, DM_ROOT the workspace, ../work when unset); PKG: the package name;
@@ -79,7 +82,7 @@ apk: $(B)/$(GAME).apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -111,6 +114,13 @@ build/tests/movie1080.mp4: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=blue:s=1920x1080:r=30:d=0.2 -c:v libx264 -pix_fmt yuv420p -bf 0 $@
 build/tests/movie.webm: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=red:s=320x240:r=30:d=1 -c:v libvpx-vp9 -g 10 -pix_fmt yuv420p $@
+# the Vulkan backend without a window, with the core modules it calls (plan item 301e1)
+VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c) ../gfx/nvn/nvn_tex.c ../gfx/tex/nvn_deswizzle.c
+VKT_FLAGS = -O1 -g -Wall -Wno-format -D_GNU_SOURCE -I$(H) -I../gfx/nvn/include -I../gfx/nvn/vk -Icompat -include compat/darwin.h
+build/tests/t_vk_be: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk_be_early: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_EVENT_EARLY -o $@ $(VKT_SRC) -lvulkan -landroid -lm
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')
 run-tests: test
 	sh tests/run_on_phone.sh "$(SERIAL)" "$(TEST_DATA)" $(TESTS)
