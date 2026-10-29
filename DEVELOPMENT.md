@@ -218,7 +218,7 @@ decide):
   the texture registry or the draw's state, which want headers of their own first (next, the user 2026-10-24: worth it, an Android version of
   manosaba is planned; design them with a Vulkan backend in mind). `hle_nvn.c` in parts by its sections (batch 105), `host/` in directories
   (batch 106), the core tests' shared fakes (batch 107). The Vulkan backend later (the user, 2026-10-24: no Android for now, a clean base
-  first).
+  first); from 2026-10-30 the Android version of manosaba is under way (the user), item 301.
 
 The iPhone's frame rate (the current focus; the power split above decides what helps):
 - 190 a scene size driven by dropped frames, now that the scene size can change while the game runs (240; 960x540 holds 59.6 fps on the island
@@ -298,6 +298,54 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 - 284 for 264's Vulkan backend: nxport's frame capture replayed pass by pass on both backends; Adreno 740-799 without the quad / warp32
   rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
   shim headers.
+
+From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); the order the user chose: these two first, then 301):
+- 288 SDK functions with the wrong return type (seedds/nxnative 971d336, MIT, written anew; the SDK reference checked): `nn::time::CalculateSpanBetween`
+  returns bool (true: computed), ours returned a Result, so a span computed read as false and a failure as true;
+  `nn::audio::AcquireAudioDeviceNotificationForOutput` returns a Result, ours was void and left the caller its own first argument (the event's
+  address) as the result. Tears of the Kingdom's main imports both; manosaba's neither.
+- 289 the SDK's address-region node area cut from 0x3fe00000 (1022 MB) to 0x3e00000 (62 MB) for both games' sdk builds (nxnative 7deea8e / d1b7444,
+  nx2android 8056043, MIT; the words checked here): Unity 6 takes all its memory through AllocateAddressRegion, and manosaba's trial reaches
+  +4904 MB of its 5376 MB alias region on the iPhone Air (472 MB left); upstream's Tears of the Kingdom took the memory-shortage Blood Moon at
+  +2.25 GB of 2.375 GB (its issue #70, #639). Both games' AllocateAddressRegion align to 64 KB or 2 MB only: no alignment cut. A refused region
+  is logged red (it had no line).
+- 290 texture reads of guest memory the game unmapped, guarded (MacNativeGames f3bb714, PR #1232, MIT: SIGBUS in the deswizzle, the Depths):
+  `gfx/nvn/mtl/upload.inc` reads `t->mem` unguarded on the translation thread.
+- 291 quad strips as triangles, plain and indexed (MacNativeGames bff585f, PR #1216: the Hero's Path); ours skips the draw (`mtl/draw.inc`).
+- 292 fade steps that truncate to 0 above about 63.5 fps (MacNativeGames 3e9e7f67 / PR #1112, #1134's rule: a positive step at least 1, zero
+  stays zero): main 0x0a7ac4, 0x95dd24, 0x6155e4, 0x615660, met at `DM_PRESENT_HZ` 90 / 120 with realtime.
+- 293 cutscenes at 60 fps (71c; mamcjr/TOTKRecompAndroid da06d5a, facts only): four functions run once a frame only in cutscenes (main 0x45c700,
+  0x2b23c7c, 0x42c3bc, 0xa5a188); while one ran in the last 200 ms the interval chosen at 0x2db238 is at least 2.
+- 294 fixedres: the tier stores at 0x584a70, 0x584b70, 0x584b94 held too (TOTKRecompAndroid 1e56bfb, facts only); ours holds the scale at 0x5848a8.
+- 295 the translator's BRX chained form (nx2android 02e336f, MIT): 86 of Tears of the Kingdom's 28,652 shaders and 5 of manosaba's 2,740 have a
+  BRX; translate them both ways and compare. The other two nx2android translator fixes are not needed with our `XLATE_DEBUG=1` (plan item 200),
+  which the Android chain keeps.
+- 296 smaller correctness from nxnative: argument blocks re-encoded when the serial generation changes (971d336), a draw after its pass ended
+  (81ccacf, #600), a `tex_fit` view built from the root texture (d9c2d5e), a storage buffer of size 0 as the rest of the buffer (f293a70),
+  vertex streams bounded (1c54ea0), a 2D texture in a 3D slot (2bccdcc), three host races (ce99604).
+- 297 the virtual core released while waiting: write-back waits (MacNativeGames 0fd9358e, PR #1141), `nn::fs` and memory-pool setup
+  (valentderah/totk-pc-recomp 101f2c8, MIT: loader threads held it up to 20 ms).
+- 298 the crash handler with a time limit (jhaizhou-ops/d2r-mobile 3ebb29bd, n2ray f697868f): ours is also the SIGALRM handler and runs dladdr,
+  fprintf and the dump hook with none.
+- 299 iOS input: Home and Capture kept from the system (nxnative 062cd06), motion from the phone and controllers (659c69d, cca3333), rumble
+  through `GCHapticsLocalityHandles` (2e07a88).
+- 300 texture filtering at 1/256 of a texel as the Switch does, for vertex-shader lookups and gathers (TOTKRecompAndroid 8adbc5c, c02a43f, facts
+  only): look at the terrain in motion for cracks and dark dots first.
+- 301 manosaba on Android, on a Redmi K100 Pro Max (SM8850, Adreno 840, Vulkan 1.4.295, Android 17, 4 KB pages; adb shell: x18 kept,
+  `cntvct_el0` at 19.2 MHz, `cntpct_el0` and a misaligned sp fault, `tpidrro_el0` reads 0, RW → RX and RWX allowed, 256 GB of PROT_NONE), the
+  replay core shared with iOS, a Vulkan backend behind `nvn_backend.h`, in steps:
+  301a the pool memory: AHardwareBuffer mapped over the pool (nx2android; HyperOS's gralloc refused it on a POCO F7 Ultra, BOTWRecompAndroid
+  4fc0d28), an exported fd mapped at the pool's address (PKShield-Android `nvn_vk.c`), `VK_EXT_map_memory_placed` (no project uses it), copied
+  pools with write-back last: probed on the phone in an app first.
+  301b the rewriter without a red zone (signals without SA_ONSTACK write below sp on Android: jhaizhou-ops `NOREDZONE` / `sp_frame`; ours stashes
+  below sp at every site kind) and thread slots through bionic's TLS (`TLS_SLOT_APP`, nx2android; akeem000 086bd8a).
+  301c the host headless under adb to `nnMain`: the Apple-only APIs behind a shim, Unity's thread stack reported without bionic's guard page
+  (RogelioLB/nxnative-android), xattrs in the `user.` namespace (jhaizhou-ops `hle_fs.c`).
+  301d an APK: NativeActivity, AAudio, touch and controllers, our own APK writer and signer (no Android SDK; NDK r30 on the Mac).
+  301e the Vulkan backend: the NVN fence on the game's last own submission (LASRecompAndroid 54686f6), the swapchain in the window texture's sRGB
+  format with a present semaphore per image (nx2android e27a2d4, nxport 426ec48), storage buffers at 64-byte alignment (the translator's
+  `sb_align`), subgroups (64 lanes, none in vertex shaders on the 840: the warp32 rewrite), 284's items.
+  301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work).
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
