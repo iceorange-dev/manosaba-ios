@@ -42,7 +42,9 @@ directory) is always required; `DM_TEMP` defaults to `$DM_ROOT/run/platform/temp
 
 The sources are in directories by role: `hle/` the system services, `runtime/` loading, threads, the host stack and crashes, `front/` the
 Mac front end and its input, `media/` the movie decoders, `diag/` diagnostics, `game/` what changes the game (hooks, mods, patches, cheats,
-the wide picture) and `cloud/` the save sync. The headers stay in `host/`, which every source finds through `-I.`.
+the wide picture) and `cloud/` the save sync. The headers stay in `host/`, which every source finds through `-I.`. The Android host
+(`android/`, plan item 301) builds the same sources but the Apple-only ones; what differs by operating system goes through `plat.h`,
+`slots.h`, `uc.h`, `table.h` and `runtime/asm.h`.
 
 | File | What it does |
 |---|---|
@@ -85,6 +87,11 @@ the wide picture) and `cloud/` the save sync. The headers stay in `host/`, which
 | `diag/diag.c` | Diagnostics: probes (`DM_PROBE`, `DM_THROWLOG`), store watchpoint on all threads (`DM_WATCHPOINT`), boot timeline (`DM_BOOTPROF`), guest sampling (`DM_SAMPLE`), perf record |
 | `diag/memstat.m` | Memory accounting (`DM_MEMSTAT`), low-memory watch |
 | `dm.h` | Common header |
+| `plat.h`, `runtime/plat_apple.c` | What the shared sources need of the operating system beyond POSIX (Mach and Darwin here; Linux's in `android/plat_linux.c`): memory reads that may fault, the save tree copy and swap, extended attributes, the thread stack, address reservations and regions, a semaphore, stopping a host thread and reading its registers, scheduling, footprint and the performance readings |
+| `slots.h` | The thread slot block the rewritten code reads (Darwin's TSD; on Android a block at bionic's TLS_SLOT_APP, `android/slots.c`) |
+| `uc.h` | A signal context's registers, fault address, syndrome and vector registers, by platform |
+| `table.h` | Tables the linker gathers from a section (the takeovers, `swforce`, `swnvn`): Mach-O sections or ELF `__start_` / `__stop_` |
+| `runtime/asm.h` | The assembly's symbols, page addressing, local labels, C strings and slot base for Mach-O and ELF |
 
 ## Common environment variables
 

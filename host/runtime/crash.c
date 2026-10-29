@@ -9,7 +9,8 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <libkern/OSCacheControl.h>
-#include <mach/mach.h>
+#include "plat.h"
+#include "uc.h"
 #include <stdatomic.h>
 #include <time.h>
 
@@ -99,7 +100,7 @@ void crash_off(const char *tag, uint64_t a) {   // Also used by diag.c
     else fprintf(stderr, " %s%s%#llx", tag, *tag ? "=" : "", a);
 }
 // Frame pointer backtrace: x29 chain [fp]=previous frame's fp, [fp+8]=return address; only 8-byte aligned, increasing frames are walked, but for one step
-// down or up from a host stack to the guest's (dm_fp_step_ok: a host call's record, hstack.S). Each frame is read with vm_read_overwrite (plan item
+// down or up from a host stack to the guest's (dm_fp_step_ok: a host call's record, hstack.S). Each frame is read with dm_mem_read (plat.h; plan item
 // 125; totk-mobile does so): it runs in the crash handler, and a corrupt x29 (a memory-corruption crash, as 72) dereferenced there faulted again and
 // lost the rest of the report. An unreadable frame ends the walk with a note
 void dm_backtrace(uint64_t fp) {
@@ -108,8 +109,7 @@ void dm_backtrace(uint64_t fp) {
     for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
         uint64_t fr[2];
 #ifndef DM_TEST_BT_UNGUARDED   // negative control of t_crash_bt only: read directly, as before
-        vm_size_t got = 0;
-        if (vm_read_overwrite(mach_task_self(), (vm_address_t)fp, sizeof fr, (vm_address_t)fr, &got) != KERN_SUCCESS || got != sizeof fr) { fprintf(stderr, " (frame %#llx unreadable)", fp); break; }
+        if (!dm_mem_read(fr, fp, sizeof fr)) { fprintf(stderr, " (frame %#llx unreadable)", fp); break; }
 #else
         fr[0] = ((uint64_t *)fp)[0]; fr[1] = ((uint64_t *)fp)[1];
 #endif
@@ -150,24 +150,24 @@ void crash_set_wait_dump(void (*fn)(void)) { g_wait_dump = fn; }
 void crash_dump_now(const char *why) { fprintf(stderr, "[dm] state dump (%s): tick %u / stage %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]); if (g_dump_hook) g_dump_hook(); if (g_wait_dump) g_wait_dump(); }
 // DM_CRASH_MEM=reg[+-off]:len[,...] (diagnostics): on a crash, also print guest memory at a register plus an offset, e.g. "x27-0x28:0x80,sp+0x130:0x40"
 // (reg = x0..x30 or sp; len in bytes, up to 0x400); a leading * reads the pointer stored at the register first ("*x28+0x28:0x8": the 8 bytes at
-// offset 0x28 of the object x28 points to). Unreadable addresses are reported as such (read through vm_read, no second fault).
+// offset 0x28 of the object x28 points to). Unreadable addresses are reported as such (read through dm_mem_read, no second fault).
 static void crash_mem(ucontext_t *uc) {
     const char *e = getenv("DM_CRASH_MEM"); if (!e) return;
     char spec[512]; strlcpy(spec, e, sizeof spec);
     for (char *save, *t = strtok_r(spec, ",", &save); t; t = strtok_r(NULL, ",", &save)) {
         char *end, *p = t; uint64_t base; int r, deref = *p == '*';
         if (deref) p++;
-        if (p[0] == 's' && p[1] == 'p') { base = uc->uc_mcontext->__ss.__sp; end = p + 2; }
+        if (p[0] == 's' && p[1] == 'p') { base = UC_SP(uc); end = p + 2; }
         else if (p[0] == 'x' && (r = (int)strtol(p + 1, &end, 10)) >= 0 && r <= 30 && end != p + 1)
-            base = r == 29 ? uc->uc_mcontext->__ss.__fp : r == 30 ? uc->uc_mcontext->__ss.__lr : uc->uc_mcontext->__ss.__x[r];
+            base = r == 29 ? UC_FP(uc) : r == 30 ? UC_LR(uc) : UC_X(uc, r);
         else { fprintf(stderr, "[dm] DM_CRASH_MEM: cannot parse \"%s\"\n", t); continue; }
-        if (deref) { uint64_t v = 0; vm_size_t g = 0;
-            if (vm_read_overwrite(mach_task_self(), base, 8, (vm_address_t)&v, &g) || g != 8) { fprintf(stderr, "[dm] mem %s: pointer at %#llx not readable\n", t, base); continue; }
+        if (deref) { uint64_t v = 0;
+            if (!dm_mem_read(&v, base, 8)) { fprintf(stderr, "[dm] mem %s: pointer at %#llx not readable\n", t, base); continue; }
             base = v; }
         int64_t off = 0; if (*end == '+' || *end == '-') off = strtoll(end, &end, 0);
         size_t len = *end == ':' ? strtoul(end + 1, 0, 0) : 0x40; if (len > 0x400) len = 0x400;
-        uint64_t a = base + (uint64_t)off; uint8_t b[0x400]; vm_size_t got = 0;
-        if (vm_read_overwrite(mach_task_self(), a, len, (vm_address_t)b, &got) || got != len) { fprintf(stderr, "[dm] mem %s = %#llx: not readable\n", t, a); continue; }
+        uint64_t a = base + (uint64_t)off; uint8_t b[0x400];
+        if (!dm_mem_read(b, a, len)) { fprintf(stderr, "[dm] mem %s = %#llx: not readable\n", t, a); continue; }
         for (size_t k = 0; k < len; k += 32) {
             fprintf(stderr, "[dm] mem %s %#llx:", k ? "" : t, a + k);
             for (size_t j = k; j < k + 32 && j < len; j += 8) { uint64_t v = 0; memcpy(&v, b + j, 8 <= len - j ? 8 : len - j); fprintf(stderr, " %016llx", v); }
@@ -182,17 +182,17 @@ static void crash_heap(ucontext_t *uc) {
     char spec[256]; strlcpy(spec, e, sizeof spec);
     for (char *save, *t = strtok_r(spec, ",", &save); t; t = strtok_r(NULL, ",", &save)) {
         char *end; int r;
-        if (!strcmp(t, "sp")) { fprintf(stderr, "[dm] heap of sp:\n"); sead_heap_of(uc->uc_mcontext->__ss.__sp); }
+        if (!strcmp(t, "sp")) { fprintf(stderr, "[dm] heap of sp:\n"); sead_heap_of(UC_SP(uc)); }
         else if (t[0] == 'x' && (r = (int)strtol(t + 1, &end, 10)) >= 0 && r <= 30 && end != t + 1 && !*end) {
             fprintf(stderr, "[dm] heap of %s:\n", t);
-            sead_heap_of(r == 29 ? uc->uc_mcontext->__ss.__fp : r == 30 ? uc->uc_mcontext->__ss.__lr : uc->uc_mcontext->__ss.__x[r]); }
+            sead_heap_of(r == 29 ? UC_FP(uc) : r == 30 ? UC_LR(uc) : UC_X(uc, r)); }
         else fprintf(stderr, "[dm] DM_CRASH_HEAP: cannot parse \"%s\"\n", t);
     }
 }
 // IL2CPP class names of the objects the registers point to (plan item 141, il2cpp_obj.h), for a Unity game only (dm_engine_il2cpp, game.c): in
-// another game a register can point at something that only looks like an object. Read with vm_read: no second fault
+// another game a register can point at something that only looks like an object. Read with dm_mem_read: no second fault
 __attribute__((weak)) int dm_engine_il2cpp(void) { return 0; }   // game.c; the unit tests link crash.c without it
-static int crash_rd(uint64_t a, void *d, size_t n) { vm_size_t g = 0; return !vm_read_overwrite(mach_task_self(), (vm_address_t)a, n, (vm_address_t)d, &g) && g == n; }
+static int crash_rd(uint64_t a, void *d, size_t n) { return dm_mem_read(d, a, n); }
 void crash_objs(const uint64_t x[29]) {
     if (!dm_engine_il2cpp()) return;
     for (int i = 0; i < 29; i++) { char c[200]; if (il2cpp_class_of(x[i], crash_rd, c, sizeof c)) fprintf(stderr, "[dm] x%d → an IL2CPP %s\n", i, c); }
@@ -201,7 +201,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
     if (sig == SIGSEGV || sig == SIGBUS) {
-        int is_write = (int)((uc->uc_mcontext->__es.__esr >> 6) & 1);   // The WnR bit of ESR
+        int is_write = (int)((uc_esr(uc) >> 6) & 1);   // The WnR bit of ESR
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
     // Another thread may hold the stderr lock (stuck, or stopped in the middle of a write): the fprintf below would then hang with it, the
@@ -217,7 +217,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         if (tries++ < 100) { usleep(10000); continue; }
 #endif
         char b[256]; int n = snprintf(b, sizeof b, "[dm] CRASH sig=%d (stderr held by another thread for 1 s: no register dump)", sig);
-        uint64_t at[2] = {uc->uc_mcontext->__ss.__pc, uc->uc_mcontext->__ss.__lr};
+        uint64_t at[2] = {UC_PC(uc), UC_LR(uc)};
         for (int k = 0; k < 2; k++) { module_t *m = module_of((void *)at[k]);
             n += m ? snprintf(b + n, sizeof b - n, " %s=%s+%#llx", k ? "lr" : "pc", m->name, at[k] - (uint64_t)m->base) : snprintf(b + n, sizeof b - n, " %s=%#llx", k ? "lr" : "pc", at[k]); }
         n += snprintf(b + n, sizeof b - n, "\n");
@@ -226,14 +226,14 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     }
     funlockfile(stderr);
     fprintf(stderr, "[dm] CRASH sig=%d", sig);
-    off("addr", (uint64_t)si->si_addr); off("pc", uc->uc_mcontext->__ss.__pc); off("lr", uc->uc_mcontext->__ss.__lr);
-    fprintf(stderr, " sp=%#llx\n", uc->uc_mcontext->__ss.__sp);
-    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, uc->uc_mcontext->__ss.__x[i], i % 6 == 5 ? "\n" : " ");
+    off("addr", (uint64_t)si->si_addr); off("pc", UC_PC(uc)); off("lr", UC_LR(uc));
+    fprintf(stderr, " sp=%#llx\n", UC_SP(uc));
+    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, UC_X(uc, i), i % 6 == 5 ? "\n" : " ");
     fprintf(stderr, "\n");
-    crash_objs((const uint64_t *)uc->uc_mcontext->__ss.__x);
+    crash_objs((const uint64_t *)UC_XS(uc));
     crash_mem(uc);
     crash_heap(uc);
-    dm_backtrace(uc->uc_mcontext->__ss.__fp);
+    dm_backtrace(UC_FP(uc));
     mtl_crash_note();   // the graphics layer's last copy handed to the driver (plain values recorded beforehand; no Objective-C here)
     if (g_dump_hook) g_dump_hook();
     _exit(128 + sig);

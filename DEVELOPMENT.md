@@ -35,12 +35,15 @@ out of git by design.
 
 Check a working copy with `make -C host/tests run`, `make -C host/tests run-ubsan`, `make -C gfx/tests run`, `make -C gfx/tests run-m3`,
 `make -C gfx/tex/tests run`, the tool tests (`for t in tools/tests/t_*.py; do python -I "$t"; done` in the venv), `verify/regress.sh --fuzz`,
-`tools/audit_public.py`, then a Mac run (README, Getting started) and `ios/run.sh build`.
+`tools/audit_public.py`, then a Mac run (README, Getting started) and `ios/run.sh build`. For Android (plan item 301): `make -C android
+GAME=manosaba` and `make -C android test` (NDK r30), and with the test phone connected `make -C android run-tests` and a headless run of
+manosaba under adb (`work/scripts/android_smoke.sh <dir> <seconds>`: the RomFS and system font pushed once to `/data/local/tmp/dm`).
 
 **How a change is made.** One plan item at a time, each with a unit test and a broken version of the change that must fail it. A batch of
 items ends with the gfx tests (Metal 4 and Metal 3), the texture tests, the host tests and their sanitizer run, the public audit and the tool
 tests; `verify/regress.sh --fuzz` when the rewriter, a game's rules or `verify/equiv.py` changed; both IPAs (`ios/run.sh ipa`, `DM_IOS_M3=1
-ios/run.sh ipa`); a short Mac run of each game against the previous batch's screenshots and red lines; then one commit whose subject starts with
+ios/run.sh ipa`); the Android host and its tests, on the phone when it is connected, with a 40 s headless run; a short Mac run of each game
+against the previous batch's screenshots and red lines; then one commit whose subject starts with
 "Plan batch N". A change to `tools/patch_nso.py` or a game's `rules.py` changes the rewriter stamp in the products, so they are built again.
 The repository is public: `tools/audit_public.py` checks the git index before every push.
 
@@ -332,13 +335,17 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   against 5.9); `VK_EXT_map_memory_placed` (memoryMapPlaced 1, memoryMapRangePlaced 0, memoryUnmapReserve 1, 4 KB alignment) maps type 6
   (device-local, host-visible, coherent, cached) exactly there and unmaps keeping the range. Left: the same in an app (untrusted_app; runcon from
   the shell cannot exec there), with 301d's APK.
-  301c the host headless under adb to `nnMain`: the Apple-only APIs behind a shim, Unity's thread stack reported without bionic's guard page
-  (RogelioLB/nxnative-android), xattrs in the `user.` namespace (jhaizhou-ops `hle_fs.c`).
-  301d an APK: NativeActivity, AAudio, touch and controllers, our own APK writer and signer (no Android SDK; NDK r30 on the Mac).
-  301e the Vulkan backend: the NVN fence on the game's last own submission (LASRecompAndroid 54686f6), the swapchain in the window texture's sRGB
-  format with a present semaphore per image (nx2android e27a2d4, nxport 426ec48), storage buffers at 64-byte alignment (the translator's
-  `sb_align`), subgroups (64 lanes, none in vertex shaders on the 840: the warp32 rewrite), 284's items.
-  301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work).
+  301d an APK: NativeActivity, AAudio, touch and controllers, our own APK writer and signer (no Android SDK; NDK r30 on the Mac). The host becomes
+  a shared library: the assembly's branches and `adrp` to global symbols (`dm_hcall`, `nvn_slot`) must bind inside it (`-Bsymbolic` or hidden
+  symbols; a PLT stub would take x16 / x17, which the thunks pass). MP4 / MOV movies through MediaCodec (`android/movie_none.c` reads none).
+  301e the Vulkan backend, in `gfx/nvn/vk/` in the null backend's place (`gfx/nvn/null/null.c` lists the set: `nvn_backend.h`, the core
+  headers' and nvn_mtl.h / nvn_obj.h's `mtl_*`, to be named for any backend when the second one lands): the NVN fence on the game's last own
+  submission (LASRecompAndroid 54686f6), the swapchain in the window texture's sRGB format with a present semaphore per image (nx2android
+  e27a2d4, nxport 426ec48), storage buffers at 64-byte alignment (the translator's `sb_align`), subgroups (64 lanes, none in vertex shaders on
+  the 840: the warp32 rewrite), 284's items.
+  301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
+  interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
+  `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -772,3 +779,30 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   and fnfuzz at 80 functions. `tools/tests/t_rewriter_synth.py` +10 (a fourth module with x18 on sp in every form; DM_TEST_NRZ_OFF=1 for the run:
   6 fail). Both apple products' regress as before. Smoke: Tears of the Kingdom's two red lines, manosaba's shots as batch 122's (the images are
   batch 122's word for word).
+- [x] batch 124 · 301c the host under adb on the phone (`android/`: `make -C android GAME=manosaba`, NDK r30 at API 35): manosaba runs headless at
+  60 fps from its 600th frame (frame time p50 16.6 ms), its saves committed and swapped in atomically, no red line in 40 s. What differs by
+  operating system goes through new host headers, with Apple's side as the shared sources called it before:
+  - `plat.h` (`runtime/plat_apple.c`, `android/plat_linux.c`): memory reads and writes that may fault (process_vm_readv / writev), the save tree
+    copy (file by file, the `user.` attributes only: writing `security.selinux` is refused, which failed the first save with a stale ENOENT), the
+    swap (renameat2 RENAME_EXCHANGE), a descriptor's path, xattrs in `user.` (jhaizhou-ops `hle_fs.c`), the thread stack without bionic's
+    guard page (RogelioLB/nxnative-android), the process's age, fixed reservations (MAP_FIXED_NOREPLACE), regions (/proc/self/maps), deferred
+    calls and signals, a semaphore; host threads stopped by a real-time signal whose handler waits on a futex (the registers and FPSIMD from the
+    signal context, suspensions counted as Mach's, a listed record held past its thread's exit); scheduling (the interactive class and the
+    deadline declaration: none for an app yet, 301f), the footprint (RssAnon + RssShmem + VmSwap) and the performance lines' readings.
+  - `slots.h` (the slot block at TLS_SLOT_APP, `android/slots.c`), `uc.h` (signal contexts), `table.h` (the takeover tables: Mach-O sections or
+    ELF `__start_` / `__stop_`), `runtime/asm.h` (entry.S, hstack.S and gfx/nvn's nvn_entry.S and the thunks `gen_protos.py` writes: the Apple
+    objects identical section by section, relocations and symbols); `android/compat/` for Darwin names (TargetConditionals, OSCacheControl,
+    CommonCrypto's SHA-256, mach_time on CLOCK_MONOTONIC, `CLOCK_UPTIME_RAW` the same clock, the one-argument `pthread_setname_np`).
+  - The time zone by bionic's tzalloc / localtime_rz and `persist.sys.timezone`; sound to the silent sink (AAudio: 301d); movies WebM only.
+  - Graphics: the nn::vi and nv:: takeovers, NVN's takeover and the replay core built for Android on `gfx/nvn/null/null.c`, the null backend:
+    a submission completes when committed, its event writes and counter reports land then (timestamps from the guest clock, 0 samples
+    passed), nothing is drawn, no screen (pacing as the Mac host without a window). Without NVN's takeover the sdk's own driver ran and aborted
+    in NvOsDrvOpen; without vi's, `ConnectToNamedPort`.
+  - The NVN layer's Mach calls (deadline declarations, footprint, QoS, power, per-core-kind counts, thread policy) through plat.h; the main
+    heap readout's weak default moved beside its caller (its provider left with D2R). The loader refuses a product of the other target.
+  Tests: on the phone (`make -C android run-tests`) `t_sha256` 5 (`-DDM_TEST_SHA256_ROUND63`: 4 fail), `t_hthread` 12 (`-DDM_TEST_STOP_NO_V`:
+  1 fail), `t_slots` 8; `gfx/tests/t_null_be.c` 20 (`-DDM_TEST_NULL_EARLY`, landing at replay: 4 fail, checked in `make run`). The host tests
+  link plat_apple.c, `t_fs_case` / `t_fs_index` inject through `dm_xattr_set` / `dm_xattr_get`. The batch builds the Android host and its tests
+  and, with the phone connected, runs them and 40 s of manosaba headless (`work/scripts/android_smoke.sh`). gfx 153 / 153 on Metal 4 and Metal
+  3, host 182 / 182, sanitizer, texture, audit and tool tests as before, both IPAs. Smoke: Tears of the Kingdom's two red lines and its shots in
+  the spread of the last batches (s1300 against batch 123 8.6, batch 123 against 122 9.7), manosaba's shots as batch 123's, no red line.

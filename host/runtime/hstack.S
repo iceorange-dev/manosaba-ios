@@ -8,17 +8,18 @@
 // into the guest caller), [16] guest sp, [24] host top, [32..96] x0..x8, [104] kind (1 host call, 2 svc gate, entry.S), [112..184] x19..x28.
 // GetThreadContext3 reports a thread inside a host call from it (hle_thread.c): the IL2CPP garbage collector scans the guest stack from that sp,
 // and these registers.
+#include "asm.h"
     .text
 // x17 = the host function; x16 passes through to it (the NVN thunks' slot address); x0..x8 and q0..q7 are its arguments; x9..x12 are used.
 // No host function the guest calls takes arguments on the stack (gfx/tools/gen_protos.py checks the NVN ones, tools/hle_args.py the others).
-    .globl _dm_hcall
-    .globl _dm_hcall_ret
+    .globl C(dm_hcall)
+    .globl C(dm_hcall_ret)
     .p2align 2
-_dm_hcall:
-    adrp x10, _dm_hstk_off@PAGE
-    ldr x10, [x10, _dm_hstk_off@PAGEOFF]
+C(dm_hcall):
+    adrp x10, PAGE(dm_hstk_off)
+    ldr x10, [x10, PAGEOFF(dm_hstk_off)]
     cbz x10, 1f                  // switched off (DM_HSTACK=0)
-    mrs x9, tpidrro_el0
+    SLOTBASE x9
     ldr x11, [x9, x10]           // this thread's host stack top; 0: none here, or already on it
     cbz x11, 1f
     str xzr, [x9, x10]
@@ -39,30 +40,30 @@ _dm_hcall:
     stp x27, x28, [sp, #176]
     mov x29, sp
     blr x17
-_dm_hcall_ret:                   // DM_GUEST_RA (dm.h) recognises a host function called from here
+C(dm_hcall_ret):                   // DM_GUEST_RA (dm.h) recognises a host function called from here
     ldp x12, x11, [sp, #16]
     ldp x29, x30, [sp]
     mov sp, x12
-    mrs x9, tpidrro_el0
-    adrp x10, _dm_hstk_off@PAGE
-    ldr x10, [x10, _dm_hstk_off@PAGEOFF]
+    SLOTBASE x9
+    adrp x10, PAGE(dm_hstk_off)
+    ldr x10, [x10, PAGEOFF(dm_hstk_off)]
     str x11, [x9, x10]           // the stack is free again
     ret
 1:  br x17
 
 // Wrappers handed to the guest in place of host functions (hstack.c dm_hwrap): wrapper i (8 bytes) calls dm_hthunk_fn[i] through dm_hcall.
 // Static code: iOS runs no code written at run time.
-    .globl _dm_hthunks
+    .globl C(dm_hthunks)
     .p2align 3
-_dm_hthunks:
+C(dm_hthunks):
     .set hk, 0
     .rept 2048                   // = hstack.c DM_HTHUNKS
     mov x17, #hk
-    b Lhthunk
+    b L(hthunk)
     .set hk, hk + 1
     .endr
-Lhthunk:
-    adrp x16, _dm_hthunk_fn@PAGE
-    add x16, x16, _dm_hthunk_fn@PAGEOFF
+L(hthunk):
+    adrp x16, PAGE(dm_hthunk_fn)
+    add x16, x16, PAGEOFF(dm_hthunk_fn)
     ldr x17, [x16, x17, lsl #3]
-    b _dm_hcall
+    b C(dm_hcall)

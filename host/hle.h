@@ -3,10 +3,11 @@
 // such parameters are always declared as int/unsigned and truncated by ourselves. Variadic arguments go on the stack on Apple and in registers on Switch ⇒ variadic functions cannot use C's "..." directly.
 #pragma once
 #include "dm.h"
+#include "table.h"
 typedef struct { const char *name; void *fn; int direct; } hle_ent;   // direct: called as it is, not on the host stack (hle_table.c)
 #define HLE(mangled, ret, cname, ...)                                                             \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swhle"))) static const hle_ent hle_ent_##cname = {mangled, (void *)cname, 0}; \
+    DM_TABLE(swhle) static const hle_ent hle_ent_##cname = {mangled, (void *)cname, 0}; \
     static ret cname(__VA_ARGS__)
 
 typedef uint32_t Result;   // nn::Result: w0, 0 = success
@@ -32,12 +33,12 @@ int dm_fs_host_file(const char *path, char *out, size_t n);   // Host file of an
 typedef struct { const char *name; void *fn; const char *why; int optional; } hle_force_ent;
 #define HLE_FORCE(mangled, why, ret, cname, ...)                                                   \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swforce"))) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why, 0}; \
+    DM_TABLE(swforce) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why, 0}; \
     static ret cname(__VA_ARGS__)
 // Same, but an entry no module references is not an error (SDK APIs only some games use)
 #define HLE_FORCE_OPT(mangled, why, ret, cname, ...)                                               \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swforce"))) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why, 1}; \
+    DM_TABLE(swforce) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why, 1}; \
     static ret cname(__VA_ARGS__)
 
 // Operation mode (0 handheld / 1 docked): owned by hle_oe.c, and the hid controller style follows it; the front end can switch it at runtime

@@ -28,6 +28,9 @@ them anyway): they are translated offline, once, into Metal libraries.
   - The decisions that need no Metal are moving to `nvn/core/` (plan item 264): plain C modules, each its own translation unit with a header,
     for a second backend (Vulkan) to share. What a module needs of the backend its header declares ("The backend provides"). The replay
     loop is there too (`nvn/core/exec.c`); each command it does not keep itself it hands to the backend through `nvn/nvn_backend.h`.
+  - The Android host runs the same interface layer and core on the null backend (`nvn/null/null.c`, plan item 301c) until its Vulkan one: a GPU
+    that draws nothing and finishes each submission when it is committed, its event writes and counter reports landing then. Its file lists
+    every function a backend provides.
   - Memory pools become zero-copy `MTLBuffer`s on the game's memory; GPU address = CPU address, so only unified-memory devices are supported.
   - GPU completion effects (sync objects, events, counters) become visible only after the Metal command buffer has completed.
   - Pipeline and depth-stencil states are cached by state hash.
@@ -146,6 +149,7 @@ Binding conventions used by the translation:
 | `nvn/core/fuse.c`, `nvn/core/fuse.h` | The readable-tile pass merge's plan (`fuse_try`): whether the next pass merges into this one, the union of attachments, its clears and skipped ops |
 | `nvn/core/exec.c`, `nvn/core/exec.h` | The replay loop (`nvn_exec`): the command walk in replay order, the commands that only set state, FenceSync, SetRenderTargets (continued, a deferred group's Q, new targets) and the clears (load actions or drawn); every other command handed to the backend |
 | `nvn/core/cond.c`, `nvn/core/cond.h` | Conditional rendering: SetRenderEnable(Conditional) and the samples-passed results it reads (`occ_note`, `occ_pending`) |
+| `nvn/null/null.c` | The null backend (the Android host's until Vulkan, plan item 301c): every function a backend provides; submissions complete at commit, nothing is drawn |
 | `nvn/nvn_backend.h` | The execution interface: what the replay hands a backend, command by command, and the render pass state it asks of it (`nvn_be_*`); each core module declares what else it asks of the backend |
 | `nvn/core/prog.c`, `nvn/core/prog.h` | The program bound per stage (prog_bind: per-stage keys combined into a composite program) |
 | `nvn/core/live.c`, `nvn/core/live.h` | The texture living at a storage address (a finalized registration follows it), and the texture objects' host copies that recorded commands use |
@@ -184,7 +188,7 @@ The tests compile the production sources in directly and read no game data. `t_n
 `nvnBootstrapLoader` to presentation; the `.m` tests compile the replay layer and check its pass optimizations (`t_reorder_chain`, `t_defer_chain`,
 `t_fuse_check`, `t_zskip`, `t_xv`, `t_view_levels`, …), presentation cropping, mip extents, sRGB views and GPU deswizzling. The `t_core_*.c`
 tests check `nvn/core/` without a GPU: each links all its modules, the backend's hooks as weak defaults it overrides where it needs to
-(`tests/core_fakes.c`) and the shared checks (`tests/core_test.h`).
+(`tests/core_fakes.c`) and the shared checks (`tests/core_test.h`); `t_null_be.c` checks the null backend on its own.
 
 ## Run-time switches
 

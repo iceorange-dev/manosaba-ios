@@ -42,11 +42,12 @@ typedef struct {
 
 extern module_t g_mod[MAX_MOD];
 extern int g_nmod;
-// Thread-local slots the rewritten guest code reads through the key page (the loader writes the key numbers there): K18 = the Switch's x18,
+// Thread-local slots the rewritten guest code reads through the key page (the loader writes slot * 8 there; slots.h): K18 = the Switch's x18,
 // KTLS = tpidr_el0, KTLR = tpidrro_el0 (ThreadLocalRegion), KGATE = host gate entry; g_keyparam = the four parameter slots of the rewriter's PARAMS
 // rules (key page entries KPARAM0..3), for a game's own hooks; unused slots read 0
-extern pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;
-extern pthread_key_t g_keyparam[4];
+#include "slots.h"
+extern dm_slot g_key18, g_keytls, g_keytlr, g_keygate;
+extern dm_slot g_keyparam[4];
 
 void load_modules(const char *dir, const char **names, int n);
 const char *dm_main_build(void); // main's NSO build ID (16 bytes hex)

@@ -5,6 +5,7 @@
 // reservation (4 GiB at least) placed where nothing is mapped, ending below 2^39, and a second one on top of it refused (fixed, no overwrite).
 // The end not held to 2^39 (-DDM_TEST_AS_NO_LIMIT): 2 fail.
 #include "../guest_as.h"
+#include <mach/mach.h>   // (the reservation released as plat_apple.c made it)
 #include <string.h>
 #include <unistd.h>
 

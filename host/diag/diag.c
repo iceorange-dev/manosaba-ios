@@ -11,7 +11,11 @@
 #include <time.h>
 #include <unistd.h>
 #include <libkern/OSCacheControl.h>
+#ifdef __APPLE__
 #include <mach/mach.h>
+#endif
+#include "plat.h"
+#include "uc.h"
 void crash_off(const char *tag, uint64_t a);
 int crash_set_trap_hook(int (*fn)(ucontext_t *uc));
 
@@ -29,14 +33,14 @@ static struct { uint64_t at; uint32_t *slot; unsigned hits; char name[40]; long 
 static int g_nprobe;
 static uint32_t *g_slots; static int g_slots_sealed;
 static void probe_str(uint64_t p) {
-    char buf[80]; vm_size_t got = 0;
-    if (p < 0x1000 || vm_read_overwrite(mach_task_self(), p, sizeof buf - 1, (vm_address_t)buf, &got) || !got) return;
+    char buf[80]; size_t got = sizeof buf - 1;
+    if (p < 0x1000 || !dm_mem_read(buf, p, got)) return;
     buf[got] = 0; int n = 0; while (buf[n] >= 0x20 && buf[n] < 0x7f) n++;
     if (n >= 3 && (buf[n] == 0 || n == (int)got)) { fprintf(stderr, " \"%.*s\"", n, buf); return; }
     if (got >= 24) {   // a {char *data, u64 length, ...} string object
         uint64_t ptr, len; memcpy(&ptr, buf, 8); memcpy(&len, buf + 8, 8);
-        char t[96]; got = 0;
-        if (len >= 3 && len < sizeof t && !vm_read_overwrite(mach_task_self(), ptr, len, (vm_address_t)t, &got) && got == len) {
+        char t[96];
+        if (len >= 3 && len < sizeof t && dm_mem_read(t, ptr, len)) {
             int k = 0; while (k < (int)len && t[k] >= 0x20 && t[k] < 0x7f) k++;
             if (k == (int)len) fprintf(stderr, " S\"%.*s\"", (int)len, t);
         }
@@ -65,6 +69,7 @@ static void probe_dump_once(void) {
 // Bit layout of DBGWCR / DBGBCR and what a user process may set: XNU osfmk/arm64/status.c (ARM_DEBUG_STATE64) and osfmk/arm64/proc_reg.h.
 const char *thr_cur_name(char *nb, size_t n);
 void svc_guest_layout(uint8_t **alias, size_t *alias_n, uint8_t **stack, size_t *stack_n, uint8_t **heap, size_t *heap_n);
+#ifdef __APPLE__
 #define WP_SLOTS 1024
 static struct { _Atomic mach_port_t port; _Atomic int state; int seen; uint64_t pc, far, before; } g_wpt[WP_SLOTS];   // state: 1 armed, 2 stepping, 3 rearm at the next scan
 static uint64_t g_wp_addr, g_wp_wcr, g_wp_lo, g_wp_hi; static int g_wp_on, g_wp_max = 400, g_wp_load;
@@ -86,17 +91,17 @@ static int wp_is_stx(uint32_t w) { return (w & 0x3FC00000) == 0x08000000; }   //
 static uint64_t wp_word(uint64_t a) { uint64_t v = 0; vm_size_t got = 0; vm_read_overwrite(mach_task_self(), a & ~7ull, 8, (vm_address_t)&v, &got); return v; }
 static int wp_trap(ucontext_t *uc) {
     if (!g_wp_on) return 0;
-    uint64_t pc = uc->uc_mcontext->__ss.__pc; unsigned ec = (unsigned)(uc->uc_mcontext->__es.__esr >> 26) & 0x3f;
+    uint64_t pc = UC_PC(uc); unsigned ec = (unsigned)(uc_esr(uc) >> 26) & 0x3f;
     mach_port_t me = pthread_mach_thread_np(pthread_self()); int s = wp_slot(me, 1); if (s < 0) return 0;
     if (ec == 0x34) {   // watchpoint from EL0 (ESR_EC_WATCHPT_MATCH_EL0): pc is the store, not executed yet
-        uint64_t far = uc->uc_mcontext->__es.__far;
+        uint64_t far = UC_FAR(uc);
         g_wpt[s].pc = pc; g_wpt[s].far = far; g_wpt[s].before = wp_word(far);
         atomic_store(&g_wpt[s].state, 2); wp_set(me, pc + 4);
         return 1;
     }
     if (ec == 0x30 && atomic_load(&g_wpt[s].state) == 2 && pc == g_wpt[s].pc + 4) {   // breakpoint from EL0 (ESR_EC_BKPT_REG_MATCH_EL0) after the store
         uint32_t w = *(const uint32_t *)g_wpt[s].pc;
-        if (wp_is_stx(w) && (uint32_t)uc->uc_mcontext->__ss.__x[(w >> 16) & 31]) { wp_off(me); atomic_store(&g_wpt[s].state, 3); atomic_fetch_add(&g_wp_rearm, 1); return 1; }
+        if (wp_is_stx(w) && (uint32_t)UC_X(uc, (w >> 16) & 31)) { wp_off(me); atomic_store(&g_wpt[s].state, 3); atomic_fetch_add(&g_wp_rearm, 1); return 1; }
         atomic_store(&g_wpt[s].state, 1); wp_set(me, 0);
         unsigned n = atomic_fetch_add(&g_wp_hits, 1) + 1; int show = (int)n <= g_wp_max;
         if (!show) for (int i = 0; i < 256; i++) {
@@ -112,7 +117,7 @@ static int wp_trap(ucontext_t *uc) {
             else if (dladdr((void *)g_wpt[s].pc, &di) && di.dli_sname) fprintf(stderr, "%s+%#lx", di.dli_sname, (unsigned long)(g_wpt[s].pc - (uint64_t)di.dli_saddr));
             else fprintf(stderr, "%#llx", g_wpt[s].pc);
             fprintf(stderr, " (%08x) at %#llx (+%#llx) word %016llx -> %016llx\n", w, far, far - g_wp_lo, g_wpt[s].before, wp_word(far));
-            dm_backtrace(uc->uc_mcontext->__ss.__fp);
+            dm_backtrace(UC_FP(uc));
         }
         return 1;
     }
@@ -175,31 +180,37 @@ static void wp_install(void) {
     const char *ld = getenv("DM_WATCHPOINT_LOAD"); g_wp_load = ld && strcmp(ld, "0");
     pthread_t pt; pthread_create(&pt, NULL, wp_start, NULL); pthread_detach(pt);
 }
+#else   // the debug registers are set through Mach's thread state: no watchpoint elsewhere (plan item 301c)
+static int wp_trap(ucontext_t *uc) { (void)uc; return 0; }
+void wp_thread_start(void) {}
+void dm_watch_load(uint64_t addr, uint64_t len) { (void)addr; (void)len; }
+static void wp_install(void) { if (getenv("DM_WATCHPOINT")) LOG("[red] DM_WATCHPOINT: hardware watchpoints are Apple only (Mach thread state)"); }
+#endif
 static int probe_hit(ucontext_t *uc) {   // SIGTRAP hook of crash.c
     if (wp_trap(uc)) return 1;
-    uint64_t pc = uc->uc_mcontext->__ss.__pc;
+    uint64_t pc = UC_PC(uc);
     for (int i = 0; i < g_nprobe; i++) if (g_probe[i].at == pc) {
         probe_dump_once();
-        if (g_probe[i].fn) { g_probe[i].hits++; g_probe[i].fn(uc); uc->uc_mcontext->__ss.__pc = (uint64_t)g_probe[i].slot; return 1; }
+        if (g_probe[i].fn) { g_probe[i].hits++; g_probe[i].fn(uc); UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
         fprintf(stderr, "[dm] PROBE %s #%u [%.4fs]", g_probe[i].name, ++g_probe[i].hits, (now_ns() - g_t0_ns) / 1e9);
-        for (int r = 0; r < 4; r++) { uint64_t v = uc->uc_mcontext->__ss.__x[r]; fprintf(stderr, " x%d=%#llx", r, v); probe_str(v); }
-        for (int r = 4; r < 8; r++) fprintf(stderr, " x%d=%#llx", r, uc->uc_mcontext->__ss.__x[r]);   // (arguments 5-8)
-        for (int r = 9; r < 13; r++) fprintf(stderr, " x%d=%#llx", r, uc->uc_mcontext->__ss.__x[r]);   // (temporaries: a value the compiler keeps in w9-w12)
-        for (int r = 19; r < 24; r++) fprintf(stderr, " x%d=%#llx", r, uc->uc_mcontext->__ss.__x[r]);
-        { uint64_t x8 = uc->uc_mcontext->__ss.__x[8]; Dl_info di; fprintf(stderr, " x8=%#llx", x8);   // indirect call targets often sit in x8
+        for (int r = 0; r < 4; r++) { uint64_t v = UC_X(uc, r); fprintf(stderr, " x%d=%#llx", r, v); probe_str(v); }
+        for (int r = 4; r < 8; r++) fprintf(stderr, " x%d=%#llx", r, UC_X(uc, r));   // (arguments 5-8)
+        for (int r = 9; r < 13; r++) fprintf(stderr, " x%d=%#llx", r, UC_X(uc, r));   // (temporaries: a value the compiler keeps in w9-w12)
+        for (int r = 19; r < 24; r++) fprintf(stderr, " x%d=%#llx", r, UC_X(uc, r));
+        { uint64_t x8 = UC_X(uc, 8); Dl_info di; fprintf(stderr, " x8=%#llx", x8);   // indirect call targets often sit in x8
           if (dladdr((void *)x8, &di) && di.dli_sname) fprintf(stderr, " (%s+%#lx)", di.dli_sname, (unsigned long)(x8 - (uint64_t)di.dli_saddr)); }
         { static int fp = -1; if (fp < 0) fp = getenv("DM_PROBE_FP") != NULL;   // DM_PROBE_FP=1: s0..s15 as floats too (float code: sizes, scales)
-          if (fp) for (int r = 0; r < 16; r++) { float f; uint32_t u = (uint32_t)uc->uc_mcontext->__ns.__v[r]; memcpy(&f, &u, 4); fprintf(stderr, " s%d=%g", r, f); } }
+          if (fp) for (int r = 0; r < 16; r++) { float f; uint32_t u = (uint32_t)uc_v(uc, r); memcpy(&f, &u, 4); fprintf(stderr, " s%d=%g", r, f); } }
         if (g_probe[i].dump >= 0) {
-            uint8_t b[16]; vm_size_t got = 0;
-            uint64_t at = uc->uc_mcontext->__ss.__x[0] + (g_probe[i].dump & 0xffffff);
-            if (g_probe[i].dump & 0x1000000) { uint64_t p = 0; vm_size_t g = 0; if (!vm_read_overwrite(mach_task_self(), at, 8, (vm_address_t)&p, &g)) at = p; else at = 0; }
-            if (at && !vm_read_overwrite(mach_task_self(), at, 16, (vm_address_t)b, &got) && got == 16) {
+            uint8_t b[16];
+            uint64_t at = UC_X(uc, 0) + (g_probe[i].dump & 0xffffff);
+            if (g_probe[i].dump & 0x1000000) { uint64_t p = 0; if (dm_mem_read(&p, at, 8)) at = p; else at = 0; }
+            if (at && dm_mem_read(b, at, 16)) {
                 fprintf(stderr, " [%s%#lx]=", (g_probe[i].dump & 0x1000000) ? "*x0+" : "x0+", g_probe[i].dump & 0xffffff); for (int k = 0; k < 16; k++) fprintf(stderr, "%02x", b[k]); }
         }
         fputc('\n', stderr);
-        dm_backtrace(uc->uc_mcontext->__ss.__fp);
-        uc->uc_mcontext->__ss.__pc = (uint64_t)g_probe[i].slot;
+        dm_backtrace(UC_FP(uc));
+        UC_PC(uc) = (uint64_t)g_probe[i].slot;
         return 1;
     }
     return 0;
@@ -207,10 +218,10 @@ static int probe_hit(ucontext_t *uc) {   // SIGTRAP hook of crash.c
 // DM_THROWLOG: the type of every C++ throw (x1 = std::type_info, +8 = mangled name). IL2CPP managed exceptions are thrown as Il2CppExceptionWrapper
 // (x0 → it, first field = Il2CppException*): also the exception class (klass +0x10 name, +0x18 namespace) and its message (object +0x18, an
 // Il2CppString {klass, monitor, int32 length +0x10, UTF-16 +0x14}, read only after checking the class name is String)
-static int rd(uint64_t a, void *out, size_t n) { vm_size_t got = 0; return a >= 0x1000 && !vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)out, &got) && got == n; }
+static int rd(uint64_t a, void *out, size_t n) { return a >= 0x1000 && dm_mem_read(out, a, n); }
 static int rdstr(uint64_t a, char *out, size_t n) { if (!rd(a, out, 1)) return 0; size_t k = 0; while (k + 1 < n && rd(a + k, out + k, 1) && out[k]) k++; out[k] = 0; return 1; }
 static void throw_probe(ucontext_t *uc) {
-    uint64_t x0 = uc->uc_mcontext->__ss.__x[0], x1 = uc->uc_mcontext->__ss.__x[1], tn = 0; char tname[128] = "?";
+    uint64_t x0 = UC_X(uc, 0), x1 = UC_X(uc, 1), tn = 0; char tname[128] = "?";
     if (rd(x1 + 8, &tn, 8)) rdstr(tn, tname, sizeof tname);
     fprintf(stderr, "[dm] THROW [%.4fs] %s", (now_ns() - g_t0_ns) / 1e9, tname);
     uint64_t ex = 0, k = 0, kn = 0, kns = 0;
@@ -228,7 +239,7 @@ static void throw_probe(ucontext_t *uc) {
         }
     }
     fputc('\n', stderr);
-    dm_backtrace(uc->uc_mcontext->__ss.__fp);
+    dm_backtrace(UC_FP(uc));
 }
 static void probe_add(module_t *m, uint64_t off, long dump, probe_fn fn) {
     if (g_nprobe >= MAX_PROBE) die("too many probes (max %d)", MAX_PROBE);
@@ -328,11 +339,11 @@ static void on_sample(int sig, siginfo_t *si, void *uc_) {
     (void)sig; (void)si; ucontext_t *uc = uc_;
     unsigned i = atomic_load(&g_shead) % SRING;
     uint32_t thr_cur_handle(void);
-    g_sring[i].h = thr_cur_handle(); g_sring[i].t = now_ns(); g_sring[i].pc = uc->uc_mcontext->__ss.__pc; g_sring[i].lr = uc->uc_mcontext->__ss.__lr;
-    uint64_t fp = uc->uc_mcontext->__ss.__fp; int n = 0, jumps = 0;
+    g_sring[i].h = thr_cur_handle(); g_sring[i].t = now_ns(); g_sring[i].pc = UC_PC(uc); g_sring[i].lr = UC_LR(uc);
+    uint64_t fp = UC_FP(uc); int n = 0, jumps = 0;
     for (; n < 16 && fp && !(fp & 7); n++) {   // safe reads: x29 may be an ordinary register in the interrupted function
-        uint64_t fr[2]; vm_size_t got = 0;
-        if (vm_read_overwrite(mach_task_self(), fp, sizeof fr, (vm_address_t)fr, &got) || got != sizeof fr) break;
+        uint64_t fr[2];
+        if (!dm_mem_read(fr, fp, sizeof fr)) break;
         g_sring[i].bt[n] = fr[1];
         if (!dm_fp_step_ok(fp, fr[0], &jumps)) { n++; break; }
         fp = fr[0];

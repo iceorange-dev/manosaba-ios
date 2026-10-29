@@ -131,7 +131,7 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
 - **[d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)** ([jhaizhou](https://github.com/jhaizhou-ops), MIT): the architecture and most of
   the host, graphics layer and verification tools; later the controller mapping, silent no-ops reported, the per-program reflection summary, the
   Metal 4 launch check, the audio notifier's priority and dropped presents for a covered window; for Android, the rewrite blocks that move sp before
-  they save a register (no red zone on Linux).
+  they save a register (no red zone on Linux) and the save's extended attributes in the `user.` namespace.
 - **d2r-mobile contributors** [SepheTT](https://github.com/SepheTT) (buffer ↔ texture copy strides, the weak import test) and
   [BossaMelon](https://github.com/BossaMelon) (the declared launch screen).
 - **[nxnative](https://github.com/seedds/nxnative)** ([seedds](https://github.com/seedds), MIT) and **botw-mobile**
@@ -170,7 +170,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   bias and reduction; lordran-native also the alpha test and occlusion counts across submissions), [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (the handles of a WaitSynchronization in thread dumps, user mod folders),
   [BotWRecomp](https://github.com/IshaanKalra2103/BotWRecomp) (game data out of backups, GCSupportsGameMode),
   [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17) (what an iOS 17 build needs), [GirlNet/nxnative](https://github.com/GirlNet/nxnative)
-  (the host built for every game on a CI runner).
+  (the host built for every game on a CI runner), [RogelioLB/nxnative-android](https://github.com/RogelioLB/nxnative-android) (a thread's stack
+  reported without bionic's guard page).
 - **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's Android port:
   the address-region refusals logged and the node area cut for a Unity 6 sdk build, the rewriter's Android target (thread slots in bionic's
   TLS_SLOT_APP), credited in the code; its Android facts guide the Android port.

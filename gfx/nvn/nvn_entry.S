@@ -1,10 +1,11 @@
+#include "runtime/asm.h"
     .arch_extension lse
 // Common entry for unimplemented NVN functions: when the thunk comes in, x16 = this function's slot address (nvn_slot[i]).
 // Calls nvn_unimpl_c(slot, x0, x1, x2, lr, x8) to report a failure and log the name (with the call site and the indirect result pointer x8), returns 0.
     .text
-    .globl _nvn_unimpl_entry
+    .globl C(nvn_unimpl_entry)
     .p2align 2
-_nvn_unimpl_entry:
+C(nvn_unimpl_entry):
     stp x29, x30, [sp, #-16]!
     mov x29, sp
     mov x5, x8
@@ -13,7 +14,7 @@ _nvn_unimpl_entry:
     mov x2, x1
     mov x1, x0
     mov x0, x16
-    bl _nvn_unimpl_c
+    bl C(nvn_unimpl_c)
     ldp x29, x30, [sp], #16
     ret
 
@@ -21,9 +22,9 @@ _nvn_unimpl_entry:
 // Save x0-x7 / q0-q7 (NVN functions pass no arguments on the stack, verified by the generator), take mach_absolute_time -> call the real implementation (nvn_real[i]) -> take it again,
 // atomically add the difference to nvn_prof_ticks[i] (mach timebase units); return values x0/x1, q0-q3 are passed back unchanged.
 // cntvct_el0 is not used: measured on this machine it is not in a fixed ratio to the system timebase (cntfrq reports 1 GHz, increment ratio over the same interval 98.9), so it cannot be converted to time.
-    .globl _nvn_prof_entry
+    .globl C(nvn_prof_entry)
     .p2align 2
-_nvn_prof_entry:
+C(nvn_prof_entry):
     sub sp, sp, #240
     stp x29, x30, [sp]
     mov x29, sp
@@ -35,16 +36,16 @@ _nvn_prof_entry:
     stp q2, q3, [sp, #128]
     stp q4, q5, [sp, #160]
     stp q6, q7, [sp, #192]
-    adrp x9, _nvn_slot@PAGE
-    add x9, x9, _nvn_slot@PAGEOFF
+    adrp x9, PAGE(nvn_slot)
+    add x9, x9, PAGEOFF(nvn_slot)
     sub x16, x16, x9
     lsr x16, x16, #4                 // Slot index i
     str x16, [sp, #80]
-    bl _mach_absolute_time
+    bl MACH_TICKS
     str x0, [sp, #88]
     ldr x16, [sp, #80]
-    adrp x9, _nvn_real@PAGE
-    add x9, x9, _nvn_real@PAGEOFF
+    adrp x9, PAGE(nvn_real)
+    add x9, x9, PAGEOFF(nvn_real)
     ldr x17, [x9, x16, lsl #3]
     ldp x0, x1, [sp, #16]
     ldp x2, x3, [sp, #32]
@@ -58,13 +59,13 @@ _nvn_prof_entry:
     stp x0, x1, [sp, #16]
     stp q0, q1, [sp, #96]
     stp q2, q3, [sp, #128]
-    bl _mach_absolute_time
+    bl MACH_TICKS
     mov x9, x0
     ldr x10, [sp, #88]
     sub x9, x9, x10
     ldr x16, [sp, #80]
-    adrp x10, _nvn_prof_ticks@PAGE
-    add x10, x10, _nvn_prof_ticks@PAGEOFF
+    adrp x10, PAGE(nvn_prof_ticks)
+    add x10, x10, PAGEOFF(nvn_prof_ticks)
     add x10, x10, x16, lsl #3
     stadd x9, [x10]
     ldp x0, x1, [sp, #16]

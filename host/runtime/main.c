@@ -5,8 +5,7 @@
 #include "game.h"
 #include "logstamp.h"
 #include <stdatomic.h>
-#include <sys/sysctl.h>
-#include <sys/time.h>
+#include "plat.h"
 #include <unistd.h>
 void probe_install(void); void hid_keys_init(void); void stubs_report(void); void crash_install(void); void guest_thread_init(void); uint32_t svc_thread_main_init(void);
 void crash_sample_self(void);
@@ -47,14 +46,8 @@ static void flags_init(void) {
     g_flag.bootprof = !!getenv("DM_BOOTPROF");
 }
 
-// Zero of the boot timeline = process creation (p_starttime from sysctl KERN_PROC_PID, wall clock) converted to the now_ns monotonic base; same on Mac and iOS
-static uint64_t proc_start_mono_ns(void) {
-    struct kinfo_proc kp; size_t n = sizeof kp; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
-    uint64_t mono = now_ns(); struct timeval tv; gettimeofday(&tv, NULL);
-    if (sysctl(mib, 4, &kp, &n, NULL, 0) || !n) return mono;
-    int64_t age = (int64_t)(tv.tv_sec - kp.kp_proc.p_starttime.tv_sec) * 1000000000ll + (tv.tv_usec - kp.kp_proc.p_starttime.tv_usec) * 1000ll;
-    return age > 0 ? mono - (uint64_t)age : mono;
-}
+// Zero of the boot timeline = process creation (plat.h dm_proc_age_ns) converted to the now_ns monotonic base
+static uint64_t proc_start_mono_ns(void) { uint64_t mono = now_ns(), age = dm_proc_age_ns(); return age && age < mono ? mono - age : mono; }
 
 // Host loading (independent of UIKit / Metal): read the NSOs, relocate, take over imports, probes / keys. By default it runs in main;
 // the iOS app calls dm_host_preload_start (same arguments) when it starts the host, so loading runs on a background thread alongside the UI setup.

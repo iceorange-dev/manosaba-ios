@@ -18,8 +18,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
-#include <mach/mach.h>
-#include <pthread/qos.h>
+#include "plat.h"
 #include <dlfcn.h>
 #include <stdatomic.h>
 #include <unistd.h>
@@ -77,7 +76,7 @@ typedef struct thr {
     uint64_t woke_ns;          // when wake() signalled it (DM_SCHED_STATS: the wake-to-run latency, schedstats.h)
     uint64_t nyield, nyield_seen, nbackoff, nbackoff_seen;   // yields and those the back-off turned into short sleeps, both at the last power line (dm_yield_top)
     uint64_t yrun_svc, yrun_t0;   // the current run of yields: nsvc of its last yield and when it began (a run lasts while no other SVC comes between two yields)
-    mach_port_t mport;         // Host thread port (to get CPU time)
+    dm_hthread_t hth;          // Host thread handle (plat.h: stopping it, its registers and CPU time)
     uint64_t cpu_seen_us;      // CPU time (µs) at the last power line (dm_thread_cpu)
     uint32_t qos;
     // Host context saved in thread_main before switching to the guest stack. ExitThread jumps back here before publishing the exit: the SDK unmaps
@@ -85,7 +84,7 @@ typedef struct thr {
     sigjmp_buf host_exit;
     int host_exit_valid;       // Touched only by the owning thread; the main thread (svc_thread_main_init) never has a saved context
     // Pausing (SetThreadActivity / GetThreadContext3, used by the IL2CPP GC to stop the world): see the "thread pausing" section of this file
-    uint64_t tsd;              // This thread's tpidrro_el0 (TSD base): to read the K18 (guest x18) / KTLS (tpidr_el0) slots
+    uint64_t tsd;              // This thread's slot block (slots.h dm_slot_base): to read the K18 (guest x18) / KTLS (tpidr_el0) slots
     _Atomic int in_svc;        // Currently inside an svc gate (set / cleared on gate_dispatch entry / exit)
     uint64_t *svc_regs, svc_pc;   // Guest register area saved by the current svc gate and the svc's original address
     _Atomic int pause_req, parked;   // Pause requested / stopped at the svc gate exit
@@ -278,20 +277,23 @@ static void lock_acquire_for(thr_t *t, uint64_t addr, uint32_t tag) {
 //   - Inside a host call or an svc gate that took the thread's host stack (hstack.S): the guest's state at that entry, from the record at the top of the host stack: guest sp,
 //     x19–x28, fp, lr, and for a host call x0–x8 (its arguments). The host frames, and any guest code a host function called, are on the host stack: the guest stack above that sp
 //     holds every guest frame, and a value only a host frame saved is in these registers. The IL2CPP GC scans exactly that.
-//   - In guest code (pc inside a module): Mach thread_suspend, report from the thread state; x18 is read from the K18 slot (the rewriter moved the guest's x18 into a TSD slot).
+//   - In guest code (pc inside a module): dm_hthread_suspend (plat.h), report from the thread state; x18 is read from the K18 slot (the rewriter moved the guest's x18 into a TSD slot).
 //     Guest code holds no host locks, so keeping it suspended cannot hang other host calls during the stop-the-world.
 //   - In host code (an HLE implementation): if it is parked in a system wait stub (condition variable / semaphore / sleep / mach_msg), treat it like a kernel wait: suspend and report
 //     from the record above, or with DM_HSTACK=0 from the thread state (the host frames are then on the guest stack with a lower sp, so scanning upward from it covers every guest
 //     frame); otherwise let it go and retry shortly, until it returns to guest code or enters a wait.
-#include <mach/thread_act.h>
 static struct { uint64_t a; } g_waitstub[16]; static int g_nwaitstub;
 static void waitstub_init(void) {
+#ifdef __APPLE__
     static const char *nm[] = {"__psynch_cvwait", "__semwait_signal", "__semwait_signal_nocancel", "semaphore_wait_trap", "semaphore_timedwait_trap",
                                "mach_msg_trap", "mach_msg2_trap", "__select", "kevent", "kevent_id", "__workq_kernreturn"};
+#else   // bionic: its futex waits (condition variables, mutexes, semaphores) go through syscall(); sleeps and polls have stubs of their own
+    static const char *nm[] = {"syscall", "nanosleep", "clock_nanosleep", "epoll_pwait", "ppoll"};
+#endif
     for (unsigned i = 0; i < sizeof nm / sizeof *nm; i++) { void *p = dlsym(RTLD_DEFAULT, nm[i]); if (p) g_waitstub[g_nwaitstub++].a = (uint64_t)p; }
 }
 static int in_waitstub(uint64_t pc) { for (int i = 0; i < g_nwaitstub; i++) if (pc >= g_waitstub[i].a && pc < g_waitstub[i].a + 0x40) return 1; return 0; }
-static uint64_t tsd_slot(const thr_t *t, pthread_key_t k) { return t->tsd ? ((const uint64_t *)(t->tsd & ~7ull))[k] : 0; }
+static uint64_t tsd_slot(const thr_t *t, dm_slot k) { return t->tsd ? ((const uint64_t *)(t->tsd & ~7ull))[k] : 0; }
 
 void thr_svc_enter(uint64_t *regs, uint64_t pc) {
     thr_t *t = pthread_getspecific(g_keythr); if (!t) return;
@@ -337,7 +339,7 @@ static uint32_t set_activity(uint32_t h, uint32_t act) {
         int mach = 0;
         if (!r) { atomic_store(&t->pause_req, 0); mach = t->stop_kind == 2; t->stop_kind = 0; pthread_cond_broadcast(&t->cv); }
         pthread_mutex_unlock(&G);
-        if (mach) thread_resume(t->mport);
+        if (mach) dm_hthread_resume(t->hth);
         return r;
     }
     atomic_store(&t->pause_req, 1);
@@ -345,16 +347,15 @@ static uint32_t set_activity(uint32_t h, uint32_t act) {
     static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, waitstub_init);
     for (unsigned n = 0, in_block __attribute__((unused)) = 0;; n++) {
         if (atomic_load(&t->in_svc) || atomic_load(&t->parked)) { t->stop_kind = 1; return 0; }
-        if (thread_suspend(t->mport) != KERN_SUCCESS) { LOG("[red] SetThreadActivity: suspending thread %#x failed", h); t->stop_kind = 0; return 0; }
-        arm_thread_state64_t st; mach_msg_type_number_t c = ARM_THREAD_STATE64_COUNT;
-        uint64_t pc = thread_get_state(t->mport, ARM_THREAD_STATE64, (thread_state_t)&st, &c) == KERN_SUCCESS ? (uint64_t)__darwin_arm_thread_state64_get_pc(st) : 0;
-        if (atomic_load(&t->in_svc) || atomic_load(&t->parked)) { thread_resume(t->mport); t->stop_kind = 1; return 0; }   // Entered a gate just before being suspended
+        if (dm_hthread_suspend(t->hth)) { LOG("[red] SetThreadActivity: suspending thread %#x failed", h); t->stop_kind = 0; return 0; }
+        dm_regs st; uint64_t pc = !dm_hthread_regs(t->hth, &st, 0) ? st.pc : 0;
+        if (atomic_load(&t->in_svc) || atomic_load(&t->parked)) { dm_hthread_resume(t->hth); t->stop_kind = 1; return 0; }   // Entered a gate just before being suspended
 #ifndef DM_TEST_STOP_IN_PATCH   // negative control of t_hstack only: stopped inside a block too, as before
-        if (pc && in_patch_area(pc) && in_block++ < 2000) { thread_resume(t->mport); usleep(20); continue; }   // let it leave the block first
+        if (pc && in_patch_area(pc) && in_block++ < 2000) { dm_hthread_resume(t->hth); usleep(20); continue; }   // let it leave the block first
         if (pc && in_patch_area(pc) && !g_stop_in_patch++) LOG("SetThreadActivity: thread %#x stayed in a rewrite block (pc=%#llx) through 2000 tries: stopped there (first case)", h, pc);
 #endif
         if (pc && (module_of((void *)pc) || in_waitstub(pc))) { t->stop_kind = 2; return 0; }
-        thread_resume(t->mport);
+        dm_hthread_resume(t->hth);
         if (n == 100000) LOG("[red] SetThreadActivity: thread %#x has been in host code for long (pc=%#llx), still waiting for it to return to guest code", h, pc);
         usleep(20);
     }
@@ -396,17 +397,13 @@ static uint32_t get_context3(uint8_t *out, uint32_t h) {
 #endif
         memcpy(out + 0x110 + 8 * 16, (const uint8_t *)g + 256 + 8 * 16, 8 * 16);   // v8–v15
     } else if (t->stop_kind == 2) {
-        arm_thread_state64_t st; mach_msg_type_number_t c = ARM_THREAD_STATE64_COUNT;
-        arm_neon_state64_t ns; mach_msg_type_number_t cn = ARM_NEON_STATE64_COUNT;
-        if (thread_get_state(t->mport, ARM_THREAD_STATE64, (thread_state_t)&st, &c) != KERN_SUCCESS) { LOG("[red] GetThreadContext3: reading the state of thread %#x failed", h); return 0; }
-        for (int i = 0; i < 29; i++) x[i] = st.__x[i];
+        dm_regs st;
+        if (dm_hthread_regs(t->hth, &st, 1)) { LOG("[red] GetThreadContext3: reading the state of thread %#x failed", h); return 0; }
+        for (int i = 0; i < 29; i++) x[i] = st.x[i];
         x[18] = tsd_slot(t, g_key18);
-        x[29] = (uint64_t)__darwin_arm_thread_state64_get_fp(st); x[30] = (uint64_t)__darwin_arm_thread_state64_get_lr(st);
-        x[31] = (uint64_t)__darwin_arm_thread_state64_get_sp(st); x[32] = (uint64_t)__darwin_arm_thread_state64_get_pc(st);
-        *(uint32_t *)(out + 0x108) = st.__cpsr;
-        if (thread_get_state(t->mport, ARM_NEON_STATE64, (thread_state_t)&ns, &cn) == KERN_SUCCESS) {
-            memcpy(out + 0x110, &ns.__v, 0x200); *(uint32_t *)(out + 0x310) = ns.__fpcr; *(uint32_t *)(out + 0x314) = ns.__fpsr;
-        }
+        x[29] = st.fp; x[30] = st.lr; x[31] = st.sp; x[32] = st.pc;
+        *(uint32_t *)(out + 0x108) = st.cpsr;
+        if (st.has_v) { memcpy(out + 0x110, st.v, 0x200); *(uint32_t *)(out + 0x310) = st.fpcr; *(uint32_t *)(out + 0x314) = st.fpsr; }
     }
     x[0x318 / 8] = tsd_slot(t, g_keytls);
     static int gclog = -1; if (gclog < 0) gclog = getenv("DM_GCLOG") != NULL;   // Diagnostics: one line per context fetch (how stopped, sp relative to the stack top, where pc is)
@@ -443,17 +440,17 @@ static void thread_publish_exit(thr_t *t) {
     if (t->closed) thr_free(t);
     pthread_mutex_unlock(&G);
 }
+// The host thread's scheduling class for guest work (plat.h: interactive with set)
+static uint32_t host_qos(int set) { if (set) dm_self_interactive(); return dm_self_qos(); }
 static void *thread_main(void *p) {
     thr_t *const t = p;   // Never modified, so its value is well defined after siglongjmp
     pthread_setspecific(g_keythr, t);
-    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
-    qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0;
-    pthread_get_qos_class_np(pthread_self(), &qc, &rp); t->qos = (uint32_t)qc;
-    t->mport = pthread_mach_thread_np(pthread_self());
-    __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(t->tsd));
+    t->qos = host_qos(1);
+    t->hth = dm_hthread_self();
     crash_thread_init();
     wp_thread_start();   // DM_WATCHPOINT (diag.c)
     guest_thread_init();
+    t->tsd = dm_slot_base();   // (after guest_thread_init: on Android its first slot makes the block)
     pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); core_take(t); pthread_mutex_unlock(&G);
     // ExitThread lands here through siglongjmp, back on this host stack with the callee-saved registers restored; the abandoned guest frames need
     // no unwinding (the SDK has finished its own teardown before ExitThread). The signal mask is not saved or restored
@@ -483,8 +480,8 @@ uint32_t svc_thread_main_init(void) {
     pthread_key_create(&g_keythr, NULL);
     thr_t *t = calloc(1, sizeof *t);
     pthread_cond_init(&t->cv, NULL);
-    t->started = 1; t->prio = 44; t->core = t->act = PROC_IDEAL_CORE; t->mask = 1ull << PROC_IDEAL_CORE; t->pt = pthread_self(); t->mport = pthread_mach_thread_np(t->pt);
-    __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(t->tsd));
+    t->started = 1; t->prio = 44; t->core = t->act = PROC_IDEAL_CORE; t->mask = 1ull << PROC_IDEAL_CORE; t->pt = pthread_self(); t->hth = dm_hthread_self();
+    t->tsd = dm_slot_base();
     t->cur_core = -1;
     pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; core_take(t); pthread_mutex_unlock(&G);
     pthread_setspecific(g_keythr, t);
@@ -492,17 +489,16 @@ uint32_t svc_thread_main_init(void) {
     // thread runs user-interactive (thread_main). DM_MAIN_QOS=ui gives it that class too (plan item 229, a measurement: Tears of the Kingdom's main
     // thread is its busiest, 143.6 s of CPU in 7 minutes on the iPhone, and on the frame's chain; it also runs real-time while it presents)
 #ifndef DM_TEST_MAIN_QOS_IGNORED   // negative control of t_mainqos only: the switch ignored
-    { const char *e = getenv("DM_MAIN_QOS"); if (e && !strcmp(e, "ui")) { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0); LOG("DM_MAIN_QOS=ui: the guest main thread runs user-interactive"); } }
+    { const char *e = getenv("DM_MAIN_QOS"); if (e && !strcmp(e, "ui")) { host_qos(1); LOG("DM_MAIN_QOS=ui: the guest main thread runs user-interactive"); } }
 #endif
-    qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0;
-    pthread_get_qos_class_np(pthread_self(), &qc, &rp); t->qos = (uint32_t)qc;
+    t->qos = host_qos(0);
     return t->handle;
 }
 
 static uint64_t g_main_yield_n, g_main_yield_ns;   // Written only by the guest main thread; the diagnostic line reads it on the same thread
 void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = g_main_yield_n; *ns = g_main_yield_ns; }
 uint32_t dm_guest_work_qos(unsigned *count) {
-    uint32_t qos = QOS_CLASS_UNSPECIFIED; unsigned n = 0;
+    uint32_t qos = 0; unsigned n = 0;   // (QOS_CLASS_UNSPECIFIED)
     pthread_mutex_lock(&G);
     for (thr_t *t = g_all; t; t = t->all) {
         if (t->handle == 0x1001) continue;
@@ -547,10 +543,9 @@ void dm_guest_clock_advanced(void) {
 // Handle thread / synchronization SVCs; returns 1 = handled
 static const char *thr_name(thr_t *t, char *nb, size_t n) {   // SDK ThreadType+0x1a0 = name pointer
     if (!t->arg) return t->handle == 0x1001 ? "main thread" : "?";
-    uint64_t np = 0; vm_size_t got = 0;
-    if (vm_read_overwrite(mach_task_self(), t->arg + 0x1a0, 8, (vm_address_t)&np, &got) || !np ||
-        vm_read_overwrite(mach_task_self(), np, n - 1, (vm_address_t)nb, &got)) return "?";
-    nb[got] = 0; return nb;
+    uint64_t np = 0;
+    if (!dm_mem_read(&np, t->arg + 0x1a0, 8) || !np || !dm_mem_read(nb, np, n - 1)) return "?";
+    nb[n - 1] = 0; return nb;
 }
 // Name of the calling guest thread (diagnostics, DM_WATCHPOINT); NULL on a host thread
 const char *thr_cur_name(char *nb, size_t n) { thr_t *t = pthread_getspecific(g_keythr); return t ? thr_name(t, nb, n) : NULL; }
@@ -595,7 +590,7 @@ int thr_find_by_name(const char *name, pthread_t *out) {
 // stopped dump runs in the product, crash.c; plan item 107). Only snprintf into a buffer on this stack and vm reads happen while it is stopped.
 // Unit test tests/t_threaddump.c
 static void thr_bt(thr_t *t) {
-    if (!t->mport || t->exited || t->mport == mach_thread_self()) return;
+    if (!t->hth || t->exited || t->hth == dm_hthread_self()) return;
     char o[8192]; int q = 0;
 #define BT_PUT(...) do { if (q < (int)sizeof o) { int k_ = snprintf(o + q, sizeof o - (size_t)q, __VA_ARGS__); if (k_ > 0) q += k_; if (q > (int)sizeof o) q = (int)sizeof o; } } while (0)
 #ifdef DM_TEST_BT_PRINT_SUSPENDED   // negative control of t_threaddump only: printed while the thread is stopped, as before
@@ -604,41 +599,41 @@ static void thr_bt(thr_t *t) {
 #define BT_FLUSH() do { } while (0)
 #endif
     o[0] = 0;
-    if (thread_suspend(t->mport) != KERN_SUCCESS) return;
-    arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
-    if (thread_get_state(t->mport, ARM_THREAD_STATE64, (thread_state_t)&st, &n) == KERN_SUCCESS) {
+    if (dm_hthread_suspend(t->hth)) return;
+    dm_regs st;
+    if (!dm_hthread_regs(t->hth, &st, 0)) {
         // Threads not waiting in a system call (running guest code, maybe spinning on a condition): the callee-saved registers x19–x28, and 128 bytes
         // at each of x19 / x20 (often the object being waited for)
-        if (t->wkind == 0) { uint64_t pc = __darwin_arm_thread_state64_get_pc(st); module_t *pm = module_of((void *)pc);
+        if (t->wkind == 0) { uint64_t pc = st.pc; module_t *pm = module_of((void *)pc);
             BT_PUT("[dm]   %#x registers pc=", t->handle);
             if (pm) BT_PUT("%s+%#llx", pm->name, pc - (uint64_t)pm->base); else BT_PUT("%#llx", pc);
-            for (int i = 19; i <= 28; i++) BT_PUT(" x%d=%#llx", i, st.__x[i]);
+            for (int i = 19; i <= 28; i++) BT_PUT(" x%d=%#llx", i, st.x[i]);
             BT_PUT("\n");
-            for (int i = 19; i <= 20; i++) { uint8_t raw[128]; vm_size_t g = 0; uint64_t a = st.__x[i];
-                if (a < 0x100000000ull || vm_read_overwrite(mach_task_self(), a, sizeof raw, (vm_address_t)raw, &g) || g != sizeof raw) continue;
+            for (int i = 19; i <= 20; i++) { uint8_t raw[128]; uint64_t a = st.x[i];
+                if (a < 0x100000000ull || !dm_mem_read(raw, a, sizeof raw)) continue;
                 uint64_t vt = *(uint64_t *)raw; module_t *vm_ = module_of((void *)vt);
                 BT_PUT("[dm]   %#x x%d → 128 bytes at %#llx", t->handle, i, a);
                 if (vm_) BT_PUT(" (first 8 bytes = %s+%#llx)", vm_->name, vt - (uint64_t)vm_->base);
                 BT_PUT(":"); for (int k = 0; k < 128; k += 4) BT_PUT(" %08x", *(uint32_t *)(raw + k));
                 BT_PUT("\n"); } }
-        uint64_t fp = __darwin_arm_thread_state64_get_fp(st), lr = __darwin_arm_thread_state64_get_lr(st);
+        uint64_t fp = st.fp, lr = st.lr;
         // Threads running guest code: print the 1 KiB above the stack top as is (the registers saved by the outer frames are in there, so the wait object and resource address can be recovered afterwards)
-        if (t->wkind == 0 && module_of((void *)__darwin_arm_thread_state64_get_pc(st))) { uint64_t sp = __darwin_arm_thread_state64_get_sp(st), stk[128]; vm_size_t g = 0;   // Printed only if pc is inside a guest module: a thread in sleep / yield has
-            if (sp > 0x100000000ull && !vm_read_overwrite(mach_task_self(), sp, sizeof stk, (vm_address_t)stk, &g) && g == sizeof stk)
+        if (t->wkind == 0 && module_of((void *)st.pc)) { uint64_t sp = st.sp, stk[128];   // Printed only if pc is inside a guest module: a thread in sleep / yield has
+            if (sp > 0x100000000ull && dm_mem_read(stk, sp, sizeof stk))
                 for (int r = 0; r < 128; r += 8) BT_PUT("[dm]   %#x stack sp+%#05x: %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx\n", t->handle, r * 8,
                         stk[r], stk[r + 1], stk[r + 2], stk[r + 3], stk[r + 4], stk[r + 5], stk[r + 6], stk[r + 7]); }
         BT_PUT("[dm]   %#x backtrace:", t->handle); int nf = 0, jumps = 0;
         for (int k = 0; k < 64 && fp && nf < 20; k++) {
             module_t *m = module_of((void *)lr);
             if (m) { BT_PUT(" %s+%#llx", m->name, lr - (uint64_t)m->base); nf++; }
-            uint64_t fr[2]; vm_size_t g2 = 0;
-            if (vm_read_overwrite(mach_task_self(), fp, 16, (vm_address_t)fr, &g2) || g2 != 16 || !dm_fp_step_ok(fp, fr[0], &jumps)) break;
+            uint64_t fr[2];
+            if (!dm_mem_read(fr, fp, 16) || !dm_fp_step_ok(fp, fr[0], &jumps)) break;
             fp = fr[0]; lr = fr[1];
         }
         BT_PUT("\n");
         BT_FLUSH();
     }
-    thread_resume(t->mport);
+    dm_hthread_resume(t->hth);
     fputs(o, stderr);
 #undef BT_PUT
 #undef BT_FLUSH
@@ -655,16 +650,14 @@ void svc_thread_dump(void) {
         // Thread name: SDK ThreadType+0x1a0 is the name pointer (ThreadManager::SetInitialThreadNameUnsafe 0x34a2a4); x2 of CreateThread = ThreadType*
         char nb[32]; const char *nm = thr_name(t, nb, sizeof nb);
         double cpu = -1;
-        if (t->mport && !t->exited) { thread_basic_info_data_t bi; mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
-            if (thread_info(t->mport, THREAD_BASIC_INFO, (thread_info_t)&bi, &n) == KERN_SUCCESS)
-                cpu = bi.user_time.seconds + bi.user_time.microseconds / 1e6 + bi.system_time.seconds + bi.system_time.microseconds / 1e6; }
-        char own[96] = ""; if (t->wkind == 1 && t->waddr) { uint32_t w = 0; vm_size_t g2 = 0;   // 0x40000000 | Lock wait: lock word = owner handle | 0x40000000
-            if (!vm_read_overwrite(mach_task_self(), t->waddr, 4, (vm_address_t)&w, &g2)) snprintf(own, sizeof own, " owner %#x", w & ~WAITERS_BIT); }
-        if (t->wkind == 2 && t->waddr) { uint32_t w = 0, k = 0; vm_size_t g2 = 0;              // Condition wait: current values of the associated lock word and the condition key (the deadlock dump lacked this item)
-            vm_read_overwrite(mach_task_self(), t->waddr, 4, (vm_address_t)&w, &g2); vm_read_overwrite(mach_task_self(), t->wkey, 4, (vm_address_t)&k, &g2);
+        if (t->hth && !t->exited) { int64_t us = dm_hthread_cpu_us(t->hth); if (us >= 0) cpu = us / 1e6; }
+        char own[96] = ""; if (t->wkind == 1 && t->waddr) { uint32_t w = 0;   // 0x40000000 | Lock wait: lock word = owner handle | 0x40000000
+            if (dm_mem_read(&w, t->waddr, 4)) snprintf(own, sizeof own, " owner %#x", w & ~WAITERS_BIT); }
+        if (t->wkind == 2 && t->waddr) { uint32_t w = 0, k = 0;              // Condition wait: current values of the associated lock word and the condition key (the deadlock dump lacked this item)
+            dm_mem_read(&w, t->waddr, 4); dm_mem_read(&k, t->wkey, 4);
             snprintf(own, sizeof own, " lock word %#x condition key %#llx=%#x", w, t->wkey, k); }
-        uint8_t raw[64]; vm_size_t g3 = 0;                                                   // Raw 64 bytes of the object being waited on (the structure holding the read-write lock / condition variable): to see the counts and the owner
-        int have_raw = (t->wkind == 1 || t->wkind == 2 || t->wkind == 3) && t->waddr && !vm_read_overwrite(mach_task_self(), t->waddr & ~0xfull, 64, (vm_address_t)raw, &g3) && g3 == 64;
+        uint8_t raw[64];                                                                     // Raw 64 bytes of the object being waited on (the structure holding the read-write lock / condition variable): to see the counts and the owner
+        int have_raw = (t->wkind == 1 || t->wkind == 2 || t->wkind == 3) && t->waddr && dm_mem_read(raw, t->waddr & ~0xfull, 64);
         char life[96]; uint64_t nowns = now_ns();
         if (t->exited) snprintf(life, sizeof life, " exited %.1f s ago", (nowns - t->exit_ns) / 1e9);
         else if (!t->born_ns) snprintf(life, sizeof life, " since process start");
@@ -691,32 +684,32 @@ void svc_thread_dump(void) {
         thr_bt(t);
     }
     kt_dump(64);
-    // Threads created by the host itself (prefetch, Granny background, graphics present, audio, etc.): not in the guest thread table, enumerated as mach threads, the first 12 frames symbolized with dladdr
-    thread_act_array_t ths; mach_msg_type_number_t nth = 0;
-    if (task_threads(mach_task_self(), &ths, &nth) == KERN_SUCCESS) {
-        for (mach_msg_type_number_t i = 0; i < nth; i++) {
-            int guest = 0; for (thr_t *t = g_all; t; t = t->all) if (t->mport == ths[i]) { guest = 1; break; }
-            if (!guest && ths[i] != mach_thread_self() && thread_suspend(ths[i]) == KERN_SUCCESS) {
-                arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
-                if (thread_get_state(ths[i], ARM_THREAD_STATE64, (thread_state_t)&st, &n) == KERN_SUCCESS) {
-                    char line[1200]; int p = snprintf(line, sizeof line, "[dm] host thread %#x:", ths[i]);
-                    uint64_t fp = __darwin_arm_thread_state64_get_fp(st), pc = __darwin_arm_thread_state64_get_pc(st);
+    // Threads created by the host itself (prefetch, Granny background, graphics present, audio, etc.): not in the guest thread table, enumerated by the
+    // platform (plat.h: every Mach thread; on Linux those that took a handle), the first 12 frames symbolized with dladdr
+    static dm_hthread_t ths[512]; int nth = dm_hthreads_all(ths, 512);
+    {
+        for (int i = 0; i < nth; i++) {
+            int guest = 0; for (thr_t *t = g_all; t; t = t->all) if (t->hth == ths[i]) { guest = 1; break; }
+            if (!guest && ths[i] != dm_hthread_self() && !dm_hthread_suspend(ths[i])) {
+                dm_regs st;
+                if (!dm_hthread_regs(ths[i], &st, 0)) {
+                    char line[1200]; int p = snprintf(line, sizeof line, "[dm] host thread %#lx:", (unsigned long)ths[i]);
+                    uint64_t fp = st.fp, pc = st.pc;
                     for (int k = 0; k < 12 && p < (int)sizeof line - 80; k++) {
                         Dl_info di; module_t *m = module_of((void *)pc);
                         if (m) p += snprintf(line + p, sizeof line - p, " %s+%#llx", m->name, pc - (uint64_t)m->base);
                         else if (dladdr((void *)pc, &di) && di.dli_sname) p += snprintf(line + p, sizeof line - p, " %s+%#lx", di.dli_sname, (unsigned long)(pc - (uint64_t)di.dli_saddr));
                         else p += snprintf(line + p, sizeof line - p, " %#llx", pc);
-                        uint64_t fr[2]; vm_size_t g2 = 0;
-                        if (!fp || vm_read_overwrite(mach_task_self(), fp, 16, (vm_address_t)fr, &g2) || g2 != 16 || fr[0] <= fp) break;
+                        uint64_t fr[2];
+                        if (!fp || !dm_mem_read(fr, fp, 16) || fr[0] <= fp) break;
                         fp = fr[0]; pc = fr[1];
                     }
                     fprintf(stderr, "%s\n", line);
                 }
-                thread_resume(ths[i]);
+                dm_hthread_resume(ths[i]);
             }
-            mach_port_deallocate(mach_task_self(), ths[i]);
         }
-        vm_deallocate(mach_task_self(), (vm_address_t)ths, nth * sizeof *ths);
+        dm_hthreads_release(ths, nth);
     }
 }
 
@@ -758,10 +751,9 @@ void dm_thread_cpu(char *out, size_t n, double secs) {
     thr_t *top[3] = {0}; double d[3] = {0}, band[3] = {0};
     pthread_mutex_lock(&G);
     for (thr_t *t = g_all; t; t = t->all) {
-        if (!t->mport || t->exited) continue;
-        thread_basic_info_data_t bi; mach_msg_type_number_t c = THREAD_BASIC_INFO_COUNT;
-        if (thread_info(t->mport, THREAD_BASIC_INFO, (thread_info_t)&bi, &c) != KERN_SUCCESS) continue;
-        uint64_t us = (uint64_t)(bi.user_time.seconds + bi.system_time.seconds) * 1000000u + (uint64_t)(bi.user_time.microseconds + bi.system_time.microseconds);
+        if (!t->hth || t->exited) continue;
+        int64_t cus = dm_hthread_cpu_us(t->hth); if (cus < 0) continue;
+        uint64_t us = (uint64_t)cus;
         double ms = t->cpu_seen_us && us > t->cpu_seen_us && secs > 0 ? (double)(us - t->cpu_seen_us) / 1e3 / secs : 0; t->cpu_seen_us = us;   // ms per second
         band[t->prio <= 44 ? 0 : t->prio < 60 ? 1 : 2] += ms;
         for (int i = 0; i < 3; i++) if (ms > d[i]) { for (int j = 2; j > i; j--) { top[j] = top[j - 1]; d[j] = d[j - 1]; } top[i] = t; d[i] = ms; break; }

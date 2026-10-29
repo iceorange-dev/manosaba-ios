@@ -78,24 +78,20 @@ NVN(nvnVertexStreamStateGetDivisor, int, const NVNvertexStreamState *s) { return
 
 static _Atomic uint64_t g_sub_wall_ns, g_sub_cpu_ns, g_sub_instr;   // Wall clock / this thread's CPU time / this thread's retired instruction count for submit (excluding present) (taken away per frame)
 static _Atomic uint64_t g_cum_sub_instr, g_cum_sub_cpu_ns;   // Cumulative versions of the above (the "translation" summary row every 300 frames takes the difference; on a real device read through the log port: instructions per draw / submit CPU per frame)
-extern int thread_selfcounts(int type, void *buf, size_t nbytes);   // This thread's cumulative {instructions, cycles} (libSystem private interface, present on both Mac and iOS)
-static uint64_t thr_instr(void) { uint64_t c[2] = {0, 0}; thread_selfcounts(1, c, sizeof c); return c[0]; }
+// This thread's cumulative {instructions, cycles} (plat.h; on Apple libSystem's private thread_selfcounts, present on both Mac and iOS)
+static uint64_t thr_instr(void) { uint64_t i, c; dm_self_counts(&i, &c); return i; }
 // Supplementary readings for the submit path (on a real device Metal 4 instruction count is -18% while submit CPU time is +49%; need to tell apart kernel mode, execution efficiency, or frequency throttling):
 // this thread's cycle count (the second item of the same interface), kernel-mode CPU time (THREAD_BASIC_INFO), wall clock
-static void thr_counts(uint64_t *instr, uint64_t *cyc) { uint64_t c[2] = {0, 0}; thread_selfcounts(1, c, sizeof c); *instr = c[0]; *cyc = c[1]; }
+static void thr_counts(uint64_t *instr, uint64_t *cyc) { dm_self_counts(instr, cyc); }
 // The same per CPU kind (plan item 225): THSC_TIME_CPI_PER_PERF_LEVEL = 4 fills one {instructions, cycles, user time, system time} (mach units) per
 // perf level, hw.nperflevels of them, 0 the fastest (XNU bsd/sys/resource_private.h, struct thsc_time_cpi). Whether the translation thread, the
 // frame's critical path on the iPhone, runs on the performance cores, and at what clock there
-typedef struct { uint64_t instr, cyc, user, sys; } thr_lvl;
+typedef dm_level_counts thr_lvl;   // (plat.h)
 enum { THR_LVL_MAX = 4 };
-static int thr_nlvl(void) { static int n = -1; if (n < 0) { int v = 0; size_t sz = sizeof v; if (sysctlbyname("hw.nperflevels", &v, &sz, NULL, 0) || v < 1) v = 1; n = v > THR_LVL_MAX ? THR_LVL_MAX : v; } return n; }
-static int thr_levels(thr_lvl *o) { memset(o, 0, sizeof *o * THR_LVL_MAX); return thread_selfcounts(4, o, sizeof *o * (size_t)thr_nlvl()) == 0; }
+static int thr_nlvl(void) { static int n = -1; if (n < 0) { int v = dm_perf_levels(); n = v > THR_LVL_MAX ? THR_LVL_MAX : v; } return n; }
+static int thr_levels(thr_lvl *o) { memset(o, 0, sizeof *o * THR_LVL_MAX); return dm_self_level_counts(o, thr_nlvl()); }
 static _Atomic uint64_t g_cum_lvl_cyc[THR_LVL_MAX], g_cum_lvl_mach[THR_LVL_MAX];   // the submit path's cycles and CPU time (mach units) per perf level
-static uint64_t thr_sys_ns(void) {
-    thread_basic_info_data_t bi; mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT; mach_port_t me = mach_thread_self(); uint64_t r = 0;
-    if (thread_info(me, THREAD_BASIC_INFO, (thread_info_t)&bi, &n) == KERN_SUCCESS) r = (uint64_t)bi.system_time.seconds * 1000000000ull + (uint64_t)bi.system_time.microseconds * 1000ull;
-    mach_port_deallocate(mach_task_self(), me); return r;
-}
+static uint64_t thr_sys_ns(void) { return dm_self_sys_ns(); }   // (plat.h)
 static _Atomic uint64_t g_cum_sub_cyc, g_cum_sub_sys_ns, g_cum_sub_wall_ns;
 static int frame_rec(void);
 static _Atomic uint64_t g_nvn_ns;   // Host time spent in submit / present this frame (replay encoding + present), used by the timing instrumentation

@@ -23,14 +23,10 @@ static void slow_emit(uint64_t f) {
 // the declaration is not documented. DM_RT_COMP=<ms> fixes the declaration; default auto = every 120 frames 1.25 x the p90 of this thread's per-frame CPU
 // time, re-declared when it differs from the declared value by > 15% (capped at 0.9 × period), kept across period changes.
 static void set_time_constraint_comp(uint64_t period_ns, uint64_t comp_ns) {
-    static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
     if (comp_ns < 1000000ull) comp_ns = 1000000ull; if (comp_ns > period_ns * 9 / 10) comp_ns = period_ns * 9 / 10;
-    thread_time_constraint_policy_data_t p = {
-        .period = (uint32_t)(period_ns * tb.denom / tb.numer), .computation = (uint32_t)(comp_ns * tb.denom / tb.numer),
-        .constraint = (uint32_t)(period_ns * tb.denom / tb.numer), .preemptible = 1};
-    kern_return_t kr = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&p, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-    if (kr == KERN_SUCCESS) { g_rt_comp_ms = comp_ns / 1e6; g_rt_period_ms = period_ns / 1e6; }
-    LOG("[nvn] present thread time-constraint policy (period %.3f ms, computation %.3f ms) %s", period_ns / 1e6, comp_ns / 1e6, kr == KERN_SUCCESS ? "set" : "failed to set");
+    int ok = dm_self_deadline(period_ns, comp_ns);   // (plat.h)
+    if (ok) { g_rt_comp_ms = comp_ns / 1e6; g_rt_period_ms = period_ns / 1e6; }
+    LOG("[nvn] present thread time-constraint policy (period %.3f ms, computation %.3f ms) %s", period_ns / 1e6, comp_ns / 1e6, ok ? "set" : "failed to set");
 }
 static int rt_comp_fixed_ms(void) { static int v = -2; if (v == -2) { const char *e = getenv("DM_RT_COMP"); v = e && *e && strcmp(e, "auto") ? atoi(e) : -1; } return v; }   // −1 = auto
 static void set_time_constraint(uint64_t period_ns) { int f = rt_comp_fixed_ms(); uint64_t fx = f > 0 ? (uint64_t)f * 1000000ull : 0;

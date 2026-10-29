@@ -47,15 +47,13 @@ void mtl_fbx_stats(uint64_t out[3]); void mtl_fbx_split_stats(uint64_t out[2]); 
 void mtl_pp_stats(uint64_t out[12]);
 __attribute__((weak)) void dm_gate_counts(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }   // host/hle/hle.c; the graphics unit tests link without it
 static void power_line(uint64_t frame) {
-    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12]; static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
+    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12];
     static int counts = -1; if (counts < 0) counts = getenv("DM_NVN_COUNTS") && strcmp(getenv("DM_NVN_COUNTS"), "0");
-    task_power_info_v2_data_t pw; mach_msg_type_number_t n = TASK_POWER_INFO_V2_COUNT;
-    if (task_info(mach_task_self(), TASK_POWER_INFO_V2, (task_info_t)&pw, &n) != KERN_SUCCESS) return;
-    uint64_t t = now_ns(), cpu = (pw.cpu_energy.total_user + pw.cpu_energy.total_system) * tb.numer / tb.denom, p = pw.task_ptime * tb.numer / tb.denom;
-    uint64_t e = pw.task_energy, iw = pw.cpu_energy.task_interrupt_wakeups;
+    dm_power pw; int have_pw = dm_power_now(&pw);   // (plat.h: none on Android yet, the other lines still come)
+    uint64_t t = now_ns(), cpu = pw.cpu_ns, p = pw.pcpu_ns, e = pw.energy_nj, iw = pw.wakeups;
     char yt[192]; dm_yield_top(yt, sizeof yt);
     if (pt && t > pt) { double s = (t - pt) / 1e9, nf = frame > pf ? (double)(frame - pf) : 1;
-        LOG("[nvn] power up to frame %llu: CPU energy %.2f W, %.1f mJ a frame (%.1f frames/s); CPU %.0f%% (100 = one core), %.0f%% of it on performance cores; %.0f wakeups/s; most yields: %s",
+        if (have_pw) LOG("[nvn] power up to frame %llu: CPU energy %.2f W, %.1f mJ a frame (%.1f frames/s); CPU %.0f%% (100 = one core), %.0f%% of it on performance cores; %.0f wakeups/s; most yields: %s",
             frame, (e - pe) / 1e9 / s, (e - pe) / 1e6 / nf, nf / s, (cpu - pcpu) / 1e7 / s, cpu > pcpu ? 100.0 * (double)(p - pp) / (double)(cpu - pcpu) : 0, (iw - piw) / s, yt);
         uint64_t ld, st, fu, udc = mtl_udc_saved_bytes(), con, cob; mtl_bw(&ld, &st, &fu); mtl_clear_only_stats(&con, &cob); static uint64_t pcon, pcob;
         LOG("[nvn] render targets up to frame %llu: %.1f MB loaded / %.1f MB stored a frame, %.1f passes a frame load and store everything, %.1f MB a frame of stores saved (DM_NVN_UNWRITTEN_DC); "
@@ -120,7 +118,7 @@ static void tsummary(uint64_t frame) {
         LOG("[nvn] frame interval up to frame %llu: over their hold %u / %u frames, p99 %.2f ms", frame, over, n, v[(n * 99) / 100 < n ? (n * 99) / 100 : n - 1]); } }
     { unsigned n = g_presn < TWIN ? g_presn : TWIN, k = 0, drop = 0, discard = 0; double v[TWIN];   // on-screen present: dropped = on screen over 1.5 × its hold, or discarded (nvn_dropped)
       for (unsigned i = 0; i < n; i++) { double x = g_pres_iv[i]; if (x < 0) { drop++; discard++; } else if (x > 0) { v[k++] = x; drop += nvn_dropped(x, g_pres_exp[i]); } }
-      task_vm_info_data_t vi; mach_msg_type_number_t vc = TASK_VM_INFO_COUNT; double fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc) == KERN_SUCCESS ? vi.phys_footprint / 1048576.0 : -1;
+      uint64_t fpb = dm_footprint(); double fp = fpb ? fpb / 1048576.0 : -1;
       double br = dm_brightness_now();   // footprint / brightness are carried on the on-screen present row: does not depend on the tick-entry observation gate (camp runs have it too)
       if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] on-screen present up to frame %llu: %u frames, dropped %u (discarded %u), p99 %.2f ms; footprint %.0f MiB; brightness %.2f; thermal %d", frame, k + discard, drop, discard, v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }
       g_presn = 0; }
@@ -129,7 +127,7 @@ static void tsummary(uint64_t frame) {
           (double)(ci - pi) / (double)(dr_ - pd), (ci - pi) / 1e6 / (double)(frame - pf), (cc - pc) / 1e6 / (double)(frame - pf), (double)(dr_ - pd) / (double)(frame - pf));
       { static uint64_t py, pk, pw; uint64_t cy = atomic_load(&g_cum_sub_cyc), ck = atomic_load(&g_cum_sub_sys_ns), cw = atomic_load(&g_cum_sub_wall_ns);
         if (pf && frame > pf && ci > pi && cy > py) { double nf = (double)(frame - pf), cyc = (double)(cy - py), cpu = (double)(cc - pc);
-          qos_class_t qc = QOS_CLASS_UNSPECIFIED; int rp = 0; pthread_get_qos_class_np(pthread_self(), &qc, &rp);
+          uint32_t qc = dm_self_qos();
           uint64_t aw = 0, ag = 0; int an = 0; void mtl_alloc_stats(uint64_t *, uint64_t *, int *); mtl_alloc_stats(&aw, &ag, &an);
           static uint64_t pyn, pyns; uint64_t yn = 0, yns = 0; dm_main_yield_stats(&yn, &yns);
           char lvl[360] = ""; { static uint64_t plc[THR_LVL_MAX], plm[THR_LVL_MAX]; static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
@@ -137,21 +135,20 @@ static void tsummary(uint64_t frame) {
             for (int k = 0; k < thr_nlvl(); k++) { uint64_t c_ = atomic_load(&g_cum_lvl_cyc[k]), m_ = atomic_load(&g_cum_lvl_mach[k]);
                 ms[k] = (double)(m_ - plm[k]) * tb.numer / tb.denom / 1e6; gc[k] = (double)(c_ - plc[k]); tot += ms[k]; plc[k] = c_; plm[k] = m_; }
             for (int k = 0; k < thr_nlvl() && tot > 0 && o < sizeof lvl; k++) {
-                char nm[32] = "", key[32]; size_t nz = sizeof nm; snprintf(key, sizeof key, "hw.perflevel%d.name", k); if (sysctlbyname(key, nm, &nz, NULL, 0)) snprintf(nm, sizeof nm, "level %d", k);
+                char nm[32] = ""; if (!dm_perf_level_name(k, nm, sizeof nm)) snprintf(nm, sizeof nm, "level %d", k);
                 o += (size_t)snprintf(lvl + o, sizeof lvl - o, "%s%s %.0f%% at %.2f GHz", k ? ", " : "; the translating thread on ", nm, 100 * ms[k] / tot, ms[k] > 0 ? gc[k] / (ms[k] * 1e6) : 0); }
             // The same for this thread, the one presenting (Tears of the Kingdom's main thread, real-time but of no QoS class: plan item 229)
             static thr_lvl pme[THR_LVL_MAX]; thr_lvl me[THR_LVL_MAX]; double mt = 0, mm[THR_LVL_MAX];
             if (thr_levels(me)) { for (int k = 0; k < thr_nlvl(); k++) { mm[k] = (double)((me[k].user + me[k].sys) - (pme[k].user + pme[k].sys)) * tb.numer / tb.denom / 1e6; mt += mm[k]; }
                 for (int k = 0; k < thr_nlvl() && mt > 0 && o < sizeof lvl; k++) {
-                    char nm[32] = "", key[32]; size_t nz = sizeof nm; snprintf(key, sizeof key, "hw.perflevel%d.name", k); if (sysctlbyname(key, nm, &nz, NULL, 0)) snprintf(nm, sizeof nm, "level %d", k);
+                    char nm[32] = ""; if (!dm_perf_level_name(k, nm, sizeof nm)) snprintf(nm, sizeof nm, "level %d", k);
                     o += (size_t)snprintf(lvl + o, sizeof lvl - o, "%s%s %.0f%% at %.2f GHz", k ? ", " : "; this thread on ", nm, 100 * mm[k] / mt, mm[k] > 0 ? (double)(me[k].cyc - pme[k].cyc) / (mm[k] * 1e6) : 0); }
                 if (mt > 0 && o < sizeof lvl) o += (size_t)snprintf(lvl + o, sizeof lvl - o, " (%.2f ms a frame)", mt / nf);
                 memcpy(pme, me, sizeof pme); } }
           LOG("[nvn] translation detail up to frame %llu: per-frame submit cycles %.2f M (%.2f cycles per instruction), CPU %.3f ms of which kernel %.3f ms, wall %.3f ms; avg clock %.2f GHz (cycles / CPU time); this thread QoS %#x; allocator pools %d, cumulative GPU waits %llu; real-time declared computation %.2f ms; main thread yields per frame %.0f / %.3f ms%s", frame,
               cyc / 1e6 / nf, cyc / (double)(ci - pi), cpu / 1e6 / nf, (double)(ck - pk) / 1e6 / nf, (double)(cw - pw) / 1e6 / nf, cpu > 0 ? cyc / cpu : 0, (unsigned)qc, an, (unsigned long long)aw, g_rt_comp_ms, (double)(yn - pyn) / nf, (double)(yns - pyns) / 1e6 / nf, lvl); pyn = yn; pyns = yns; }
-        if (frame % 300 == 0) { unsigned wn = 0; uint32_t wq = dm_guest_work_qos(&wn); thread_extended_info_data_t xi; mach_msg_type_number_t xc = THREAD_EXTENDED_INFO_COUNT; int okx = thread_info(pthread_mach_thread_np(pthread_self()), THREAD_EXTENDED_INFO, (thread_info_t)&xi, &xc) == KERN_SUCCESS;
-            thread_time_constraint_policy_data_t tp; mach_msg_type_number_t tc = THREAD_TIME_CONSTRAINT_POLICY_COUNT; boolean_t def = 0; int rt_live = thread_policy_get(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&tp, &tc, &def) == KERN_SUCCESS && !def;   // def = 1: the real-time policy is not in effect (never set / revoked)
-            LOG("[nvn] thread policy: main thread real-time computation %.2f ms / period %.2f ms, real-time policy %s, current priority %d (base %d, sched policy %d); worker threads %u, QoS %#x; present QoS %#x", g_rt_comp_ms, g_rt_period_ms, rt_live ? "active" : "inactive", okx ? xi.pth_curpri : -1, okx ? xi.pth_priority : -1, okx ? xi.pth_policy : -1, wn, wq, mtl_present_qos()); }
+        if (frame % 300 == 0) { unsigned wn = 0; uint32_t wq = dm_guest_work_qos(&wn); dm_sched sc; dm_self_sched(&sc);   // (plat.h)
+            LOG("[nvn] thread policy: main thread real-time computation %.2f ms / period %.2f ms, real-time policy %s, current priority %d (base %d, sched policy %d); worker threads %u, QoS %#x; present QoS %#x", g_rt_comp_ms, g_rt_period_ms, sc.rt_live ? "active" : "inactive", sc.cur_pri, sc.base_pri, sc.policy, wn, wq, mtl_present_qos()); }
         py = cy; pk = ck; pw = cw; }
       pi = ci; pc = cc; pd = dr_; pf = frame; }
     uint64_t up, re, fa, pr; mtl_pkg_stats(&up, &re); nvn_dirty_stats(&fa, &pr);

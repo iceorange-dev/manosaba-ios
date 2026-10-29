@@ -7,14 +7,14 @@
 //   block  {prev, next} at its start (the use list's node), +0x10 attribute, +0x18 size, the data at +0x20
 // A child heap lives in a block of its parent, its object at the block's data. Other heap classes have no use list at +0xc8 (in 1.4.3 two
 // vtables have one, three do not; 6,000 small heaps are of one without), and the game has no C++ type names: heaps are told apart by vtable, and a
-// use list counts as broken only in a heap whose class has whole ones elsewhere. Memory is read through vm_read (an unmapped address is an
+// use list counts as broken only in a heap whose class has whole ones elsewhere. Memory is read through dm_mem_read (an unmapped address is an
 // error, not a second fault), so these run at a crash too.
 //   DM_CRASH_HEAP=<reg>[,<reg>...]   on a crash, the heaps holding each register's address (x0-x30, sp) and the block it is in (crash.c)
 //   DM_LIST_WATCH=[heap+]<addr>[,...] watch intrusive lists (the address of a sentinel {prev, next}); the first node whose next is null (seen twice
 //                                    50 µs apart) is logged in red with every guest thread's state, once
 // The command channel (cmdchan.c) has "heaps" (every heap, by class) and "heap <addr>" (as DM_CRASH_HEAP). Checked by host/tests/t_sead.c.
 #include "dm.h"
-#include <mach/mach.h>
+#include "plat.h"
 #include <pthread.h>
 #include <unistd.h>
 void svc_guest_layout(uint8_t **alias, size_t *alias_n, uint8_t **stack, size_t *stack_n, uint8_t **heap, size_t *heap_n);   // hle_svc.c
@@ -25,10 +25,7 @@ enum { H_NAME = 0x20, H_START = 0x28, H_SIZE = 0x30, H_NFREE = 0xc0, H_USE = 0xc
 #define SEAD_MAXBLK 200000
 #define SEAD_MAXH 32768
 
-static int rd(uint64_t a, void *out, size_t n) {
-    vm_size_t got = 0;
-    return a && vm_read_overwrite(mach_task_self(), (vm_address_t)a, n, (vm_address_t)out, &got) == KERN_SUCCESS && got == n;
-}
+static int rd(uint64_t a, void *out, size_t n) { return a && dm_mem_read(out, a, n); }
 static void rd_name(uint64_t p, char *out, size_t n) {   // a printable C string, or "?"
     char t[64]; size_t k = 0;
     if (p && rd(p, t, sizeof t)) while (k < sizeof t - 1 && k < n - 1 && t[k] >= 0x20 && t[k] < 0x7f) { out[k] = t[k]; k++; }

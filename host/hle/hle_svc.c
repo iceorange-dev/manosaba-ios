@@ -6,7 +6,7 @@
 #include <stdatomic.h>
 #include <sys/mman.h>
 #include <TargetConditionals.h>
-#include <mach/mach.h>
+#include "plat.h"
 #include "guest_as.h"
 #include <errno.h>
 #include <unistd.h>
@@ -35,11 +35,11 @@ static size_t g_alias_mapped, g_alias_hpages;   // mapped 4 KB pages; host pages
 static int alias_bit(size_t i) { return g_alias_bits[i >> 3] >> (i & 7) & 1; }
 // Alias region readout (any thread, no lock: two word reads): MB the game has mapped, and MB of host pages that mapping keeps in use; the difference
 // is what 4 KB mappings scattered over 16 KB host pages cost on top
-void dm_alias_stat(size_t *mapped_mb, size_t *host_mb) { *mapped_mb = g_alias_mapped >> 8; *host_mb = g_alias_hpages * vm_page_size >> 20; }
+void dm_alias_stat(size_t *mapped_mb, size_t *host_mb) { *mapped_mb = g_alias_mapped >> 8; *host_mb = g_alias_hpages * dm_page_size() >> 20; }
 // Returns 1 (and maps nothing) when mapping would take more than limit_pages 4 KB pages in all: the console's kernel reserves the pages not yet mapped
 // from the process's physical memory limit and fails with LimitReached (mesosphere KPageTableBase::MapPhysicalMemory)
 static int alias_phys(uint8_t *a, size_t size, int map, size_t limit_pages) {
-    size_t hp = vm_page_size, sub = hp / 0x1000;
+    size_t hp = dm_page_size(), sub = hp / 0x1000;
     pthread_mutex_lock(&g_alias_lock);
     if (!g_alias_bits && !(g_alias_bits = calloc(g_alias_cap / 0x1000 / 8 + 1, 1))) die("cannot allocate the alias region bitmap");
     size_t first = (size_t)(a - g_alias) / 0x1000, n = size / 0x1000;
@@ -562,8 +562,8 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         // Give the pages back: on the console the stack region only aliases the heap's memory, here it holds a copy, which used to stay resident
         // after the thread ended (Unity's thread pool comes and goes at every scene load: about 6 MB more per load). A host page no other mapping
         // touches is replaced with a fresh inaccessible one, as an unmapped page is on the console; a page shared with a neighbour stays as it is
-        for (uint64_t h = dst & ~(uint64_t)(vm_page_size - 1); h < dst + size; h += vm_page_size)
-            if (!map_find(h, vm_page_size) && mmap((void *)h, vm_page_size, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED) die("UnmapMemory: replacing page %#llx failed, errno=%d", h, errno);
+        for (uint64_t h = dst & ~(uint64_t)(dm_page_size() - 1); h < dst + size; h += dm_page_size())
+            if (!map_find(h, dm_page_size()) && mmap((void *)h, dm_page_size(), PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED) die("UnmapMemory: replacing page %#llx failed, errno=%d", h, errno);
         pthread_mutex_unlock(&g_mapmem_mu);
         regs[0] = 0; return 0;
     }
@@ -591,8 +591,8 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
             // later nn::os::GetCurrentStackInfo asserts that sp is still inside that range and aborts if not. Previously every address outside the guest address space was reported as "the 4 KiB page containing it",
             // so the main thread stack was recorded as one page. Whether the sp at init and a later sp share a page depends on the absolute position of the host stack top, which moves with the total length of environment variables / launch arguments (a different environment occasionally aborts at startup).
             // This Diablo build does not call GetCurrentStackInfo (main / subsdk0 do not import it and the SDK has no internal call site; the host reaches the main menu with 12 different environment padding lengths), so it was never hit; reporting "one page" is wrong in itself, so fix it anyway.
-            uint64_t top = (uint64_t)pthread_get_stackaddr_np(pthread_self()), ssz = pthread_get_stacksize_np(pthread_self());
-            if (addr < top && addr >= top - ssz) { base = top - ssz; size = ssz; state = 0xB/*Stack*/; perm = 3; }
+            uint64_t slo, top; dm_thread_stack(&slo, &top);
+            if (addr < top && addr >= slo) { base = slo; size = top - slo; state = 0xB/*Stack*/; perm = 3; }
             else { base=addr & ~0xFFFull; size=0x1000; state=3/*Code*/; perm=5; } }
         pthread_mutex_unlock(&g_map_lock);
         if (mi) { uint64_t *m=(uint64_t*)mi; m[0]=base; m[1]=size; ((uint32_t*)mi)[4]=(uint32_t)state; ((uint32_t*)mi)[5]=0; ((uint32_t*)mi)[6]=(uint32_t)perm; ((uint32_t*)mi)[7]=0; ((uint32_t*)mi)[8]=0; }

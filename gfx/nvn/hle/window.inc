@@ -44,7 +44,8 @@ static double g_rt_period_ms;
 static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o), rt_cap_period(const win_t *o);
 __attribute__((weak)) void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = 0; *ns = 0; }   // The host's hle_thread.c provides the ground truth; 0 in graphics unit tests
-__attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return QOS_CLASS_UNSPECIFIED; }
+__attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return 0; }   // (QOS_CLASS_UNSPECIFIED)
+__attribute__((weak)) int dm_guest_heap_stat(unsigned long long *t, unsigned long long *f, unsigned long long *m) { (void)t; (void)f; (void)m; return 0; }   // a game's main heap readout (D2R's hook had it; none now)
 extern uint32_t mtl_present_qos(void);
 static uint64_t g_frame;
 // The GPU work of the frame last drawn into a swapchain image, at its acquire (plan item 142, after blade2-mobile 43e760e hle_nvn.c, MIT): on the
@@ -166,8 +167,8 @@ static void dump_frame(void) {
     // drags the whole machine into a kernel panic, which happened twice with other programs on the same machine), or set for tests with DM_MEM_CAP_GB=<integer>; the player's iOS app has no cap (exiting before the system kills it is pointless and only adds another kind of crash)
     // Read every 60 frames (plan item 178, lordran-native 24740d4, MIT: a short spike, a movie's buffers, is caught); the line is still printed only on
     // a change of 64 MB or more, or every 3000 frames (mtl_mem_stat)
-    if (g_frame % 60 == 0) { task_vm_info_data_t vi; mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
-        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) { unsigned long long mb = (unsigned long long)(vi.phys_footprint >> 20); unsigned long long ht = 0, hf = 0, hm = 0; int dm_guest_heap_stat(unsigned long long *, unsigned long long *, unsigned long long *); int hok = dm_guest_heap_stat(&ht, &hf, &hm);
+    if (g_frame % 60 == 0) { uint64_t fp = dm_footprint();   // (plat.h)
+        if (fp) { unsigned long long mb = (unsigned long long)(fp >> 20); unsigned long long ht = 0, hf = 0, hm = 0; int hok = dm_guest_heap_stat(&ht, &hf, &hm);
             void mtl_mem_stat(unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long); mtl_mem_stat(g_frame, mb, hok, ht, hf, hm);
             static long cap = -1; if (cap < 0) { const char *e = getenv("DM_MEM_CAP_GB"); cap = e ? atol(e) : DM_MEM_CAP_DEFAULT_GB; }
             if (cap > 0 && mb > (unsigned long long)cap * 1024) { LOG("[red] memory watchdog: resident %llu MB exceeds the %ld GB cap (frame %llu), exiting", mb, cap, (unsigned long long)g_frame); _exit(86); } } }

@@ -22,8 +22,8 @@
 #include "nvn_dirty.h"
 #include "nvn_perfline.h"
 #include "nvn_trace.h"
+#include "../../host/plat.h"
 #include <mach/mach_time.h>
-#include <mach/mach.h>
 #include <TargetConditionals.h>
 #include <unistd.h>
 #if TARGET_OS_OSX
@@ -31,14 +31,9 @@
 #else
 #define DM_MEM_CAP_DEFAULT_GB 0
 #endif
-#include <pthread/qos.h>
-#include <sys/sysctl.h>
 #include <sys/resource.h>
-#include <mach/thread_policy.h>
 #include <assert.h>
 #include <stdatomic.h>
-#include <mach-o/getsect.h>
-#include <mach-o/ldsyms.h>
 
 // The translation thread (plan item 61, with nvnQueueSubmitCommands below)
 static int xlat_on(void); static void x_drain(void); static uint64_t x_token(void);

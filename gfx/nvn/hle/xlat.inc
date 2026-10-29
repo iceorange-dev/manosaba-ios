@@ -36,11 +36,8 @@ static void xlat_rt(uint64_t period_ns) {   // the translation thread's time con
     else { uint64_t v = last ? nvn_rt_sample(&w, (double)(c - last) / 1e6, comp / 1e6, period_ns, rt_peak()) : 0; if (v) want = v; else if (set != period_ns) want = nvn_rt_comp_on_period(0, comp, period_ns); }
     last = c;
     if (set == period_ns && want == comp) return;
-    static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
-    thread_time_constraint_policy_data_t p = {.period = (uint32_t)(period_ns * tb.denom / tb.numer), .computation = (uint32_t)(want * tb.denom / tb.numer),
-                                              .constraint = (uint32_t)(period_ns * tb.denom / tb.numer), .preemptible = 1};
-    kern_return_t kr = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&p, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-    set = period_ns; comp = want; LOG("[nvn] translation thread time constraint (period %.3f ms, computation %.3f ms) %s", period_ns / 1e6, want / 1e6, kr == KERN_SUCCESS ? "set" : "not set");
+    int ok = dm_self_deadline(period_ns, want);   // (plat.h)
+    set = period_ns; comp = want; LOG("[nvn] translation thread time constraint (period %.3f ms, computation %.3f ms) %s", period_ns / 1e6, want / 1e6, ok ? "set" : "not set");
 }
 static void x_run(xjob *j, uint64_t job) {
     if (j->kind == XJ_SUBMIT) {
@@ -65,7 +62,7 @@ static void *x_thread(void *unused) {
     return NULL;
 }
 static void x_start(void) {
-    pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 8u << 20); pthread_attr_set_qos_class_np(&a, QOS_CLASS_USER_INTERACTIVE, 0);
+    pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 8u << 20); dm_attr_interactive(&a);
     pthread_t t; if (pthread_create(&t, &a, x_thread, NULL)) die("NVN translation thread");
     pthread_attr_destroy(&a); pthread_detach(t);
 }

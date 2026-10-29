@@ -8,7 +8,7 @@
 // { u64 address, u64 length, length bytes }. Addresses are host addresses (guest and host share one address space). Checked by
 // host/tests/t_memsnap.c (and the reader by tools/tests/t_memsnap.py)
 #include "dm.h"
-#include <mach/mach.h>
+#include "plat.h"
 #include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -21,7 +21,7 @@ static long g_frames[SNAPN]; static int g_nframes; static char g_prefix[900];
 static size_t dump_range(FILE *f, uint8_t *a, size_t n) {
     size_t pg = (size_t)getpagesize(), np = n / pg, written = 0;
     char *vec = np ? malloc(np) : NULL; if (!vec) return 0;
-    if (mincore(a, np * pg, vec)) { free(vec); return 0; }
+    if (mincore(a, np * pg, (void *)vec)) { free(vec); return 0; }   // (char * on Darwin, unsigned char * on Linux)
     for (size_t i = 0; i < np;) {
         if (!(vec[i] & MINCORE_INCORE)) { i++; continue; }
         size_t j = i; while (j < np && (vec[j] & MINCORE_INCORE)) j++;
@@ -35,12 +35,12 @@ static size_t dump_range(FILE *f, uint8_t *a, size_t n) {
 // Each readable VM region within [lo, hi), clipped to it (page aligned outward)
 size_t dm_memsnap_regions(FILE *f, uint8_t *lo, uint8_t *hi) {
     uintptr_t pg = (uintptr_t)getpagesize(), l = (uintptr_t)lo & ~(pg - 1), h = ((uintptr_t)hi + pg - 1) & ~(pg - 1);
-    size_t total = 0; vm_address_t at = l;
+    size_t total = 0; uint64_t at = l;
     while (at < h) {
-        vm_size_t sz = 0; vm_region_basic_info_data_64_t info; mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64; mach_port_t obj;
-        if (vm_region_64(mach_task_self(), &at, &sz, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &cnt, &obj) != KERN_SUCCESS || at >= h) break;
+        uint64_t sz = 0; int readable = 0;
+        if (!dm_mem_region(&at, &sz, &readable) || at >= h) break;
         uintptr_t a0 = at < l ? l : at, a1 = at + sz > h ? h : at + sz;
-        if (info.protection & VM_PROT_READ) total += dump_range(f, (uint8_t *)a0, a1 - a0);
+        if (readable) total += dump_range(f, (uint8_t *)a0, a1 - a0);
         at += sz;
     }
     return total;

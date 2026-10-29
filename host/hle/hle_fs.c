@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdatomic.h>
-#include <sys/clonefile.h>
+#include "plat.h"
 #include <sys/xattr.h>
 #include <sys/statvfs.h>
 
@@ -101,7 +101,7 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
         const char *why = NULL;
         if (!access(work, F_OK) && rm_tree(work)) why = "cannot remove the leftover working directory";
         else if (!access(neu, F_OK) && rm_tree(neu)) why = "cannot remove the leftover .new";
-        else if (dm_fs_test_fail("mountclone") || clonefile(dir, work, 0)) why = "cloning the working directory failed";
+        else if (dm_fs_test_fail("mountclone") || dm_clone_tree(dir, work)) why = "cloning the working directory failed";
         if (why) { txn_err = errno ? errno : EIO; g_mnt[g_nmnt].ro = 1; strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
             LOG("[red] save transaction: %s (%s, errno=%d): mounting the committed directory %s read-only; this session's saves are not written, the committed save is unchanged", why, work, txn_err, dir); }
         else {
@@ -128,9 +128,9 @@ static int guest_name(const char *parent, const char *physical, char *out, size_
     // listing or looking up; seconds for a large RomFS). (From seedds/nxnative 76ea922, MIT.)
     if (strncmp(physical, ".dm-case-", 9)) { strlcpy(out, physical, n); return 1; }
     char p[1280]; snprintf(p, sizeof p, "%s/%s", parent, physical);
-    ssize_t k = getxattr(p, FS_GUEST_NAME, out, n - 1, 0, XATTR_NOFOLLOW);
+    ssize_t k = dm_xattr_get(p, FS_GUEST_NAME, out, n - 1);
     if (k >= 0) { out[k] = 0; return 1; }
-    if (errno != ENOATTR) return 0;
+    if (errno != DM_ENOATTR) return 0;
     strlcpy(out, physical, n); return 1;
 }
 // Name index of the directories of mounts whose contents never change (mount_t.fixed: RomFS): guest name → physical name, sorted by guest name,
@@ -323,9 +323,8 @@ static int set_guest_name(const char *hp, const char *path) {
     if (k >= sizeof guest) { errno = ENAMETOOLONG; return -1; }
     memcpy(guest, start, k); guest[k] = 0;
     const char *physical = strrchr(hp, '/') + 1;
-    if (strcmp(physical, guest)) return setxattr(hp, FS_GUEST_NAME, guest, strlen(guest), 0, XATTR_NOFOLLOW);
-    if (!removexattr(hp, FS_GUEST_NAME, XATTR_NOFOLLOW) || errno == ENOATTR) return 0;
-    return -1;
+    if (strcmp(physical, guest)) return dm_xattr_set(hp, FS_GUEST_NAME, guest, strlen(guest));
+    return dm_xattr_remove(hp, FS_GUEST_NAME);
 }
 static Result err_res(const char *op, const char *path) {
     if (g_flag.fs) LOG("fs %s %s → errno %d", op, path, errno);
@@ -414,8 +413,8 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv; transactional save: the working tree
         // called die: on a full disk the process exited and the working directory was gone.)
         char re[1100]; snprintf(re, sizeof re, "%s.re", g_mnt[i].dir); int rerr = 0;
         if (!access(re, F_OK) && rm_tree(re)) rerr = errno ? errno : EIO;
-        else if (dm_fs_test_fail("reclone") || clonefile(g_mnt[i].commit, re, 0)) { rerr = errno ? errno : EIO; rm_tree(re); }
-        else if (renamex_np(re, g_mnt[i].dir, RENAME_SWAP)) { rerr = errno ? errno : EIO; rm_tree(re); }
+        else if (dm_fs_test_fail("reclone") || dm_clone_tree(g_mnt[i].commit, re)) { rerr = errno ? errno : EIO; rm_tree(re); }
+        else if (dm_rename_swap(re, g_mnt[i].dir)) { rerr = errno ? errno : EIO; rm_tree(re); }
         else rm_tree(re);                                               // the tainted working directory, swapped out
         if (rerr) { save_poison(perr); LOG("[red] save transaction: re-cloning the working directory failed, errno=%d: it stays as it is and tainted (the next commit is refused and re-cloning retried); the committed save is unchanged", rerr); }
         pthread_mutex_unlock(&g_lock);
@@ -427,11 +426,11 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv; transactional save: the working tree
     Result r = RES_OK;
     if (!access(neu, F_OK)) rm_tree(neu);
 #ifndef DM_TEST_FS_COMMIT_INPLACE
-    if (clonefile(g_mnt[i].dir, neu, 0)) { LOG("[red] save commit: clonefile %s failed, errno=%d (committed save unchanged)", neu, errno); r = RES_FAIL; }
-    else if (renamex_np(neu, g_mnt[i].commit, RENAME_SWAP)) { LOG("[red] save commit: atomic swap failed, errno=%d (committed save unchanged)", errno); rm_tree(neu); r = RES_FAIL; }
+    if (dm_clone_tree(g_mnt[i].dir, neu)) { LOG("[red] save commit: clonefile %s failed, errno=%d (committed save unchanged)", neu, errno); r = RES_FAIL; }
+    else if (dm_rename_swap(neu, g_mnt[i].commit)) { LOG("[red] save commit: atomic swap failed, errno=%d (committed save unchanged)", errno); rm_tree(neu); r = RES_FAIL; }
     else rm_tree(neu);                                                  // the old version that was swapped out
 #else   // negative control of t_fs_kill only: the committed directory removed, then the working one cloned in its place (not atomic)
-    if (rm_tree(g_mnt[i].commit) || clonefile(g_mnt[i].dir, g_mnt[i].commit, 0)) r = RES_FAIL;
+    if (rm_tree(g_mnt[i].commit) || dm_clone_tree(g_mnt[i].dir, g_mnt[i].commit)) r = RES_FAIL;
 #endif
     // Timing readouts (integer microseconds, no floating point): how long the pre-commit hook and the clone + atomic swap each took; how long in total from this transaction's first save write to the end of the commit (the game writing files + the commit; 0 = no save write in this transaction)
     static int n; if (r == RES_OK) { uint64_t tc2 = clock_gettime_nsec_np(CLOCK_MONOTONIC);

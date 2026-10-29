@@ -695,10 +695,10 @@ $(U)/t_rundiag: t_rundiag.c ../rundiag.h | $(U)
 $(U)/t_logstamp: t_logstamp.c ../logstamp.h | $(U)
 	clang -O1 -Wall -Werror $(UBSAN) -I.. -o $@ t_logstamp.c
 
-$(B)/t_altstack: t_altstack.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_altstack.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_audio: t_audio.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_audio.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
+$(B)/t_altstack: t_altstack.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_altstack.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_audio: t_audio.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_audio.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audren_pace: t_audren_pace.c ../audren_pace.h | $(B)
 	clang -O1 -Wall -I.. -o $@ t_audren_pace.c
 $(B)/t_audren_pace_out: t_audren_pace.c ../audren_pace.h | $(B)
@@ -709,14 +709,14 @@ $(B)/t_audren: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h 
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audren.c
 $(B)/t_audren_void: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_ADNOTIFY_VOID -I.. -o $@ t_audren.c
-$(B)/t_audio_extras: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
-$(B)/t_audio_extras_vol: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_VOLUME_IGNORED -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
-$(B)/t_audio_extras_kept: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_PLAYED_KEPT -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
-$(B)/t_audio_spsc: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
+$(B)/t_audio_extras: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_extras_vol: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_VOLUME_IGNORED -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_extras_kept: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_PLAYED_KEPT -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_spsc: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -g -fsanitize=thread -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 $(B)/t_cloudlist: t_cloudlist.m ../cloud/cloud.m ../cloud/cloudsync.c ../cloud.h ../game/game.c $(GEN) ../hle.h ../dm.h | $(B)
@@ -731,22 +731,22 @@ $(B)/t_cmdchan_noreopen: t_cmdchan.c ../front/cmdchan.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_CMD_NO_REOPEN -I.. -o $@ t_cmdchan.c
 $(B)/t_cmdchan_partial: t_cmdchan.c ../front/cmdchan.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_CMD_PARTIAL -I.. -o $@ t_cmdchan.c
-$(B)/t_freeze: t_freeze.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_freeze.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_freeze_none: t_freeze.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_FREEZE_NONE -I.. -o $@ t_freeze.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_threaddump: t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_threaddump_suspended: t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_BT_PRINT_SUSPENDED -I.. -o $@ t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_il2cpp_obj: t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c ../il2cpp_obj.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_il2cpp_obj_nocheck: t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c ../il2cpp_obj.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_IL2CPP_NO_CHECK -I.. -o $@ t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_crash_bt: t_crash_bt.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_crash_bt.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_crash_bt_unguarded: t_crash_bt.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_BT_UNGUARDED -I.. -o $@ t_crash_bt.c t_altstack_stub.c ../runtime/crash.c
+$(B)/t_freeze: t_freeze.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_freeze.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_freeze_none: t_freeze.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_FREEZE_NONE -I.. -o $@ t_freeze.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_threaddump: t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_threaddump_suspended: t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_BT_PRINT_SUSPENDED -I.. -o $@ t_threaddump.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_il2cpp_obj: t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c ../il2cpp_obj.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_il2cpp_obj_nocheck: t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c ../il2cpp_obj.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_IL2CPP_NO_CHECK -I.. -o $@ t_il2cpp_obj.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_crash_bt: t_crash_bt.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_crash_bt.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_crash_bt_unguarded: t_crash_bt.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_BT_UNGUARDED -I.. -o $@ t_crash_bt.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
 $(B)/t_gate_svc: t_gate_svc.c ../runtime/loader.c ../hle/hle.c ../runtime/options.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_gate_svc.c ../hle/hle.c ../runtime/options.c
 $(B)/t_gate_svc_rel: t_gate_svc.c ../runtime/loader.c ../hle/hle.c ../runtime/options.c ../dm.h ../hle.h | $(B)
@@ -763,24 +763,24 @@ $(B)/t_tzrule: t_tzrule.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_tzrule.c -framework CoreFoundation
 $(B)/t_tzrule_dev: t_tzrule.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_TZRULE_DEVICE -I.. -o $@ t_tzrule.c -framework CoreFoundation
-$(B)/t_time: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_time.c -framework CoreFoundation
-$(B)/t_time_one: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_TOPOSIX_ONE -I.. -o $@ t_time.c -framework CoreFoundation
-$(B)/t_time_ctxold: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_CTX_OLD -I.. -o $@ t_time.c -framework CoreFoundation
-$(B)/t_time_span: t_time.c ../hle/hle_time.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_SPAN_RESULT -I.. -o $@ t_time.c -framework CoreFoundation
-$(B)/t_watchdog: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_watchdog.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_watchdog_nobg: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_WATCH_NO_BG -I.. -o $@ t_watchdog.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_crash_stderr: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_crash_stderr_counted: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CRASH_COUNTED_WAIT -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c
-$(B)/t_arbiter: t_arbiter.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_arbiter.c t_condvar_stub.c ../hle/hle_thread.c
+$(B)/t_time: t_time.c ../hle/hle_time.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_time.c -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_time_one: t_time.c ../hle/hle_time.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_TOPOSIX_ONE -I.. -o $@ t_time.c -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_time_ctxold: t_time.c ../hle/hle_time.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_CTX_OLD -I.. -o $@ t_time.c -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_time_span: t_time.c ../hle/hle_time.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_SPAN_RESULT -I.. -o $@ t_time.c -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_watchdog: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_watchdog_nobg: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_WATCH_NO_BG -I.. -o $@ t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_crash_stderr: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_crash_stderr_counted: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CRASH_COUNTED_WAIT -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_arbiter: t_arbiter.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_arbiter.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_padmap: t_padmap.c ../gamepad_map.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_padmap.c
 $(B)/t_pchtxt: t_pchtxt.c ../game/pchtxt.c ../dm.h | $(B)
@@ -797,10 +797,10 @@ $(B)/t_cheat_vm: t_cheat_vm.c ../game/cheat_vm.c ../cheat_vm.h | $(B)
 	clang -O1 -Wall -I.. -o $@ t_cheat_vm.c
 $(B)/t_cheat_vm_flat: t_cheat_vm.c ../game/cheat_vm.c ../cheat_vm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CHEAT_FLAT_SKIP -I.. -o $@ t_cheat_vm.c
-$(B)/t_cheats: t_cheats.c ../game/cheats.c ../game/cheat_vm.c ../cheat_vm.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_cheats.c ../game/cheat_vm.c
-$(B)/t_cheats_norw: t_cheats.c ../game/cheats.c ../game/cheat_vm.c ../cheat_vm.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CHEATS_NO_REWRITE_CHECK -I.. -o $@ t_cheats.c ../game/cheat_vm.c
+$(B)/t_cheats: t_cheats.c ../game/cheats.c ../game/cheat_vm.c ../cheat_vm.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_cheats.c ../game/cheat_vm.c ../runtime/plat_apple.c
+$(B)/t_cheats_norw: t_cheats.c ../game/cheats.c ../game/cheat_vm.c ../cheat_vm.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CHEATS_NO_REWRITE_CHECK -I.. -o $@ t_cheats.c ../game/cheat_vm.c ../runtime/plat_apple.c
 $(B)/t_padmap_posall: t_padmap.c ../gamepad_map.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_FACE_POS_ALL -I.. -o $@ t_padmap.c
 $(B)/t_codesig: t_codesig.c ../../ios/Sources/codesig.h | $(B)
@@ -815,18 +815,18 @@ $(B)/t_mano_display_const: t_mano_display.c ../../games/manosaba/graphics.c ../d
 	clang -O1 -Wall -Werror -DDM_TEST_DISPLAY_CONST -I.. -o $@ t_mano_display.c
 $(B)/t_codesig_broken: t_codesig.c ../../ios/Sources/codesig.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_CODESIG_ANY_VALUE -o $@ t_codesig.c
-$(B)/t_sead: t_sead.c ../diag/sead.c ../dm.h | $(B)
-	clang -O1 -Wall -Werror -I.. -o $@ t_sead.c
-$(B)/t_sead_broken: t_sead.c ../diag/sead.c ../dm.h | $(B)
-	clang -O1 -Wall -Werror -DDM_TEST_SEAD_BROKEN -I.. -o $@ t_sead.c
-$(B)/t_sleep: t_sleep.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_sleep.c t_condvar_stub.c ../hle/hle_thread.c
+$(B)/t_sead: t_sead.c ../diag/sead.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_sead.c ../runtime/plat_apple.c
+$(B)/t_sead_broken: t_sead.c ../diag/sead.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_SEAD_BROKEN -I.. -o $@ t_sead.c ../runtime/plat_apple.c
+$(B)/t_sleep: t_sleep.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_sleep.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_envfile: t_envfile.c ../envfile.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_envfile.c
 $(B)/t_gameslot: t_gameslot.c ../game/game_slot.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-result -I.. -o $@ t_gameslot.c ../game/game_slot.c
-$(B)/t_ktrace: t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c
+$(B)/t_ktrace: t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_loader_weak: t_loader_weak.c ../runtime/loader.c ../hle/hle.c ../runtime/options.c ../dm.h ../hle.h ../rodata_seal.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle/hle.c ../runtime/options.c
 $(B)/t_rtld: t_rtld.c ../runtime/loader.c ../hle/hle.c ../runtime/options.c ../dm.h ../hle.h ../rodata_seal.h | $(B)
@@ -849,54 +849,54 @@ $(B)/t_logstamp: t_logstamp.c ../logstamp.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_logstamp.c
 $(B)/t_logstamp_every: t_logstamp.c ../logstamp.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_LOGSTAMP_EVERY_WRITE -I.. -o $@ t_logstamp.c
-$(B)/t_memsnap: t_memsnap.c ../diag/memsnap.c ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-result -I.. -o $@ t_memsnap.c ../diag/memsnap.c
-$(B)/t_sysevent: t_sysevent.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DT_OWN_GUEST_SYM -I.. -o $@ t_sysevent.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_threadcpu: t_threadcpu.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_threadcpu.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_waitsync: t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_condvar_old: t_condvar.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_CV_OLD_ORDER -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_fs: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_strict: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_PATH_STRICT=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_saveyes: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_SAVE_ALWAYS=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_nopin: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_ROM_NO_PIN=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_noreprep: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_FS_NO_REPREP=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_kill: t_fs_kill.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_fs_kill.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_kill_inplace: t_fs_kill.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_FS_COMMIT_INPLACE -I.. -o $@ t_fs_kill.c t_fs_stub.c ../game/game.c $(GEN)
-$(B)/t_fs_index: t_fs_index.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_index.c ../game/game.c $(GEN)
-$(B)/t_fs_case: t_fs_case.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_case.c ../game/game.c $(GEN)
-$(B)/t_guest_mem: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
-$(B)/t_guest_mem_getinfoold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_GETINFO_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
-$(B)/t_guest_mem_heapold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HEAP_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
-$(B)/t_guest_mem_physold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_PHYS_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
-$(B)/t_guest_mem_arold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_AR_UNLOGGED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN)
-$(B)/t_coremask: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_coremask_noproc: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_CORE_NO_PROCMASK -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_mainqos: t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c
-$(B)/t_mainqos_ignored: t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_MAIN_QOS_IGNORED -I.. -o $@ t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c
+$(B)/t_memsnap: t_memsnap.c ../diag/memsnap.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-result -I.. -o $@ t_memsnap.c ../diag/memsnap.c ../runtime/plat_apple.c
+$(B)/t_sysevent: t_sysevent.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DT_OWN_GUEST_SYM -I.. -o $@ t_sysevent.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_threadcpu: t_threadcpu.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_threadcpu.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_waitsync: t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_condvar_old: t_condvar.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_CV_OLD_ORDER -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_fs: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_strict: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_PATH_STRICT=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_saveyes: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_SAVE_ALWAYS=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_nopin: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_ROM_NO_PIN=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_noreprep: t_fs.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_FS_NO_REPREP=1 -I.. -o $@ t_fs.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_kill: t_fs_kill.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_fs_kill.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_kill_inplace: t_fs_kill.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_FS_COMMIT_INPLACE -I.. -o $@ t_fs_kill.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_index: t_fs_index.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_index.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_case: t_fs_case.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_case.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem_getinfoold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_GETINFO_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem_heapold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HEAP_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem_physold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_PHYS_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem_arold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_AR_UNLOGGED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_coremask: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_coremask_noproc: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_CORE_NO_PROCMASK -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_mainqos: t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_mainqos_ignored: t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_MAIN_QOS_IGNORED -I.. -o $@ t_mainqos.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_totk_defaults: t_totk_defaults.c ../../games/totk/defaults.c ../game.h | $(B)
 	clang -O1 -Wall -I.. -o $@ t_totk_defaults.c
 $(B)/t_totk_defaults_noxlat: t_totk_defaults.c ../../games/totk/defaults.c ../game.h | $(B)
@@ -1004,10 +1004,10 @@ $(B)/t_romfs_parts_nosha: t_romfs_parts.c ../runtime/romfs_parts.c ../romfs_part
 	clang -O1 -Wall -Werror -I.. -DDM_TEST_PARTS_NO_SHA -o $@ t_romfs_parts.c
 $(B)/t_romfs_parts_anypath: t_romfs_parts.c ../runtime/romfs_parts.c ../romfs_parts.h | $(B)
 	clang -O1 -Wall -Werror -I.. -DDM_TEST_PARTS_ANY_PATH -o $@ t_romfs_parts.c
-$(B)/t_guest_as: t_guest_as.c ../guest_as.h | $(B)
-	clang -O1 -Wall -Werror -I.. -o $@ t_guest_as.c
-$(B)/t_guest_as_nolimit: t_guest_as.c ../guest_as.h | $(B)
-	clang -O1 -Wall -Werror -I.. -DDM_TEST_AS_NO_LIMIT -o $@ t_guest_as.c
+$(B)/t_guest_as: t_guest_as.c ../guest_as.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_guest_as.c ../runtime/plat_apple.c
+$(B)/t_guest_as_nolimit: t_guest_as.c ../guest_as.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Werror -I.. -DDM_TEST_AS_NO_LIMIT -o $@ t_guest_as.c ../runtime/plat_apple.c
 $(B)/t_lang: t_lang.c ../lang.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_lang.c
 $(B)/t_lang_region: t_lang.c ../lang.h | $(B)
@@ -1026,10 +1026,10 @@ $(B)/t_optref: ../../games/totk/tests/t_optref.c ../../games/totk/optref.c ../dm
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ ../../games/totk/tests/t_optref.c
 $(B)/t_optref_one: ../../games/totk/tests/t_optref.c ../../games/totk/optref.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_OPTREF_ONE_VALUE -I.. -o $@ ../../games/totk/tests/t_optref.c
-$(B)/t_quitwait: t_quitwait.c ../hle/hle_lifecycle.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_quitwait.c
-$(B)/t_quitwait_old: t_quitwait.c ../hle/hle_lifecycle.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -DDM_TEST_QUIT_NO_SECTION -I.. -o $@ t_quitwait.c
+$(B)/t_quitwait: t_quitwait.c ../hle/hle_lifecycle.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_quitwait.c ../runtime/plat_apple.c
+$(B)/t_quitwait_old: t_quitwait.c ../hle/hle_lifecycle.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_QUIT_NO_SECTION -I.. -o $@ t_quitwait.c ../runtime/plat_apple.c
 $(B)/t_romfs_validate: t_romfs_validate.c ../runtime/romfs_validate.c ../romfs_validate.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_romfs_validate.c ../runtime/romfs_validate.c
 $(B)/t_romfs_validate_nokeys: t_romfs_validate.c ../runtime/romfs_validate.c ../romfs_validate.h | $(B)
@@ -1053,16 +1053,16 @@ $(B)/t_swkbd: t_swkbd.c ../hle/hle_swkbd.c ../hle.h ../dm.h | $(B)
 T_THREAD_EXIT_SRC = t_thread_exit.c t_thread_exit_guest.S ../hle/hle_thread.c ../runtime/thread.c ../runtime/entry.S ../runtime/hstack.S ../runtime/hstack.c
 # The pre-fix exit only reaches the guest stack with host calls on it: t_thread_exit_old runs with DM_HSTACK=0
 T_HSTACK_SRC = t_hstack.c t_hstack_guest.S ../hle/hle_thread.c ../runtime/thread.c ../runtime/entry.S ../runtime/hstack.S ../runtime/hstack.c ../hle/hle_table.c
-$(B)/t_hstack: $(T_HSTACK_SRC) ../dm.h | $(B)
-	clang -O1 -g -Wall -Wno-unused-function -I.. -o $@ $(T_HSTACK_SRC)
-$(B)/t_hstack_old: $(T_HSTACK_SRC) ../dm.h | $(B)
-	clang -O1 -g -Wall -Wno-unused-function -DDM_TEST_HSTACK_OLD_CONTEXT -I.. -o $@ $(T_HSTACK_SRC)
-$(B)/t_hstack_inpatch: $(T_HSTACK_SRC) ../dm.h | $(B)
-	clang -O1 -g -Wall -Wno-unused-function -DDM_TEST_STOP_IN_PATCH -I.. -o $@ $(T_HSTACK_SRC)
-$(B)/t_thread_exit: $(T_THREAD_EXIT_SRC) ../dm.h | $(B)
-	clang -O1 -g -Wall -Wno-unused-function -I.. -o $@ $(T_THREAD_EXIT_SRC)
-$(B)/t_thread_exit_old: $(T_THREAD_EXIT_SRC) ../dm.h | $(B)
-	clang -O1 -g -Wall -Wno-unused-function -DDM_TEST_EXIT_ON_GUEST_STACK -I.. -o $@ $(T_THREAD_EXIT_SRC)
+$(B)/t_hstack: $(T_HSTACK_SRC) ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -g -Wall -Wno-unused-function -I.. -o $@ $(T_HSTACK_SRC) ../runtime/plat_apple.c
+$(B)/t_hstack_old: $(T_HSTACK_SRC) ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -g -Wall -Wno-unused-function -DDM_TEST_HSTACK_OLD_CONTEXT -I.. -o $@ $(T_HSTACK_SRC) ../runtime/plat_apple.c
+$(B)/t_hstack_inpatch: $(T_HSTACK_SRC) ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -g -Wall -Wno-unused-function -DDM_TEST_STOP_IN_PATCH -I.. -o $@ $(T_HSTACK_SRC) ../runtime/plat_apple.c
+$(B)/t_thread_exit: $(T_THREAD_EXIT_SRC) ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -g -Wall -Wno-unused-function -I.. -o $@ $(T_THREAD_EXIT_SRC) ../runtime/plat_apple.c
+$(B)/t_thread_exit_old: $(T_THREAD_EXIT_SRC) ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -g -Wall -Wno-unused-function -DDM_TEST_EXIT_ON_GUEST_STACK -I.. -o $@ $(T_THREAD_EXIT_SRC) ../runtime/plat_apple.c
 $(B)/t_thread_leak: t_thread_leak.c ../runtime/thread.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_thread_leak.c
 $(B)/t_touch: t_touch.c ../hle/hle_touch.c ../front.h ../dm.h ../game.h | $(B)

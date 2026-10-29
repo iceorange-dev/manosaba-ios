@@ -1,7 +1,8 @@
 // Diagnostic DM_FD_LOG=<seconds>: every this many seconds log one line with "the number and breakdown of file descriptors the process has in use" (whether long play sessions will hit the open file limit: the iOS soft limit defaults to 256, already raised to 4096 at startup in main.m).
-// fstat each descriptor to determine its type; for regular files / directories get the path with fcntl(F_GETPATH) and classify by where it points. Read-only, touches no descriptor; no thread is started when the variable is unset.
+// fstat each descriptor to determine its type; for regular files / directories get the path (dm_fd_path, plat.h) and classify by where it points. Read-only, touches no descriptor; no thread is started when the variable is unset.
 #include "hle.h"
 #include "dm.h"
+#include "plat.h"
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -15,11 +16,17 @@ static void *fdstat_main(void *arg) {
     int every = (int)(intptr_t)arg; char prev[1024] = "";
     for (unsigned round = 1;; round++) {
         sleep((unsigned)every);
-        struct rlimit rl = {0}; getrlimit(RLIMIT_NOFILE, &rl); int max = getdtablesize(); if (max > 8192) max = 8192;
+        struct rlimit rl = {0}; getrlimit(RLIMIT_NOFILE, &rl);
+#ifdef __APPLE__
+        int max = getdtablesize();
+#else
+        int max = (int)sysconf(_SC_OPEN_MAX);   // (bionic has no getdtablesize)
+#endif
+        if (max > 8192) max = 8192;
         int total = 0, romfs = 0, save = 0, logf = 0, cache = 0, dev = 0, sock = 0, pipe_ = 0, kq = 0, dir = 0, other = 0, hi = -1; char sample[400] = ""; int sk = 0;
         for (int fd = 0; fd < max; fd++) { struct stat st; if (fstat(fd, &st)) continue; total++; hi = fd;
             if (S_ISSOCK(st.st_mode)) { sock++; continue; } if (S_ISFIFO(st.st_mode)) { pipe_++; continue; } if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) { dev++; continue; }
-            char p[MAXPATHLEN] = ""; if (fcntl(fd, F_GETPATH, p) || !p[0]) { if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)) other++; else kq++; continue; }
+            char p[MAXPATHLEN] = ""; if (dm_fd_path(fd, p, sizeof p)) { if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)) other++; else kq++; continue; }
             if (S_ISDIR(st.st_mode)) dir++;
             if (strstr(p, "romfs") || strstr(p, "RomFS")) romfs++;
             else if (strstr(p, "/save") || strstr(p, "/user/")) save++;

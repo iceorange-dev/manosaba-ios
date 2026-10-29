@@ -1,10 +1,10 @@
 // Cheats (plan item 150b; after MacNativeGames PR #22's split, MIT, open, written anew): DM_CHEATS=<file>, an Atmosphère cheat file for the game's
 // main (the player's own: none ship here; a file named after a build ID, "<16 hex digits>.txt", must name main's), DM_CHEATS_ON=all or the names of
-// the cheats to run, comma-separated ("{master}" sections always run). Mac only (iOS: a red line; it has no mach_vm_read / mach_vm_write).
+// the cheats to run, comma-separated ("{master}" sections always run). Mac and Android (iOS: a red line; it has no mach_vm_read / mach_vm_write).
 //   A cheat made only of stores (0) into main's code is applied once at load, before the code is sealed (the code is never made writable while
 //   guest threads run it): refused whole when a store touches a word the rewriter changed (pchtxt.c's tables) or is not 4 or 8 bytes aligned.
 //   Every other cheat runs about 30 times a second (as PR #22) on a host thread through cheat_vm.c, reading and writing guest memory with
-//   mach_vm_read_overwrite / mach_vm_write, so a stale pointer fails instead of crashing; a store into any module's code or patch area is refused.
+//   dm_mem_read / dm_mem_write (plat.h: Mach's, or process_vm_readv / writev), so a stale pointer fails instead of crashing; a store into any module's code or patch area is refused.
 //   The held buttons are what the game last read (hle_hid.c). A program that stops is reported once (it is run again next time).
 #include "dm.h"
 #include "cheat_vm.h"
@@ -48,15 +48,14 @@ static int code_cheat(const Cheat *c, uint64_t text_end, const char *dir, char *
 void dm_cheats_code(const char *dir, module_t *m) { (void)dir; (void)m; if (getenv("DM_CHEATS")) LOG("[red] DM_CHEATS: not on iOS (no guarded access to guest memory there): no cheats"); }
 void dm_cheats_start(void) {}
 #else
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
+#include "plat.h"
 static int in_code(uint64_t a, unsigned n) {
     for (int i = 0; i < g_nmod; i++) { uint64_t b = (uint64_t)(uintptr_t)g_mod[i].base;
         if ((a < b + g_mod[i].text_end && b < a + n) || (a < b + g_mod[i].size && b + g_mod[i].patch_off < a + n)) return 1; }
     return 0;
 }
-static int vm_rd(void *ctx, uint64_t a, void *o, unsigned n) { (void)ctx; mach_vm_size_t got = 0; return mach_vm_read_overwrite(mach_task_self(), a, n, (mach_vm_address_t)(uintptr_t)o, &got) == KERN_SUCCESS && got == n; }
-static int vm_wr(void *ctx, uint64_t a, const void *i, unsigned n) { (void)ctx; if (in_code(a, n)) return 0; return mach_vm_write(mach_task_self(), a, (vm_offset_t)(uintptr_t)i, n) == KERN_SUCCESS; }
+static int vm_rd(void *ctx, uint64_t a, void *o, unsigned n) { (void)ctx; return dm_mem_read(o, a, n); }
+static int vm_wr(void *ctx, uint64_t a, const void *i, unsigned n) { (void)ctx; if (in_code(a, n)) return 0; return dm_mem_write(a, i, n); }
 // Main's image (from the loader, before the code is sealed): the file read, the cheats chosen, the code cheats written
 void dm_cheats_code(const char *dir, module_t *m) {
     const char *path = getenv("DM_CHEATS"); if (!path || !*path || strcmp(m->name, "main")) return;

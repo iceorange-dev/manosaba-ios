@@ -6,9 +6,18 @@
 // The contents of AudioOut / AudioOutBuffer / AudioOutParameter are read and written only through the interfaces below; the host defines its own internal layout and writes only the front part of each struct.
 #include "audren_pace.h"
 #include "hle.h"
-#include <AudioToolbox/AudioToolbox.h>
+#include "plat.h"
 #include <TargetConditionals.h>
-#include <dispatch/dispatch.h>
+#ifdef __APPLE__
+#include <AudioToolbox/AudioToolbox.h>
+#else   // no sound card backend here yet (Android's AAudio: plan item 301d): au_open fails, every output plays to the silent sink, and the AudioUnit
+        // calls below never run (a->au stays NULL)
+typedef void *AudioUnit; typedef int32_t OSStatus;
+static inline OSStatus AudioOutputUnitStart(AudioUnit u) { (void)u; return -1; }
+static inline OSStatus AudioOutputUnitStop(AudioUnit u) { (void)u; return 0; }
+static inline OSStatus AudioUnitUninitialize(AudioUnit u) { (void)u; return 0; }
+static inline OSStatus AudioComponentInstanceDispose(AudioUnit u) { (void)u; return 0; }
+#endif
 #include <stdatomic.h>
 #include <unistd.h>
 
@@ -32,8 +41,8 @@ typedef struct {
     pthread_t null_th; _Atomic int null_run;
     int backend;                       // BK_*: the running consumer; Start, Stop and the background suspend change it only under g_aos_lock and act on it
     _Atomic int sinks;                 // silent sinks running on this output (more than one, or one beside the AudioUnit, is the race g_aos_lock prevents)
-    dispatch_semaphore_t notify_sem;
-    dispatch_semaphore_t rel_sem;      // signaled with every release batch: what dm_pcmout_wait blocks on (the audio renderer used to poll every millisecond)
+    dm_sem notify_sem;
+    dm_sem rel_sem;      // signaled with every release batch: what dm_pcmout_wait blocks on (the audio renderer used to poll every millisecond)
     pthread_t notify_th; _Atomic int notify_run, notify_pending, notify_armed;
     _Atomic uint64_t under_n, under_b;   // underruns while started: callbacks or sink steps that found the queue empty, and the bytes filled with zeros (plan item 134)
     _Atomic uint64_t cb_n;               // sound card callbacks of this output: the watchdog's evidence that the device still plays it
@@ -55,23 +64,23 @@ static _Atomic unsigned g_consumer_dupes;   // a second consumer on one output's
 static aout *ao(const void *g) { aout *a = objmap_get(g); if (!a) die("AudioOut %p was not created by the host", g); return a; }
 
 static void notify_release(aout *a) {
-    dispatch_semaphore_signal(a->rel_sem);
+    dm_sem_post(a->rel_sem);
     atomic_store_explicit(&a->notify_pending, 1, memory_order_release);
     if (atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0)
-        dispatch_semaphore_signal(a->notify_sem);
+        dm_sem_post(a->notify_sem);
 }
 
 static void *event_notify(void *p) {
     aout *a = p;
     for (;;) {
-        dispatch_semaphore_wait(a->notify_sem, DISPATCH_TIME_FOREVER);
+        dm_sem_wait(a->notify_sem, -1);
         if (atomic_exchange_explicit(&a->notify_pending, 0, memory_order_acq_rel) && a->event)
             hle_signal_system_event(a->event);
         atomic_store_explicit(&a->notify_armed, 0, memory_order_release);
         if (!atomic_load_explicit(&a->notify_run, memory_order_acquire)) break;
         if (atomic_load_explicit(&a->notify_pending, memory_order_acquire) &&
             atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0)
-            dispatch_semaphore_signal(a->notify_sem);
+            dm_sem_post(a->notify_sem);
     }
     return NULL;
 }
@@ -127,6 +136,7 @@ static void downmix51(const int16_t *in, int16_t *out, unsigned frames) {
 }
 // DM_AUDIO_MUTE=1 (tests on the Mac, at night): the sound card is opened and fed as usual and silence goes out (read at the first OpenAudioOut)
 static int g_audio_mute = -1;
+#ifdef __APPLE__
 static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *bl) {
     (void)f; (void)ts; (void)bus; (void)frames;
     aout *a = ctx;
@@ -188,6 +198,12 @@ static int au_open(aout *a) {   // 0 = the sound card is open; -1 = it cannot be
       LOG("audio: CoreAudio output opened in %.1f ms on %s thread \"%s\"%s", ms, thr_cur_name(tn, 1) ? "the guest" : "a host", gn, ms > 1000 ? " [red] slow: that thread waited (tomodachi-native once saw 40 s)" : ""); }
     return 0;
 }
+#else
+static int au_open(aout *a) {   // no sound card backend on this host yet: the silent sink plays every output
+    static int said; if (!said++) LOG("audio: no sound card backend on this host yet (plan item 301d): outputs play to the silent sink");
+    a->au = NULL; return -1;
+}
+#endif
 // Silent sink: consumes in real time at 48 kHz every 5 ms; more than 100 ms behind (the thread was frozen in an iOS suspension), it starts again
 // from now instead of catching up in a burst (audren_pace.h sink_step, plan item 122)
 static void *null_sink(void *p) {
@@ -284,10 +300,10 @@ HLE_FORCE("_ZN2nn5audio12OpenAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventEPKcRKN
     atomic_init(&a->null_run, 0); atomic_init(&a->notify_run, 1);
     atomic_init(&a->notify_pending, 0); atomic_init(&a->notify_armed, 0);
     atomic_init(&a->vol, 1.0f); atomic_init(&a->played_b, 0);
-    a->notify_sem = dispatch_semaphore_create(0); a->rel_sem = dispatch_semaphore_create(0);
+    a->notify_sem = dm_sem_new(); a->rel_sem = dm_sem_new();
     // The thread that signals the game's buffer event at USER_INTERACTIVE (upstream d2r-mobile afad65c): at the default QoS (21) 16 of its wake-ups
     // in 240 s came more than 2 ms late on an iPhone 17 Pro Max, none after; a player heard gaps while moving (PR #52)
-    { pthread_attr_t at; pthread_attr_init(&at); pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
+    { pthread_attr_t at; pthread_attr_init(&at); dm_attr_interactive(&at);
       pthread_create(&a->notify_th, &at, event_notify, a); pthread_attr_destroy(&at); }
     if (ev) hle_bind_system_event(ev, 1);   // Buffer release event: bind a kernel event on the guest thread (auto-clear), afterwards signaled by the audio thread
     objmap_put(g, a);
@@ -332,13 +348,13 @@ HLE_FORCE("_ZN2nn5audio13CloseAudioOutEPNS0_8AudioOutE", "close the audio output
     h_au_Stop(g);
     aout *a = objmap_del(g);
     atomic_store_explicit(&a->notify_run, 0, memory_order_release);
-    dispatch_semaphore_signal(a->notify_sem);
+    dm_sem_post(a->notify_sem);
     pthread_join(a->notify_th, NULL);
     pthread_mutex_lock(&g_aos_lock);
     for (int i = 0; i < AOMAX; i++) if (g_aos[i] == a) g_aos[i] = NULL;
     pthread_mutex_unlock(&g_aos_lock);
     if (a->au) { AudioUnitUninitialize(a->au); AudioComponentInstanceDispose(a->au); }
-    dispatch_release(a->notify_sem); dispatch_release(a->rel_sem);
+    dm_sem_free(a->notify_sem); dm_sem_free(a->rel_sem);
     free(a->mixbuf); pthread_mutex_destroy(&a->m); free(a);
 }
 HLE_FORCE("_ZN2nn5audio16GetAudioOutStateEPKNS0_8AudioOutE", "playback state", int, h_au_State, const void *g) { return atomic_load_explicit(&ao(g)->state, memory_order_acquire); }
@@ -426,7 +442,7 @@ int dm_pcmout_append(void *k, void *b) { return (int)h_au_Append(k, b); }
 void *dm_pcmout_released(void *k) { return h_au_Released(k); }
 // Block until the output releases a buffer or ns pass (nxnative e06a8ec's dm_pcmout_wait, MIT): 1 = something was released (take it with
 // dm_pcmout_released), 0 = timed out
-int dm_pcmout_wait(void *k, int64_t ns) { return dispatch_semaphore_wait(ao(k)->rel_sem, dispatch_time(DISPATCH_TIME_NOW, ns)) == 0; }
+int dm_pcmout_wait(void *k, int64_t ns) { return dm_sem_wait(ao(k)->rel_sem, ns); }
 
 // Front-end lifecycle / audio session interruption: suspend real audio output, with the silent sink taking over real-time consumption meanwhile (pacing unbroken); switch back to the AudioUnit on resume.
 // The front end calls with 1 on going to background / interruption began, and with 0 on returning to foreground / interruption ended (shouldResume).

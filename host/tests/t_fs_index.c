@@ -14,12 +14,13 @@
 #include <string.h>
 static int g_opendir_n, g_getxattr_n;
 static DIR *count_opendir(const char *p) { g_opendir_n++; return opendir(p); }
-static ssize_t count_getxattr(const char *p, const char *n, void *v, size_t s, u_int32_t pos, int o) { g_getxattr_n++; return getxattr(p, n, v, s, pos, o); }
+#include "plat.h"
+static ssize_t count_getxattr(const char *p, const char *n, void *v, size_t s) { g_getxattr_n++; return dm_xattr_get(p, n, v, s); }   // hle_fs.c reads through plat.h
 #define opendir count_opendir
-#define getxattr count_getxattr
+#define dm_xattr_get count_getxattr
 #include "../hle/hle_fs.c"
 #undef opendir
-#undef getxattr
+#undef dm_xattr_get
 
 struct dm_flags g_flag; uint64_t g_t0_ns;
 uint64_t now_ns(void) { return 0; }

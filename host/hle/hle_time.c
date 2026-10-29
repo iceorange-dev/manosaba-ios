@@ -95,7 +95,43 @@ HLE_FORCE_OPT("_ZN2nn4time37GetStandardSteadyClockCurrentTimespecEP8timespec", "
 // Filled like the time service's GetClockSnapshot (Ryujinx IStaticServiceForPsc): both contexts are an offset in seconds over the steady clock, user time =
 // steady time point + offset, calendars from ToCalendarTime above, the device's location name, automatic correction on, type = the byte the client passes.
 // Steady clock = the guest clock in seconds (as CLOCK_MONOTONIC above), one clock source (ID 0). The network clock is the user clock (offline, as if synced).
+// Named zones (location names such as "Asia/Tokyo"), plan item 301c: CFTimeZone on Apple; bionic's tzalloc / localtime_rz elsewhere (API 35), the
+// device's zone from the system property persist.sys.timezone. zone_open answers UTC for a name the host does not know (*known 0)
+#ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+typedef CFTimeZoneRef tz_t;
+static tz_t zone_open(const char *name, int *known) {
+    CFStringRef s = CFStringCreateWithCString(NULL, name, kCFStringEncodingASCII); CFTimeZoneRef tz = s ? CFTimeZoneCreateWithName(NULL, s, true) : NULL;
+    if (s) CFRelease(s);
+    if (known) *known = tz != NULL;
+    return tz ? tz : CFTimeZoneCreateWithTimeIntervalFromGMT(NULL, 0);
+}
+static void zone_close(tz_t z) { CFRelease(z); }
+static int32_t zone_offset(tz_t z, int64_t t) { return (int32_t)CFTimeZoneGetSecondsFromGMT(z, (CFAbsoluteTime)t - kCFAbsoluteTimeIntervalSince1970); }
+static int zone_dst(tz_t z, int64_t t) { return CFTimeZoneIsDaylightSavingTime(z, (CFAbsoluteTime)t - kCFAbsoluteTimeIntervalSince1970); }
+static void zone_abbr(tz_t z, int64_t t, char *out, size_t n) {
+    strlcpy(out, "UTC", n); CFStringRef ab = CFTimeZoneCopyAbbreviation(z, (CFAbsoluteTime)t - kCFAbsoluteTimeIntervalSince1970);
+    if (ab) { CFStringGetCString(ab, out, (CFIndex)n, kCFStringEncodingASCII); CFRelease(ab); }
+}
+static void zone_device_name(char *out, size_t n) {
+    CFTimeZoneRef tz = CFTimeZoneCopyDefault();
+    if (!tz || !CFStringGetCString(CFTimeZoneGetName(tz), out, (CFIndex)n, kCFStringEncodingASCII)) strlcpy(out, "UTC", n);
+    if (tz) CFRelease(tz);
+}
+#else
+#include <sys/system_properties.h>
+typedef timezone_t tz_t;
+static tz_t zone_open(const char *name, int *known) { timezone_t z = tzalloc(name); if (known) *known = z != NULL; return z ? z : tzalloc("UTC"); }
+static void zone_close(tz_t z) { tzfree(z); }
+static int zone_tm(tz_t z, int64_t t, struct tm *tm) { time_t tt = (time_t)t; return localtime_rz(z, &tt, tm) != NULL; }
+static int32_t zone_offset(tz_t z, int64_t t) { struct tm tm; return zone_tm(z, t, &tm) ? (int32_t)tm.tm_gmtoff : 0; }
+static int zone_dst(tz_t z, int64_t t) { struct tm tm; return zone_tm(z, t, &tm) && tm.tm_isdst > 0; }
+static void zone_abbr(tz_t z, int64_t t, char *out, size_t n) { struct tm tm; strlcpy(out, zone_tm(z, t, &tm) && tm.tm_zone ? tm.tm_zone : "UTC", n); }
+static void zone_device_name(char *out, size_t n) {
+    char v[PROP_VALUE_MAX] = ""; __system_property_get("persist.sys.timezone", v);
+    strlcpy(out, v[0] ? v : "UTC", n);
+}
+#endif
 typedef struct { int64_t timepoint; uint8_t source[16]; } SteadyClockTimePoint;
 typedef struct { int64_t offset; SteadyClockTimePoint steady; } SystemClockContext;
 typedef struct {
@@ -113,9 +149,7 @@ static int64_t user_now(void) { int64_t ft = fixed_time(); return (ft >= 0 ? ft 
 static void location_name(char *out, size_t n) {
     memset(out, 0, n);
     if (fixed_time() >= 0) { strlcpy(out, "UTC", n); return; }   // main.c pins TZ to UTC then
-    CFTimeZoneRef tz = CFTimeZoneCopyDefault();
-    if (!tz || !CFStringGetCString(CFTimeZoneGetName(tz), out, (CFIndex)n, kCFStringEncodingASCII)) strlcpy(out, "UTC", n);
-    if (tz) CFRelease(tz);
+    zone_device_name(out, n);
 }
 static void fill_snapshot(ClockSnapshot *s, uint8_t type) {
     memset(s, 0, sizeof *s);
@@ -193,35 +227,28 @@ HLE_FORCE_OPT("_ZN2nn4time8FinalizeEv", "the time service is taken over: nothing
 // reference). An unknown name breaks the SDK's precondition: reported red, the rule is UTC. GetDeviceLocationName: the host's zone (UTC under
 // DM_FIXED_TIME, as the clock snapshots)
 typedef struct { char magic[8]; char name[0x24]; } tz_rule;
-static CFTimeZoneRef rule_zone(const void *rule) {
+static tz_t rule_zone(const void *rule) {
     const tz_rule *r = rule; char nm[0x25] = {0};
     if (!memcmp(r->magic, "DMTZRULE", 8)) memcpy(nm, r->name, sizeof r->name);
-    CFStringRef s = CFStringCreateWithCString(NULL, nm[0] ? nm : "UTC", kCFStringEncodingASCII);
-    CFTimeZoneRef tz = s ? CFTimeZoneCreateWithName(NULL, s, true) : NULL;
-    if (s) CFRelease(s);
-    return tz ? tz : CFTimeZoneCreateWithTimeIntervalFromGMT(NULL, 0);
+    return zone_open(nm[0] ? nm : "UTC", NULL);
 }
-static int32_t zone_offset(CFTimeZoneRef tz, int64_t t) { return (int32_t)CFTimeZoneGetSecondsFromGMT(tz, (CFAbsoluteTime)t - kCFAbsoluteTimeIntervalSince1970); }
 HLE_FORCE_OPT("_ZN2nn4time21GetDeviceLocationNameEPNS0_12LocationNameE", "the host's time zone name", void, h_time_DevLoc, char *out) { location_name(out, 0x24); }
-HLE_FORCE_OPT("_ZN2nn4time16LoadTimeZoneRuleEPNS0_12TimeZoneRuleERKNS0_12LocationNameE", "a time zone rule by location name (host CFTimeZone)", Result, h_time_LoadRule, void *rule, const char *name) {
+HLE_FORCE_OPT("_ZN2nn4time16LoadTimeZoneRuleEPNS0_12TimeZoneRuleERKNS0_12LocationNameE", "a time zone rule by location name (the host's zones)", Result, h_time_LoadRule, void *rule, const char *name) {
     tz_rule *r = rule; memset(r, 0, sizeof *r); memcpy(r->magic, "DMTZRULE", 8); strlcpy(r->name, name, sizeof r->name);
-    CFStringRef s = CFStringCreateWithCString(NULL, r->name, kCFStringEncodingASCII); CFTimeZoneRef tz = s ? CFTimeZoneCreateWithName(NULL, s, true) : NULL;
-    if (s) CFRelease(s);
-    if (tz) CFRelease(tz); else { LOG("[red] LoadTimeZoneRule: location \"%s\" is not a time zone the host knows (the SDK's precondition): converted as UTC", r->name); strlcpy(r->name, "UTC", sizeof r->name); }
+    int known; zone_close(zone_open(r->name, &known));
+    if (!known) { LOG("[red] LoadTimeZoneRule: location \"%s\" is not a time zone the host knows (the SDK's precondition): converted as UTC", r->name); strlcpy(r->name, "UTC", sizeof r->name); }
     return RES_OK;
 }
 HLE_FORCE_OPT("_ZN2nn4time14ToCalendarTimeEPNS0_12CalendarTimeEPNS0_22CalendarAdditionalInfoERKNS0_9PosixTimeERKNS0_12TimeZoneRuleE", "absolute → local time by a loaded rule",
               Result, h_time_ToCalRule, CalendarTime *ct, CalendarAdditionalInfo *ai, const int64_t *pt, const void *rule) {
-    CFTimeZoneRef tz = rule_zone(rule);
+    tz_t tz = rule_zone(rule);
 #ifndef DM_TEST_TZRULE_DEVICE   // negative control of t_tzrule only: the rule ignored, the device zone used
     int32_t off = zone_offset(tz, *pt); time_t lt = (time_t)(*pt + off); struct tm tm; gmtime_r(&lt, &tm);
-    CFAbsoluteTime at = (CFAbsoluteTime)*pt - kCFAbsoluteTimeIntervalSince1970;
-    int dst = CFTimeZoneIsDaylightSavingTime(tz, at); CFStringRef ab = CFTimeZoneCopyAbbreviation(tz, at); char abbr[8] = "UTC";
-    if (ab) { CFStringGetCString(ab, abbr, sizeof abbr, kCFStringEncodingASCII); CFRelease(ab); }
+    int dst = zone_dst(tz, *pt); char abbr[8]; zone_abbr(tz, *pt, abbr, sizeof abbr);
 #else
     time_t t0 = (time_t)*pt; struct tm tm; localtime_r(&t0, &tm); int32_t off = (int32_t)tm.tm_gmtoff; int dst = tm.tm_isdst > 0; char abbr[8] = "UTC";
 #endif
-    CFRelease(tz);
+    zone_close(tz);
     if (ct) *ct = (CalendarTime){(int16_t)(tm.tm_year + 1900), (int8_t)(tm.tm_mon + 1), (int8_t)tm.tm_mday, (int8_t)tm.tm_hour, (int8_t)tm.tm_min, (int8_t)tm.tm_sec, 0};
     if (ai) { memset(ai, 0, sizeof *ai); ai->wday = tm.tm_wday; ai->yday = tm.tm_yday; strlcpy(ai->tzname, abbr, sizeof ai->tzname); ai->dst = dst != 0; ai->offset = off; }
     return RES_OK;
@@ -232,13 +259,13 @@ HLE_FORCE_OPT("_ZN2nn4time11ToPosixTimeEPiPNS0_9PosixTimeEiRKNS0_12CalendarTimeE
     time_t local = timegm(&in); struct tm back; int n = 0; int64_t r[2];
     if (local != (time_t)-1 && gmtime_r(&local, &back) && back.tm_year == ct->year - 1900 && back.tm_mon == ct->month - 1 && back.tm_mday == ct->day &&
         back.tm_hour == ct->hour && back.tm_min == ct->minute && back.tm_sec == ct->second) {   // a date that does not exist (February 30) is normalized by timegm: none
-        CFTimeZoneRef tz = rule_zone(rule);
+        tz_t tz = rule_zone(rule);
         for (int k = -1; k <= 1; k += 2) {
             int64_t t = (int64_t)local - zone_offset(tz, (int64_t)local + k * 86400);
             if (t + zone_offset(tz, t) != (int64_t)local || (n && r[0] == t)) continue;
             r[n++] = t;
         }
-        CFRelease(tz);
+        zone_close(tz);
     }
     if (n == 2 && r[0] > r[1]) { int64_t x = r[0]; r[0] = r[1]; r[1] = x; }
     if (n > max) n = max;

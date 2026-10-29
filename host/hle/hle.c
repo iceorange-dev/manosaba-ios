@@ -1,7 +1,6 @@
 // Import resolution (implemented ones go to the host, the rest go to named stubs) and host gate dispatch.
 #include "dm.h"
-#include <mach-o/getsect.h>
-#include <mach-o/ldsyms.h>
+#include "table.h"
 #include <dlfcn.h>
 #include <stdatomic.h>
 #include <time.h>
@@ -26,7 +25,7 @@ uint64_t unimpl_c(unsigned idx, uint64_t *regs) {
 // weak: undefined weak symbol (STB_WEAK). The real rtld fills in 0 when no definition is found, and callers skip on that (e.g. the thread_local init function _ZTH*); the host fills in 0 too and allocates no stub.
 uint64_t resolve_import(module_t *m, const char *name, int weak) {
     static const hle_ent *sec; static unsigned long secsz;
-    if (!sec) sec = (const hle_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swhle", &secsz);
+    if (!sec) sec = (const hle_ent *)DM_TABLE_GET(swhle, &secsz);
     for (unsigned i = 0; i < secsz / sizeof(hle_ent); i++)
         if (!strcmp(sec[i].name, name)) {
             if (g_flag.imports) { Dl_info di; dladdr(sec[i].fn, &di); LOG("import %s -> %s", name, di.dli_sname); }

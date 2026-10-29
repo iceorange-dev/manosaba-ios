@@ -117,8 +117,8 @@ int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);   // what was checked before a crash stays in the log (the old SetHeapSize of section 11 faults)
     signal(SIGBUS, on_fault); signal(SIGSEGV, on_fault);
     mem_init();
-    size_t sub = vm_page_size / 0x1000;
-    printf("host page %zu KB, %zu guest pages each\n", (size_t)vm_page_size >> 10, sub);
+    size_t sub = dm_page_size() / 0x1000;
+    printf("host page %zu KB, %zu guest pages each\n", dm_page_size() >> 10, sub);
 
     printf("1 hand-written cases\n");
     map(0, 1);

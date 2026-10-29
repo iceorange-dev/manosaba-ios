@@ -39,7 +39,6 @@ static void blit_note(void) { if (g_enc) PD("E %llu copy / buffer update ends th
 // the GPU actually reads (texture storage, UBO / SSBO, vertex / index buffers), deduplicated by (kind, address, length), one line on first sight.
 // Columns: kind  guest_addr  len  first_frame  tex_id  fmt  w×h
 __attribute__((weak)) void dm_shot_written(const char *path, int ok) { (void)path; (void)ok; }
-__attribute__((weak)) int dm_guest_heap_stat(unsigned long long *t, unsigned long long *f, unsigned long long *m) { (void)t; (void)f; (void)m; return 0; }   // hle_svc.c provides the strong definition (game main heap readout); the graphics unit tests do not link the host and cannot read it
 __attribute__((weak)) void dm_alias_stat(size_t *mapped_mb, size_t *host_mb) { *mapped_mb = *host_mb = 0; }   // hle_svc.c (alias region readout)
 __attribute__((weak)) int dm_mem_low(void) { return 0; }   // memstat.m (low-memory watch: under 1024 MB from the limit)
 __attribute__((weak)) void dm_guest_frame_tick(void) {}   // hle_os.c provides the strong definition (DM_DETCLOCK deterministic guest clock); a no-op when graphics unit tests do not link the host

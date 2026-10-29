@@ -6,7 +6,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdio.h>
-#include <mach/mach.h>   // vm_region_64 / vm_map: the iOS SDK's mach_vm.h is an #error; on arm64 these take the same 64-bit addresses
+#include "plat.h"
 
 #define AS_LIMIT (1ull << 39)
 #define AS_FROM (1ull << 32)
@@ -31,8 +31,8 @@ static inline int as_pick(const as_gap *g, int n, uint64_t want, uint64_t least,
 static inline int as_gaps(as_gap *out, int max, uint64_t from, uint64_t end) {
     int n = 0; uint64_t prev = from;
     while (n < max) {
-        vm_address_t r = (vm_address_t)prev; vm_size_t rs = 0; vm_region_basic_info_data_64_t info; mach_msg_type_number_t c = VM_REGION_BASIC_INFO_COUNT_64; mach_port_t obj = MACH_PORT_NULL;
-        int more = vm_region_64(mach_task_self(), &r, &rs, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &c, &obj) == KERN_SUCCESS;
+        uint64_t r = prev, rs = 0; int readable;
+        int more = dm_mem_region(&r, &rs, &readable);
         uint64_t hi = more ? (uint64_t)r : end;
         if (hi > prev) out[n++] = (as_gap){prev, hi};
         if (!more || r + rs >= end) break;
@@ -41,10 +41,7 @@ static inline int as_gaps(as_gap *out, int max, uint64_t from, uint64_t end) {
     return n;
 }
 // Reserve [at, at + size) where nothing is mapped (fails instead of replacing a mapping): the address or NULL
-static inline void *as_reserve_at(uint64_t at, uint64_t size) {
-    vm_address_t a = (vm_address_t)at;
-    return vm_map(mach_task_self(), &a, (vm_size_t)size, 0, VM_FLAGS_FIXED, MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT) == KERN_SUCCESS ? (void *)(uintptr_t)a : NULL;
-}
+static inline void *as_reserve_at(uint64_t at, uint64_t size) { return dm_reserve_at(at, size); }
 // The gaps of at least 256 MiB, one line each, for a reservation that got less than it wanted
 static inline void as_log_gaps(FILE *f, const as_gap *g, int n) {
     for (int i = 0; i < n; i++) if (g[i].hi - g[i].lo >= (256ull << 20))

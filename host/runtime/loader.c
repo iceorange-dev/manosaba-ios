@@ -7,42 +7,43 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#endif
 #include "game.h"
 #include "hle.h"
 
 module_t g_mod[MAX_MOD];
 int g_nmod;
-pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;
-pthread_key_t g_keyparam[4];   // rewriter PARAMS slots (key page entries KPARAM0..3), dm.h
+dm_slot g_key18, g_keytls, g_keytlr, g_keygate;
+dm_slot g_keyparam[4];   // rewriter PARAMS slots (key page entries KPARAM0..3), dm.h
 enum { KEY_K18, KEY_KTLS, KEY_KTLR, KEY_KGATE, KEY_KPARAM0, KEY_N = KEY_KPARAM0 + 4 };
 
 uint64_t resolve_import(module_t *m, const char *name, int weak);
 void gate_register(uint64_t ret_addr, const char *kind, int arg, uint64_t orig);
 
-static pthread_key_t key_value(unsigned i) {
+static dm_slot key_value(unsigned i) {
     switch (i) {
     case KEY_K18: return g_key18; case KEY_KTLS: return g_keytls; case KEY_KTLR: return g_keytlr;
     case KEY_KGATE: return g_keygate; default: return g_keyparam[i - KEY_KPARAM0];
     }
 }
 static void create_keys(void) {
-    if (pthread_key_create(&g_key18, NULL) || pthread_key_create(&g_keytls, NULL) ||
-        pthread_key_create(&g_keytlr, NULL) || pthread_key_create(&g_keygate, NULL)) die("cannot create the host keys");
+    if (dm_slot_create(&g_key18) || dm_slot_create(&g_keytls) || dm_slot_create(&g_keytlr) || dm_slot_create(&g_keygate)) die("cannot create the host keys");
     // Parameter slot keys are always created, used or not: a key page entry of 0 would make the guest read TSD slot 0
-    for (int i = 0; i < 4; i++) if (pthread_key_create(&g_keyparam[i], NULL)) die("cannot create the parameter slot keys");
+    for (int i = 0; i < 4; i++) if (dm_slot_create(&g_keyparam[i])) die("cannot create the parameter slot keys");
     LOG("keys K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu params %lu %lu %lu %lu",
         g_key18, g_keytls, g_keytlr, g_keygate, g_keyparam[0], g_keyparam[1], g_keyparam[2], g_keyparam[3]);
 }
 
-// K slot check: the pthread TSD layout is fixed, slot = tpidrro_el0 + 8*key
+// K slot check: slot = the slot block's base + 8 * slot, as the rewritten code reads it (slots.h)
 static void tsd_check(void) {
-    pthread_setspecific(g_key18, (void *)0x1234);
-    uint64_t base; __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(base));
+    dm_slot_set(g_key18, (void *)0x1234);
+    uint64_t base = dm_slot_base();
     uint64_t off = *(uint64_t *)(g_mod[0].base + g_mod[0].key_page_off + g_mod[0].key_idx[KEY_K18] * 8);
-    if (((uint64_t *)(base & ~7ull))[off / 8] != 0x1234) die("unexpected pthread TSD layout");
-    pthread_setspecific(g_key18, 0);
+    if (((uint64_t *)base)[off / 8] != 0x1234) die("unexpected thread slot layout");
+    dm_slot_set(g_key18, 0);
 }
 
 static void build_symhash(module_t *m);
@@ -161,7 +162,7 @@ static uint64_t bind_sym(module_t *m, const Elf64_Sym *s, const char *nm) {
 // Forced take-over table (hle.h HLE_FORCE, the __DATA,swforce section): a hit overrides the definition inside the module
 static const hle_force_ent *g_force; static unsigned g_nforce; static unsigned *g_force_hits;
 static void force_init(void) {
-    unsigned long sz; g_force = (const hle_force_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swforce", &sz);
+    unsigned long sz; g_force = (const hle_force_ent *)DM_TABLE_GET(swforce, &sz);
     g_nforce = g_force ? (unsigned)(sz / sizeof *g_force) : 0;
     g_force_hits = calloc(g_nforce + 1, sizeof *g_force_hits);
     for (unsigned i = 0; i < g_nforce; i++)
@@ -209,7 +210,7 @@ static void read_layout(module_t *m, const char *dir) {
     FILE *f = fopen(path, "r");
     if (!f) die("open %s", path);
     static const char *kn[8] = {"K18", "KTLS", "KTLR", "KGATE", "KPARAM0", "KPARAM1", "KPARAM2", "KPARAM3"};
-    char line[256], key[32]; unsigned long v; unsigned seen = 0;
+    char line[256], key[32]; unsigned long v; unsigned seen = 0; int android = 0;
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "# %31s %lx", key, &v) != 2) die("%s: product from an old rewriter; rebuild it with the current one (PRODUCT)", path);
         if (!strcmp(key, "PATCH_OFF")) m->patch_off = v;
@@ -220,6 +221,7 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "RO_OFF")) m->ro_off = v;
         else if (!strcmp(key, "DATA_OFF")) m->data_off = v;
         else if (!strcmp(key, "REWRITER")) m->rewriter = v;
+        else if (!strcmp(key, "TARGET_ANDROID")) android = v == 1;
         else for (int k = 0; k < 8; k++) {
             size_t n = strlen(kn[k]);
             if (!strncmp(key, "KEY_", 4) && !strncmp(key + 4, kn[k], n) && !strcmp(key + 4 + n, "_IDX")) {
@@ -237,6 +239,12 @@ static void read_layout(module_t *m, const char *dir) {
 #endif
     if (!m->patch_off || m->key_page_off % 0x4000 || m->key_page_size != 0x4000 || seen != 0xff)
         die("%s: product from an old rewriter; rebuild it with the current one (PRODUCT)", path);
+    // The rewriter's target (patch_nso.py DM_TARGET, plan item 301b): where the blocks find the thread slots and keep what they borrow
+#ifdef __APPLE__
+    if (android) die("%s: a product for Android (DM_TARGET=android); this host needs one for Apple", path);
+#else
+    if (!android) die("%s: a product for Apple; this host needs one for Android (DM_TARGET=android tools/build_product.sh)", path);
+#endif
     if (m->host_page_off && (m->host_page_off % 0x4000 || m->host_page_off < m->key_page_off + m->key_page_size || m->host_page_off + 0x4000 > m->patch_off))
         die("%s: host page %#llx outside the writable part before the patch area", path, (unsigned long long)m->host_page_off);
 }

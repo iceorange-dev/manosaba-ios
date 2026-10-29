@@ -5,14 +5,15 @@
 #endif
 #include <sys/xattr.h>
 #include <errno.h>
+#include "plat.h"
 static int fail_name_write;
-static int fake_setxattr(const char *p, const char *name, const void *v, size_t n, u_int32_t pos, int opt) {
+static int fake_xattr_set(const char *p, const char *name, const void *v, size_t n) {   // hle_fs.c writes guest names through plat.h
     if (fail_name_write) { errno = ENOSPC; return -1; }
-    return setxattr(p, name, v, n, pos, opt);
+    return dm_xattr_set(p, name, v, n);
 }
-#define setxattr fake_setxattr
+#define dm_xattr_set fake_xattr_set
 #include HLE_FS_SOURCE
-#undef setxattr
+#undef dm_xattr_set
 struct dm_flags g_flag; uint64_t g_t0_ns;
 uint64_t now_ns(void) { return 0; }
 void dm_prof_add(int id, uint64_t ns, uint64_t b) { (void)id; (void)ns; (void)b; }

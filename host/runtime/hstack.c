@@ -7,7 +7,7 @@
 extern char dm_hthunks[];
 void *dm_hthunk_fn[DM_HTHUNKS];  // read by hstack.S
 uint64_t dm_hstk_off;            // TSD offset of the host stack top (key * 8), read by hstack.S and entry.S; 0 = off
-static pthread_key_t g_keyhstk;
+static dm_slot g_keyhstk;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static unsigned g_nthunk;
 static uint16_t g_hash[4096];    // function → wrapper index + 1 (open addressing; at most half full)
@@ -15,7 +15,7 @@ static uint16_t g_hash[4096];    // function → wrapper index + 1 (open address
 static void hstack_once(void) {
     const char *e = getenv("DM_HSTACK");
     if (e && !strcmp(e, "0")) { LOG("DM_HSTACK=0: host calls run on the guest stack"); return; }
-    if (pthread_key_create(&g_keyhstk, NULL)) die("cannot create the host stack key");
+    if (dm_slot_create(&g_keyhstk)) die("cannot create the host stack key");
     dm_hstk_off = (uint64_t)g_keyhstk * 8;
 }
 void dm_hstack_init(void) { static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, hstack_once); }
@@ -57,7 +57,7 @@ void *const *dm_hwrap_vt(void *const *vt, int n) {
 }
 
 // The record of the host call or svc gate that holds a thread's host stack (layout in hstack.S), NULL when it holds none: tsd = the thread's
-// tpidrro_el0, top = its host stack top. For a thread that is stopped, or parked in an svc gate.
+// slot block's base (slots.h), top = its host stack top. For a thread that is stopped, or parked in an svc gate.
 const uint64_t *dm_hstack_record(uint64_t tsd, uint64_t top) {
     if (!dm_hstk_off || !tsd || !top) return NULL;
     if (*(const volatile uint64_t *)(tsd + dm_hstk_off)) return NULL;   // the slot holds the top while the stack is free

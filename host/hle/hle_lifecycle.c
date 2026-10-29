@@ -4,7 +4,7 @@
 // The default SIGTERM action would also exit quickly (code 143); this gives an orderly stop, exit code 0, and an entry for the iOS lifecycle.
 #include "hle.h"
 #include <TargetConditionals.h>
-#include <dispatch/dispatch.h>
+#include "plat.h"
 #include <stdatomic.h>
 #include <signal.h>
 #include <unistd.h>
@@ -28,6 +28,7 @@ static double quit_wait(double max_s, int *save, int *sec) {
     }
     return (clock_gettime_nsec_np(CLOCK_MONOTONIC) - t0) / 1e9;
 }
+static void exit_late(void) { LOG("[red] exit did not finish within 1.5 s, exiting now"); _exit(0); }
 void dm_host_shutdown(const char *why) {
     static _Atomic int once; if (atomic_exchange(&once, 1)) return;
     dm_exit_note();
@@ -42,18 +43,12 @@ void dm_host_shutdown(const char *why) {
     int save = 0, sec = 0; double w = quit_wait(max_s, &save, &sec);
     if (w > 0.02) LOG("%s after waiting %.2f s for the save in progress to commit and the game's exit-request section", save ? "[red] exiting without the uncommitted save" :
                       sec ? "[red] exiting inside the game's exit-request section" : "exiting", w);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
-        LOG("[red] exit did not finish within 1.5 s, exiting now"); _exit(0); });
+    dm_after_ms(1500, exit_late);
     hlecount_flush();                               // DM_HLECOUNT: _exit skips atexit, so write it here
     dm_audio_suspend(1);
     dm_gfx_suspend(1);
     LOG("exit done (%.3f s)", (now_ns() - t0) / 1e9);
     _exit(0);
 }
-void dm_term_install(void) {
-    signal(SIGTERM, SIG_IGN);                       // handled by a GCD signal source on an ordinary thread instead
-    static dispatch_source_t src;
-    src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
-    dispatch_source_set_event_handler(src, ^{ dm_host_shutdown("SIGTERM"); });
-    dispatch_resume(src);
-}
+static void on_term(void) { dm_host_shutdown("SIGTERM"); }
+void dm_term_install(void) { dm_on_signal(SIGTERM, on_term); }   // on an ordinary thread, not in a handler (plat.h)
