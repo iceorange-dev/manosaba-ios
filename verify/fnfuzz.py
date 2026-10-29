@@ -5,6 +5,10 @@
 # Only when both sides stop on the same event (ret / same-named import / same gate original address) is the trial "effective"; then compare: x0–x30 (x18 against the slot value), sp, nzcv, v0–v31, tpidr,
 # the final values of all written addresses (dead stack below the current sp and the TSD are not compared). The extra x29/x30 the rewritten image pushes at a gate are restored per the template before comparing.
 # Non-equivalence is reported as DIFF; functions with 0 effective trials are listed as NOEFF (a coverage gap, not a failure but must be reported). If sp is outside the stack area when either side stops, it is recorded as "sp_oob" (sp out of bounds) and not compared (unrealistic input).
+# The android target (patch_nso.py DM_TARGET, plan item 301b): the rewritten side's tpidr_el0 points at a bionic TLS area whose slot 2 (+16) holds the slot
+# block, and before every instruction of the patch area the 256 bytes below the current sp are overwritten (a signal frame: Linux has no red zone), except
+# in functions with a site listed in belowsp.tsv (the red-zone form). A byte overwritten so and not written since is left out of the memory comparison: it was
+# dead stack then, and what the original holds there is as stale (a callee's frame, later under another callee's frame that never wrote it).
 # Mutation self-check: draw mutate ordinary rewrite blocks and change the replaced instruction to nop, then count how many of those "actually executed" are judged divergent.
 import sys, os, struct, random, argparse, bisect, multiprocessing as mp
 from unicorn import *
@@ -33,6 +37,9 @@ KEY_IDX = {k[4:-4]: v for k, v in hdr.items() if k.startswith('KEY_') and k.ends
 KEY_SLOT = {k: 300 + i for i, k in enumerate(sorted(KEY_IDX, key=KEY_IDX.get))}
 K18, KTLS, KTLR, KGATE = (KEY_SLOT[k] for k in ('K18', 'KTLS', 'KTLR', 'KGATE'))
 KEY_PAGE_OFF = hdr['KEY_PAGE_OFF']
+ANDROID = hdr.get('TARGET_ANDROID') == 1
+BELOW = {int(l, 16) for l in open(f'{A.dir}/{A.mod}.belowsp.tsv') if not l.startswith('#')} if ANDROID else set()
+TLSB = 0x31000000; POISON = bytes([0xA5]) * 256; ONES = bytes([1]) * 256
 orig = bytearray(nsoimg.load(A.nso))
 pat = bytearray(open(f'{A.dir}/{A.mod}.patched.bin', 'rb').read())
 
@@ -62,6 +69,7 @@ funcs = sorted({func_of(a) for a in sites})
 _cp = f'{A.dir}/{A.mod}.caves.tsv'
 cave_funcs = {func_of(int(l.split()[0], 16)) for l in open(_cp) if not l.startswith('#')} if os.path.exists(_cp) else set()
 funcs = [f for f in funcs if f not in cave_funcs]
+below_funcs = {func_of(a) for a in BELOW}   # android: functions with a red-zone site, run without the signal frames
 if A.funcs: funcs = [int(x, 16) for x in A.funcs.split(',')]
 
 def btarget(b, o):
@@ -70,12 +78,13 @@ def btarget(b, o):
     return o + 4 * imm
 def plain_subst(a):
     s = btarget(pat, a)
-    ins = list(md.disasm(bytes(pat[s:s + 24]), s))
-    if len(ins) < 5 or ins[0].mnemonic != 'stp' or ins[1].mnemonic != 'mrs' or 'tpidrro_el0' not in ins[1].op_str: return None
+    ins = list(md.disasm(bytes(pat[s:s + 28]), s))
+    if len(ins) < 5 or ins[0].mnemonic != 'stp' or ins[1].mnemonic != 'mrs' or ('tpidr_el0' if ANDROID else 'tpidrro_el0') not in ins[1].op_str: return None
+    if ANDROID: ins = ins[:2] + ins[3:]   # (android: ldr xT, [xT, #0x10] after the mrs)
     if ins[2].mnemonic != 'adrp' or ins[2].operands[1].imm != KEY_PAGE_OFF: return None
     if ins[3].mnemonic != 'ldr' or ins[3].operands[1].mem.base != ins[2].operands[0].reg: return None
     if ins[4].mnemonic != 'add' or ins[4].operands[0].reg != ins[1].operands[0].reg or ins[4].operands[1].reg != ins[1].operands[0].reg: return None
-    if ins[5].mnemonic in ('ldr', 'str') and ins[5].operands[1].mem.base == ins[4].operands[0].reg: return ins[5].address + 4
+    if len(ins) > 5 and ins[5].mnemonic in ('ldr', 'str') and ins[5].operands[1].mem.base == ins[4].operands[0].reg: return ins[5].address + 4
     return ins[4].address
 mut = {}
 if A.mutate:
@@ -98,11 +107,21 @@ class Emu:
         RW = UC_PROT_READ | UC_PROT_WRITE                      # Heap / stack / TSD are non-executable: when an indirect call lands in random data, both sides take the same instruction fetch fault
         u.mem_map(ARENA, ARENA_SZ, RW); u.mem_write(ARENA, arena0)
         u.mem_map(STK, STK_SZ, RW); u.mem_map(TSD, 0x10000, RW)
+        self.poison, self.clobber = [], False
+        self.pmask = bytearray(STK_SZ) if ANDROID and patched else None   # stack bytes overwritten by a signal frame and not written since
+        if ANDROID and patched:
+            u.mem_map(TLSB, 0x1000, RW)
+            def clobber(uc, addr, size, d):   # a signal frame below the current sp before each patch-area instruction
+                if not self.clobber: return
+                sp = uc.reg_read(UC_ARM64_REG_SP)
+                if STK + 256 <= sp <= STK + STK_SZ: uc.mem_write(sp - 256, POISON); self.poison.append(sp - 256); self.pmask[sp - 256 - STK:sp - STK] = ONES
+            u.hook_add(UC_HOOK_CODE, clobber, begin=IB + PO, end=IB + PAGE(len(pat)) - 1)
         for base, sz in ((TRAP, TRAP_SZ), (RET, 0x10000), (GATE, 0x10000)): u.mem_map(base, sz, UC_PROT_EXEC | UC_PROT_READ)
         self.w = []; self.fault = None; self.stop = None; self.hit = set()
         self.wpatch, self.wcode = set(), set()   # bytes written from the patch area (rewrite blocks' red-zone scratch) / from anywhere else
         def wr(uc, acc, addr, size, val, d):
             self.w.append((addr, size))
+            if self.pmask is not None and STK <= addr < STK + STK_SZ: self.pmask[addr - STK:addr - STK + size] = bytes(size)
             if self.patched: (self.wpatch if uc.reg_read(UC_ARM64_REG_PC) >= IB + PO else self.wcode).update(range(addr, addr + size))
         u.hook_add(UC_HOOK_MEM_WRITE, wr)
         def bad(uc, acc, addr, size, val, d): self.fault = (acc, addr); return False
@@ -127,6 +146,9 @@ class Emu:
             if ARENA <= a < ARENA + ARENA_SZ: self.u.mem_write(a, self.arena0[a - ARENA:a - ARENA + s])
             elif IB <= a < IB + PO: self.u.mem_write(a, self.image[a - IB:a - IB + s])
             elif STK <= a < STK + STK_SZ: self.u.mem_write(a, bytes(s))
+        for a in self.poison: self.u.mem_write(a, bytes(256))
+        if self.poison: self.pmask[:] = bytes(STK_SZ)
+        self.poison.clear()
         self.w.clear(); self.wpatch.clear(); self.wcode.clear(); self.fault = None; self.stop = None
     def run(self, fn, init, budget):
         u = self.u; self.restore()
@@ -137,11 +159,12 @@ class Emu:
         u.reg_write(UC_ARM64_REG_FPCR, 0); u.reg_write(UC_ARM64_REG_FPSR, 0)   # Every trial starts from the same floating-point control / status, no leakage across functions
         u.mem_write(SP0, init['stk'])
         if self.patched:
-            u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, TSD)
+            u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, 0 if ANDROID else TSD)
+            if ANDROID: u.mem_write(TLSB + 16, struct.pack('<Q', TSD)); self.clobber = fn not in below_funcs
             for key, idx in KEY_IDX.items():
                 u.mem_write(IB + KEY_PAGE_OFF + 8 * idx, struct.pack('<Q', KEY_SLOT[key] * 8))
             for k, v in ((K18, init['g'][18]), (KTLS, init['tls']), (KTLR, init['tlr']), (KGATE, GATE)): u.mem_write(TSD + 8 * k, struct.pack('<Q', v))
-            u.reg_write(UC_ARM64_REG_X18, 0xDEADBEEFDEADBEEF); u.reg_write(UC_ARM64_REG_TPIDR_EL0, 0)
+            u.reg_write(UC_ARM64_REG_X18, 0xDEADBEEFDEADBEEF); u.reg_write(UC_ARM64_REG_TPIDR_EL0, TLSB if ANDROID else 0)
         else:
             u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, init['tlr']); u.reg_write(UC_ARM64_REG_TPIDR_EL0, init['tls'])
         try: u.emu_start(IB + fn, 0, count=budget)
@@ -170,6 +193,7 @@ def mem_diff(eo, ep, sp):
     # Red-zone scratch of the rewrite blocks: below the entry sp the stack holds nothing at entry, so a byte the original never wrote and the
     # rewritten image wrote only from the patch area is leftover scratch that a later frame (after sp moved down) has not initialized yet
     addrs -= {x for x in ep.wpatch - ep.wcode - worig if STK <= x < SP0}
+    if ep.pmask is not None: addrs = {x for x in addrs if not (STK <= x < STK + STK_SZ and ep.pmask[x - STK])}
     for x in sorted(addrs):
         if eo.u.mem_read(x, 1) != ep.u.mem_read(x, 1): return x
     return None

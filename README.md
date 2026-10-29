@@ -130,7 +130,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
 
 - **[d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)** ([jhaizhou](https://github.com/jhaizhou-ops), MIT): the architecture and most of
   the host, graphics layer and verification tools; later the controller mapping, silent no-ops reported, the per-program reflection summary, the
-  Metal 4 launch check, the audio notifier's priority and dropped presents for a covered window.
+  Metal 4 launch check, the audio notifier's priority and dropped presents for a covered window; for Android, the rewrite blocks that move sp before
+  they save a register (no red zone on Linux).
 - **d2r-mobile contributors** [SepheTT](https://github.com/SepheTT) (buffer ↔ texture copy strides, the weak import test) and
   [BossaMelon](https://github.com/BossaMelon) (the declared launch screen).
 - **[nxnative](https://github.com/seedds/nxnative)** ([seedds](https://github.com/seedds), MIT) and **botw-mobile**
@@ -171,7 +172,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17) (what an iOS 17 build needs), [GirlNet/nxnative](https://github.com/GirlNet/nxnative)
   (the host built for every game on a CI runner).
 - **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's Android port:
-  the address-region refusals logged and the node area cut for a Unity 6 sdk build, credited in the code; its Android facts guide the Android port.
+  the address-region refusals logged and the node area cut for a Unity 6 sdk build, the rewriter's Android target (thread slots in bionic's
+  TLS_SLOT_APP), credited in the code; its Android facts guide the Android port.
 - **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): a stamp of the
   rewriter in the product, the rewriter refusing system registers it does not know, the SDK's abort text at a Break.
 - **[LibHac](https://www.nuget.org/packages/LibHac/0.19.0)** ([Alex Barney](https://github.com/Thealexbarney), MIT; the NuGet package, as its

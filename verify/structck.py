@@ -47,6 +47,10 @@ out_dir, mod, nso = sys.argv[1:4]
 orig = nsoimg.load(nso)
 h = nsoimg.header(out_dir, mod)
 PO, TE = h['PATCH_OFF'], h['TEXT_END']
+# The android target (patch_nso.py DM_TARGET, plan item 301b): the slot block is at [tpidr_el0 + 16] (mrs xN, tpidr_el0; ldr xN, [xN, #0x10]), and a block
+# moves sp down before it saves a register (stp ..., [sp, #-16]! / ldp ..., [sp], #16); the sites that keep the red-zone form are listed in belowsp.tsv
+AND = h.get('TARGET_ANDROID') == 1
+BELOW = {int(l, 16) for l in open(f'{out_dir}/{mod}.belowsp.tsv') if not l.startswith('#')} if AND else set()
 pat = open(f'{out_dir}/{mod}.patched.bin', 'rb').read()
 W = lambda b, o: struct.unpack_from('<I', b, o)[0]
 fails = []
@@ -261,7 +265,8 @@ nwin_ref = sum(1 for o in ind if o in inwin)
 
 # ④ Patch area is clean
 P = llvm_dis(pat[PO:], PO)
-left = sorted(o for o, t in P.items() if RX18.search(t) or sysk(t) not in (None, 'tpidrro_r'))
+_slotbase = lambda o: AND and W(pat, o) & 0xFFFFFFE0 == 0xD53BD040 and W(pat, o + 4) == 0xF9400800 | (W(pat, o) & 31) << 5 | (W(pat, o) & 31)   # mrs xN, tpidr_el0; ldr xN, [xN, #0x10]
+left = sorted(o for o, t in P.items() if RX18.search(t) or not (sysk(t) is None or (sysk(t) == 'tpidrro_r' and not AND) or (sysk(t) == 'tpidr_r' and _slotbase(o))))
 if left: bad(f'patch area still contains x18/system registers/svc: {len(left)}, e.g. {[(hex(x), P[x]) for x in left[:5]]}')
 pleft = sorted(o for o, t in P.items() if RXPLAIN.match(t))
 if pleft: bad(f'patch area has plain load-exclusives (⑭): {len(pleft)}, e.g. {[(hex(x), P[x]) for x in pleft[:5]]}')
@@ -279,7 +284,22 @@ KEY = {k[4:-4]: v for k, v in h.items() if k.startswith('KEY_') and k.endswith('
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 _md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); _md.detail = True
 def keyseq(at):
+    if AND:   # mrs xT, tpidr_el0; ldr xT, [xT, #0x10]; then the key page sequence as on apple
+        q = list(_md.disasm(pat[at:at + 8], at))
+        if len(q) < 2 or q[0].mnemonic != 'mrs' or 'tpidr_el0' not in q[0].op_str or f'{q[1].mnemonic} {q[1].op_str}' != f'ldr {q[0].op_str.split(",")[0]}, [{q[0].op_str.split(",")[0]}, #0x10]':
+            return None
+        r = _keyseq(at + 4, q[0].operands[0].reg)
+        return r
+    return _keyseq(at, None)
+def _keyseq(at, treg):
     q = list(_md.disasm(pat[at:at + 20], at))
+    if treg is not None:   # android: the key page sequence after ldr xT, [xT, #0x10] (q[0] is that ldr)
+        if len(q) < 4 or q[1].mnemonic != 'adrp' or q[1].operands[1].imm != h['KEY_PAGE_OFF'] \
+                or q[2].mnemonic != 'ldr' or q[2].operands[1].mem.base != q[1].operands[0].reg \
+                or q[3].mnemonic != 'add' or q[3].operands[0].reg != treg or q[3].operands[1].reg != treg:
+            return None
+        d = q[2].operands[1].mem.disp
+        return (q[3].address + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < 8 else None
     if len(q) < 5 or q[0].mnemonic != 'mrs' or 'tpidrro_el0' not in q[0].op_str \
             or q[1].mnemonic != 'adrp' or q[1].operands[1].imm != h['KEY_PAGE_OFF'] \
             or q[2].mnemonic != 'ldr' or q[2].operands[1].mem.base != q[1].operands[0].reg \
@@ -289,13 +309,14 @@ def keyseq(at):
     d = q[2].operands[1].mem.disp
     return (q[3].address + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < 8 else None
 def paramseq(at, r):
-    q = list(_md.disasm(pat[at:at + 40], at))
+    q = list(_md.disasm(pat[at:at + 44], at))
+    if AND and len(q) > 2: q = q[:2] + q[3:]   # (the slot base load after the mrs)
     tmp = 17 if r == 16 else 16
     rn = lambda ins, i: ins.reg_name(ins.operands[i].reg)
     if len(q) < 8 or q[0].mnemonic not in ('stur', 'str') or rn(q[0], 0) != f'x{tmp}' \
             or q[0].operands[1].mem.base != capstone.arm64_const.ARM64_REG_SP or q[0].operands[1].mem.disp not in (-16, -24) \
             or q[1].mnemonic != 'mrs' or rn(q[1], 0) != f'x{r}' \
-            or 'tpidrro_el0' not in q[1].op_str or q[2].mnemonic != 'adrp' \
+            or ('tpidr_el0' if AND else 'tpidrro_el0') not in q[1].op_str or q[2].mnemonic != 'adrp' \
             or q[2].operands[1].imm != h['KEY_PAGE_OFF'] or q[3].mnemonic != 'ldr' \
             or q[3].operands[1].mem.base != q[2].operands[0].reg or q[4].mnemonic != 'add' \
             or q[4].operands[0].reg != q[1].operands[0].reg or q[4].operands[1].reg != q[1].operands[0].reg \
@@ -303,7 +324,7 @@ def paramseq(at, r):
             or q[5].operands[1].mem.base != q[4].operands[0].reg or q[6].mnemonic not in ('ldur', 'ldr') \
             or rn(q[6], 0) != f'x{tmp}' \
             or q[6].operands[1].mem.base != capstone.arm64_const.ARM64_REG_SP \
-            or q[6].operands[1].mem.disp != q[0].operands[1].mem.disp or q[7].mnemonic != 'b':
+            or (q[6].operands[1].mem.disp != q[0].operands[1].mem.disp and not AND) or q[7].mnemonic != 'b':
         return None
     d = q[3].operands[1].mem.disp
     return (q[6].address + 4, d // 8)
@@ -360,7 +381,7 @@ if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KPARAM0', 'KPARAM1', 'KPARAM2',
 kv = {v: k for k, v in KEY.items()}; nk = {}
 for o in range(PO, len(pat) - 4, 4):
     w = W(pat, o)
-    if w & 0xFFFFFFE0 != 0xD53BD060: continue           # mrs xN, tpidrro_el0
+    if w & 0xFFFFFFE0 != (0xD53BD040 if AND else 0xD53BD060): continue           # mrs xN, tpidrro_el0 (android: mrs xN, tpidr_el0)
     n = w & 31; ks = keyseq(o); k = kv.get(ks[1]) if ks else None
     if not ks or k is None:
         bad(f'patch area {o:#x}: tpidrro read is not followed by the key page indirect slot sequence'); continue
@@ -464,6 +485,24 @@ def _mem_sp(ins, load):
             if op.mem.disp < 0: return op.mem.disp
             if load and ins.mnemonic == 'ldp' and op.mem.disp == 0: return -16
     return None
+_SPM = re.compile(r'\[sp(?:, #(-?(?:0x)?[0-9a-f]+))?\](!|, #(-?(?:0x)?[0-9a-f]+))?')
+def _sp_regs(block):
+    """android: (saved, restored) as {register: [(address from the sp the block was entered with, index)]}, sp followed through the block's
+    pre- and post-index forms (a pair's second register 8 or 4 bytes on); only addresses below the entry sp count, as the red-zone pairing does"""
+    saved, restored, d = {}, {}, 0
+    for i, ins in enumerate(block):
+        m = _SPM.search(ins.op_str)
+        if not m or not (ins.mnemonic.startswith('st') or ins.mnemonic.startswith('ld')): continue
+        off = int(m.group(1), 0) if m.group(1) else 0
+        if m.group(2) == '!': at = d + off; d = at
+        elif m.group(3): at = d; d = d + int(m.group(3), 0)
+        else: at = d + off
+        regs = ins.op_str.split('[')[0].rstrip(', ').split(', ')
+        for k, r in enumerate(regs):
+            name = 'x29' if r == 'fp' else 'x30' if r == 'lr' else re.sub(r'^[wx]', 'x', r)
+            a = at + k * (8 if r.startswith('x') or r in ('fp', 'lr') else 4)
+            if a < 0: (saved if ins.mnemonic.startswith('st') else restored).setdefault(name, []).append((a, i))
+    return saved, restored
 def _block(start, size=256):
     out = []
     for ins in _md.disasm(pat[start:start + size], start):
@@ -478,6 +517,11 @@ for a, b, r, _ in params:
 static_seen = 0
 # mov sp, x18 (stackalloc) blocks reload x16 / x17 through x17 = old sp, which the red-zone pairing below cannot see: check them word for word instead
 def _movsp_ok(a, s):
+    if AND:
+        q = list(_md.disasm(bytes(pat[s:s + 48]), s)); ks = keyseq(s + 4)
+        return (len(q) == 12 and f'{q[0].mnemonic} {q[0].op_str}' == 'stp x16, x17, [sp, #-0x10]!' and ks is not None and ks[1] == KEY['K18']
+                and f'{q[6].mnemonic} {q[6].op_str}' == 'ldr x16, [x16]'
+                and [f'{x.mnemonic} {x.op_str}' for x in q[7:]] == ['mov x17, sp', 'mov sp, x16', 'ldr x16, [x17]', 'ldr x17, [x17, #8]', f'b #{a + 4:#x}'])
     q = list(_md.disasm(bytes(pat[s:s + 48]), s)); ks = keyseq(s + 8)
     return (len(q) == 12 and W(pat, s) == 0xF81F03F0 and W(pat, s + 4) == 0xF81E83F1                # stur x16,[sp,#-16]; stur x17,[sp,#-24]
             and q[2].op_str == 'x16, tpidrro_el0' and ks is not None and ks[1] == KEY['K18']
@@ -500,7 +544,10 @@ for a, allowed in static_entries:
             allowed.update(('x0', 'x1'))
     saved = {}
     restored = {}
-    for i, ins in enumerate(block):
+    if AND and a not in BELOW:
+        saved, restored = _sp_regs(block); block_ = []
+    else: block_ = block
+    for i, ins in enumerate(block_):
         d = _mem_sp(ins, False)
         if d is not None:
             regs = [op.reg for op in ins.operands[:2] if op.type == capstone.arm64_const.ARM64_OP_REG]
@@ -515,7 +562,7 @@ for a, allowed in static_entries:
                 restored.setdefault(name, []).append((d, i))
     writes = set().union(*(_writes(ins) for ins in block)) if block else set()
     for reg in sorted(writes - allowed):
-        wi = [i for i, ins in enumerate(block) if reg in _writes(ins) and not (i > 0 and _mem_sp(ins, True) is not None)]
+        wi = [i for i, ins in enumerate(block) if reg in _writes(ins) and not (i > 0 and any(i == ri for ri_ in restored.values() for _, ri in ri_))]
         dead = any(ins.mnemonic in ('br', 'blr') and ins.operands and ins.reg_name(ins.operands[0].reg) in (reg, reg[1:]) for ins in block)
         ok = dead or any(sd == rd and si < min(wi, default=10**9) and ri > max(wi, default=-1)
                  for sd, si in saved.get(reg, []) for rd, ri in restored.get(reg, []))
@@ -605,6 +652,7 @@ print(f'CAVES {mod} caves={len(caves)} behind_options={len(gated)}')
 # ⑪ Exclusive sections (W / R rows) and jump tables with explicit targets (JT rows), word by word
 def STRX_(t, n): return 0xF9000000 | (n << 5) | t                                  # str xt, [xn]
 def LDP_(t, t2): return 0xA97F0000 | (t2 << 10) | (31 << 5) | t                     # ldp xt, xt2, [sp, #-16]
+def LDP_POST_(t, t2): return 0xA8C10000 | (t2 << 10) | (31 << 5) | t                # ldp xt, xt2, [sp], #16 (android)
 _sec = {lo: [(lo, hi, None)] for lo, hi in wins} | psecs                          # entry → pieces (a window is one piece; its copy follows the prologue)
 _into = {}                                                                        # instruction of a section → its entry
 for e, ps in _sec.items():
@@ -638,17 +686,19 @@ for e, ps in sorted(_sec.items()):
     s = btarget(e)
     if s is None: continue                                                        # ② already reported the head
     q0 = _q(pat, s); ks = keyseq(s + 4)
-    m = re.fullmatch(r'x(\d+), x(\d+), \[sp, #-0x10\]', q0.op_str) if q0 and q0.mnemonic == 'stp' else None
-    if not m or not ks or ks[1] != KEY['K18'] or _txt(pat, s + 4) != f'mrs x{m.group(2)}, tpidrro_el0' or _txt(pat, s + 20) != f'ldr x{m.group(1)}, [x{m.group(2)}]':
-        bad(f'exclusive section {e:#x}: prologue is not stp xS, xT, [sp, #-16]; slot address of K18 in xT; ldr xS, [xT]'); continue
-    S, T = int(m.group(1)), int(m.group(2)); nsec += 1
+    m = re.fullmatch(r'x(\d+), x(\d+), \[sp, #-0x10\](!?)', q0.op_str) if q0 and q0.mnemonic == 'stp' else None
+    nrz = bool(m and m.group(3)); tpl = 8 if AND else 4   # the slot base: one instruction (apple), two (android)
+    if not m or not ks or ks[1] != KEY['K18'] or _txt(pat, s + 4) != f'mrs x{m.group(2)}, {"tpidr_el0" if AND else "tpidrro_el0"}' \
+            or _txt(pat, s + 16 + tpl) != f'ldr x{m.group(1)}, [x{m.group(2)}]' or nrz != (AND and e not in BELOW):
+        bad(f'exclusive section {e:#x}: prologue is not stp xS, xT, [sp, #-16]{"! (or, listed below sp, without !)" if AND else ""}; slot address of K18 in xT; ldr xS, [xT]'); continue
+    S, T = int(m.group(1)), int(m.group(2)); nsec += 1; c0 = s + 20 + tpl
     inr = {o for lo, hi, c in ps for o in range(lo, hi, 4)}
-    if ps[0][2] is None: ps = [(ps[0][0], ps[0][1], s + 24)]
+    if ps[0][2] is None: ps = [(ps[0][0], ps[0][1], c0)]
     elif e != ps[0][0]:
-        if btarget(s + 24) != next(c + e - lo for lo, hi, c in ps if lo <= e < hi): bad(f'exclusive section {e:#x}: no b to the entry\'s copy after the prologue')
-    elif ps[0][2] != s + 24: bad(f'exclusive section {e:#x}: the first piece is not copied right after the prologue')
+        if btarget(c0) != next(c + e - lo for lo, hi, c in ps if lo <= e < hi): bad(f'exclusive section {e:#x}: no b to the entry\'s copy after the prologue')
+    elif ps[0][2] != c0: bad(f'exclusive section {e:#x}: the first piece is not copied right after the prologue')
     cpos = {o: c + o - lo for lo, hi, c in ps for o in range(lo, hi, 4)}
-    exit_ok = lambda x, t: x is not None and W(pat, x) == STRX_(S, T) and W(pat, x + 4) == LDP_(S, T) and btarget(x + 8) == t
+    exit_ok = lambda x, t: x is not None and W(pat, x) == STRX_(S, T) and W(pat, x + 4) == (LDP_POST_ if nrz else LDP_)(S, T) and btarget(x + 8) == t
     for lo, hi, c in ps:
         for o in range(lo, hi, 4):
             ow, cp = W(orig, o), cpos[o]; pw = W(pat, cp); t = _bt(ow, o)
@@ -672,22 +722,24 @@ for a, tg in sorted(tabs.items()):
     if sites.get(a) != 'x18' or _txt(orig, a) != 'br x18': bad(f'jump table {a:#x}: not an x18 site at br x18'); continue
     i = _bs.bisect_right(_fs11, a) - 1; f0, f1 = _fs11[i], (_fs11[i + 1] if i + 1 < len(_fs11) else TE)
     if any(not (f0 <= t < f1) or t % 4 for t in tg): bad(f'jump table {a:#x}: a target outside its function {f0:#x}-{f1:#x}')
-    s = btarget(a); u = sorted(set(tg)); ks = keyseq(s + 8) if s is not None else None
-    ok = bool(ks) and ks[1] == KEY['K18'] and _txt(pat, s) == 'stur x16, [sp, #-0x10]' and _txt(pat, s + 4) == 'stur x17, [sp, #-0x18]' \
+    s = btarget(a); u = sorted(set(tg)); ks = (keyseq(s + 4) if AND else keyseq(s + 8)) if s is not None else None
+    if AND: ok = bool(ks) and ks[1] == KEY['K18'] and _txt(pat, s) == 'stp x16, x17, [sp, #-0x10]!' and _txt(pat, s + 4) == 'mrs x16, tpidr_el0' and _txt(pat, s + 24) == 'ldr x16, [x16]'
+    else: ok = bool(ks) and ks[1] == KEY['K18'] and _txt(pat, s) == 'stur x16, [sp, #-0x10]' and _txt(pat, s + 4) == 'stur x17, [sp, #-0x18]' \
         and _txt(pat, s + 8) == 'mrs x16, tpidrro_el0' and _txt(pat, s + 24) == 'ldr x16, [x16]'
     pads = (s or 0) + 28 + 16 * len(u) + 4
     for k, t in enumerate(u if ok else []):
         o = s + 28 + 16 * k; qa, qb = _q(pat, o), _q(pat, o + 4)
         ok = ok and qa.mnemonic == 'adrp' and qa.op_str.startswith('x17,') and qa.operands[1].imm == t & ~0xFFF \
             and qb.mnemonic == 'add' and qb.op_str.startswith('x17, x17, #') and qb.operands[2].imm == t & 0xFFF and _txt(pat, o + 8) == 'sub x17, x17, x16' \
-            and _txt(pat, o + 12) == f'cbz x17, #{pads + 12 * k:#x}' and _txt(pat, pads + 12 * k) == 'ldur x16, [sp, #-0x10]' \
-            and _txt(pat, pads + 12 * k + 4) == 'ldur x17, [sp, #-0x18]' and btarget(pads + 12 * k + 8) == t
+            and _txt(pat, o + 12) == f'cbz x17, #{pads + 12 * k:#x}' and btarget(pads + 12 * k + 8) == t \
+            and ([_txt(pat, pads + 12 * k), _txt(pat, pads + 12 * k + 4)] == (['ldp x16, x17, [sp], #0x10', 'nop '] if AND else ['ldur x16, [sp, #-0x10]', 'ldur x17, [sp, #-0x18]']))
     if not (ok and _txt(pat, pads - 4) == 'brk #0x18'): bad(f'jump table {a:#x}: block is not the compare chain for exactly its {len(u)} targets')
 print(f'SECTIONS {mod} windows={len(wins)} pieces_sections={len(psecs)} checked={nsec} explicit_jump_tables={len(tabs)} targets={sum(len(set(t)) for t in tabs.values())}')
 
 cnt = {}
 if _hostcall: print(f'cuts introduce {len(_hostcall)} host-call gates: ' + ', '.join(f"{a:#x}=svc#{n:#x}" for a, n in _hostcall.items()))
 for k in sites.values(): cnt[k] = cnt.get(k, 0) + 1
+if AND: print(f'ANDROID {mod} below_sp={len(BELOW)} {[hex(x) for x in sorted(BELOW)][:12]}')
 print(f'STRUCT {mod} {"OK" if not fails else "FAIL"} sites={len(sites)} {cnt} jump_tables={jumps} fnptr_jumps={fnptr} x18_in_windows={nwin_ref} '
       f'acquire={len(acq)} cuts={len(cuts)}(code{ncut_code}/data{ncut_data}) obs_gates={len(obs)} param_gates={len(params)} '
       f'indep_denom={len(ind)} text_words_changed={len(diff)} gates={len(gsites)} slot_accesses={nk} failures={len(fails)}')

@@ -8,6 +8,10 @@
 # did not differs ("redzone"): a block's scratch save past the red zone after the instruction moved sp (a post-index pop larger than 16 with the
 # save at -112; upstream 373b402 / 4f0603f count the Android form; plan item 201). The start sp's 128 bytes alone used to be watched.
 # Mutation self-check: draw mutate ordinary rewrite blocks; in half the replaced instruction is changed to nop, in half the target of the trampoline exit b gets +4; all must be judged divergent (a negative control showing the criterion can discriminate).
+# The android target (patch_nso.py DM_TARGET, plan item 301b): the patched side's tpidr_el0 points at a bionic TLS area whose slot 2 (+16) holds the slot block,
+# and Linux has no red zone: before every instruction of a block the 256 bytes below the current sp are overwritten (a signal frame, which a handler without
+# SA_ONSTACK puts there at any moment), and a patched access below the current sp that the original did not make differs ("redzone"). The sites listed in
+# belowsp.tsv keep the red-zone form and are checked as on apple (counted in the summary). DM_TEST_NRZ_OFF products (red-zone forms under android's slots) fail here.
 # Host gate (svc / cntpct / cntvct) semantics are defined by the host and are not run here, structck.py does the structural check; registered cuts (cuts.tsv) are intentional semantic changes and likewise only have their bytes checked by structck.
 import sys, os, struct, random, argparse, multiprocessing as mp
 from unicorn import *
@@ -34,6 +38,10 @@ KEY_IDX = {k[4:-4]: v for k, v in hdr.items() if k.startswith('KEY_') and k.ends
 KEY_SLOT = {k: 300 + i for i, k in enumerate(sorted(KEY_IDX, key=KEY_IDX.get))}
 SLOT18, SLOTTLS, SLOTTLR = (KEY_SLOT[k] for k in ('K18', 'KTLS', 'KTLR'))
 KEY_PAGE_OFF = hdr['KEY_PAGE_OFF']
+ANDROID = hdr.get('TARGET_ANDROID') == 1
+BELOW = {int(l, 16) for l in open(f'{DIR}/{MOD}.belowsp.tsv') if not l.startswith('#')} if ANDROID else set()
+TLSB = 0x2100000   # android: bionic's TLS slots (tpidr_el0); slot 2 holds the slot block's address
+PRO = 28 if ANDROID else 24   # a window's prologue: stp; the slot base (one instruction, android two); adrp; ldr; add; ldr
 pat = bytearray(open(f'{DIR}/{MOD}.patched.bin', 'rb').read())
 orig = nsoimg.load(A.nso)
 ncut = sum(1 for l in open(f'{DIR}/{MOD}.cuts.tsv') if not l.startswith('#'))
@@ -89,17 +97,17 @@ def btarget(b, o):
 def plain_block(a):
     """Ordinary rewrite block (stp; indirect slot read via key page; replaced instruction; indirect slot write via key page; ...) → offset of the replaced instruction."""
     s = btarget(pat, a); w0 = struct.unpack_from('<I', pat, s)[0]
-    if w0 & 0xFFC003E0 != 0xA90003E0: return None          # stp xS, xT, [sp, #off]
-    ins = list(md.disasm(bytes(pat[s:s + 36]), s))
-    if len(ins) < 8 or ins[1].mnemonic != 'mrs' or 'tpidrro_el0' not in ins[1].op_str:
+    if w0 & 0xFFC003E0 not in (0xA90003E0, 0xA98003E0): return None          # stp xS, xT, [sp, #off] (android: [sp, #-F]!)
+    ins = list(md.disasm(bytes(pat[s:s + 40]), s)); k = 1 if ANDROID else 0   # (android: ldr xT, [xT, #0x10] after the mrs)
+    if len(ins) < 8 + k or ins[1].mnemonic != 'mrs' or ('tpidr_el0' if ANDROID else 'tpidrro_el0') not in ins[1].op_str:
         return None
-    if ins[2].mnemonic != 'adrp' or ins[2].operands[1].imm != KEY_PAGE_OFF: return None
-    if ins[3].mnemonic != 'ldr' or ins[3].operands[1].mem.base != ins[2].operands[0].reg: return None
+    if ins[2 + k].mnemonic != 'adrp' or ins[2 + k].operands[1].imm != KEY_PAGE_OFF: return None
+    if ins[3 + k].mnemonic != 'ldr' or ins[3 + k].operands[1].mem.base != ins[2 + k].operands[0].reg: return None
     T = ins[1].operands[0].reg
-    if ins[4].mnemonic != 'add' or ins[4].operands[0].reg != T or ins[4].operands[1].reg != T: return None
-    if ins[5].mnemonic != 'ldr' or ins[5].operands[1].mem.base != T: return None              # ldr xS,[xT]: read the slot
-    if ins[7].mnemonic != 'str' or ins[7].operands[1].mem.base != T: return None              # str xS,[xT]: write back to the slot - only ordinary blocks have it, conditional blocks do not (same convention as the old version)
-    return ins[6].address
+    if ins[4 + k].mnemonic != 'add' or ins[4 + k].operands[0].reg != T or ins[4 + k].operands[1].reg != T: return None
+    if ins[5 + k].mnemonic != 'ldr' or ins[5 + k].operands[1].mem.base != T: return None              # ldr xS,[xT]: read the slot
+    if ins[7 + k].mnemonic != 'str' or ins[7 + k].operands[1].mem.base != T: return None              # str xS,[xT]: write back to the slot - only ordinary blocks have it, conditional blocks do not (same convention as the old version)
+    return ins[6 + k].address
 GP = [getattr(sys.modules['unicorn.arm64_const'], f'UC_ARM64_REG_X{i}') for i in range(29)] + [UC_ARM64_REG_X29, UC_ARM64_REG_X30]
 VR = [getattr(sys.modules['unicorn.arm64_const'], f'UC_ARM64_REG_Q{i}') for i in range(32)]
 # Conditional branches inside an exclusive window (the status cbz/cbnz has already been turned into nop by deexcl and is not included): a random state almost never draws the "compare equal" direction (2^-32),
@@ -115,13 +123,14 @@ def cond_target(w, pc):
 # rewritten side starts at its copy with the state the prologue leaves (S = x18, T = slot address, S / T saved at [sp, #-16]).
 win_br = {}; inside = {}; piece_start = {}
 for a0, hi0 in list(winend.items()) + [(e, None) for e in secs]:
-    gate = btarget(pat, a0); pre = list(md.disasm(bytes(pat[gate:gate + 24]), gate))
-    assert [x.mnemonic for x in pre] == ['stp', 'mrs', 'adrp', 'ldr', 'add', 'ldr'], f'window block prologue does not have the expected shape {a0:#x}'
-    pieces = [(a0, hi0, gate + 24)] if hi0 is not None else secs[a0]
+    gate = btarget(pat, a0); pre = list(md.disasm(bytes(pat[gate:gate + PRO]), gate))
+    assert [x.mnemonic for x in pre] == ['stp', 'mrs'] + (['ldr'] if ANDROID else []) + ['adrp', 'ldr', 'add', 'ldr'], f'window block prologue does not have the expected shape {a0:#x}'
+    nrz_sec = pre[0].op_str.endswith('!')   # android: the pair at the moved sp
+    pieces = [(a0, hi0, gate + PRO)] if hi0 is not None else secs[a0]
     inside[a0] = {IB + c for lo, hi, cp in pieces for c in range(lo, hi, 4)}
     S, T = (GP[int(pre[0].reg_name(pre[0].operands[k].reg)[1:])] for k in (0, 1))   # stp xS, xT, [sp, #-16]
     for lo, hi, cp in pieces:
-        if lo != a0: piece_start[lo] = (a0, cp, S, T); inside[lo] = inside[a0]
+        if lo != a0: piece_start[lo] = (a0, cp, S, T, nrz_sec); inside[lo] = inside[a0]
     lst = []
     for lo, hi, copy0 in pieces:
         for c in range(lo, hi, 4):
@@ -156,7 +165,17 @@ if A.mutate:
     pat_mut = bytes(pat_mut)
 
 
-RZ_CURRENT = not os.environ.get('DM_TEST_EQUIV_RZ_START')   # negative control of t_rewriter_synth only: no check against the current sp, as before
+RZ_CURRENT = not os.environ.get('DM_TEST_EQUIV_RZ_START')
+def pre_sp(uc):
+    """The write-back of the instruction at pc when it is a pre-index load / store on sp (pair or single register), else 0"""
+    w = struct.unpack('<I', uc.mem_read(uc.reg_read(UC_ARM64_REG_PC), 4))[0]
+    if (w >> 5) & 31 != 31: return 0
+    if (w >> 27) & 7 == 0b101 and (w >> 23) & 3 == 3:                       # ldp / stp, pre-index
+        sc = 8 if w >> 30 == 2 else 4 if w >> 30 in (0, 1) else 16
+        return ((((w >> 15) & 0x7F) ^ 0x40) - 0x40) * sc
+    if (w >> 27) & 7 == 0b111 and (w >> 24) & 3 == 0 and not (w >> 21) & 1 and (w >> 10) & 3 == 3:   # ldr / str, pre-index
+        return (((w >> 12) & 0x1FF) ^ 0x100) - 0x100
+    return 0   # negative control of t_rewriter_synth only: no check against the current sp, as before
 def mk(image, arena0, patched=False):
     u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     sz = (len(image) + 0xFFFF) & ~0xFFFF
@@ -164,11 +183,19 @@ def mk(image, arena0, patched=False):
     u.mem_map(ARENA, ARENA_SZ); u.mem_write(ARENA, arena0)
     u.mem_map(TSD, 0x10000)
     u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, TSD)
-    st = {'w': [], 'fault': None, 'arena': arena0, 'rz': False, 'r': [], 'deep': []}
-    def below(uc, addr):   # patched side: more than 128 bytes below the current sp, within its 4 KiB
+    if ANDROID and patched: u.mem_map(TLSB, 0x1000); u.mem_write(TLSB + 16, struct.pack('<Q', TSD)); u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, 0)
+    st = {'w': [], 'fault': None, 'arena': arena0, 'rz': False, 'r': [], 'deep': [], 'site': None, 'poison': []}
+    def below(uc, addr):   # patched side: more than 128 bytes below the current sp (android: any byte), within its 4 KiB
         if patched and RZ_CURRENT:
+            sp = uc.reg_read(UC_ARM64_REG_SP); rz = 0 if ANDROID and st['site'] not in BELOW else 128
+            if rz == 0: sp += pre_sp(uc)   # a pre-index access on sp moves sp with it: the sp it leaves is the one a signal sees
+            if sp - 0x1000 <= addr < sp - rz: st['deep'].append(addr)
+    if ANDROID and patched:
+        def clobber(uc, addr, size, d):   # a signal frame below the current sp before each instruction of a block
+            if st['site'] in BELOW: return
             sp = uc.reg_read(UC_ARM64_REG_SP)
-            if sp - 0x1000 <= addr < sp - 128: st['deep'].append(addr)
+            if ARENA + 256 <= sp <= ARENA + ARENA_SZ: uc.mem_write(sp - 256, POISON); st['poison'].append(sp - 256)
+        u.hook_add(UC_HOOK_CODE, clobber, begin=IB + PATCH_OFF, end=IB + sz - 1)
     def wr(uc, acc, addr, size, val, d): st['w'].append((addr, size, val & ((1 << (8 * size)) - 1))); below(uc, addr)
     def bad(uc, acc, addr, size, val, d): st['fault'] = (acc, addr); return False
     def rd(uc, acc, addr, size, val, d):
@@ -180,10 +207,12 @@ def mk(image, arena0, patched=False):
     u.hook_add(UC_HOOK_MEM_INVALID, bad)
     return u, st
 
+POISON = bytes([0xA5]) * 256
 def restore(u, st):
     for a, s, v in st['w']:
         if ARENA <= a < ARENA + ARENA_SZ: u.mem_write(a, st['arena'][a:a + s])
-    st['w'].clear(); st['fault'] = None; st['rz'] = False; st['r'].clear(); st['deep'].clear()
+    for a in st['poison']: u.mem_write(a, st['arena'][a:a + 256])
+    st['w'].clear(); st['fault'] = None; st['rz'] = False; st['r'].clear(); st['deep'].clear(); st['poison'].clear()
 
 def state(u, st, patched):
     g = [u.reg_read(r) for r in GP]
@@ -198,8 +227,9 @@ def run(u, st, start, patched, init):
     for r, v in zip(GP, init['g']): u.reg_write(r, v)
     for r, v in zip(VR, init['v']): u.reg_write(r, v)
     u.reg_write(UC_ARM64_REG_SP, SP0); u.reg_write(UC_ARM64_REG_NZCV, init['nzcv'])
-    u.reg_write(UC_ARM64_REG_TPIDR_EL0, init['tls'])
+    u.reg_write(UC_ARM64_REG_TPIDR_EL0, TLSB if ANDROID and patched else init['tls'])
     if not patched: u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, init['tlr'])
+    st['site'] = start - IB
     if patched:
         for key, idx in KEY_IDX.items():
             u.mem_write(IB + KEY_PAGE_OFF + 8 * idx, struct.pack('<Q', KEY_SLOT[key] * 8))
@@ -208,8 +238,9 @@ def run(u, st, start, patched, init):
         u.mem_write(TSD + 8 * SLOTTLR, struct.pack('<Q', init['tlr']))
         u.reg_write(GP[18], 0xDEADBEEFDEADBEEF)
         if start - IB in piece_start:                                  # what the section's prologue leaves: S / T saved below sp, S = x18, T = slot address
-            _, cp, S, T = piece_start[start - IB]
+            a0_, cp, S, T, nrz_ = piece_start[start - IB]; st['site'] = a0_
             u.mem_write(SP0 - 16, struct.pack('<QQ', u.reg_read(S), u.reg_read(T))); st['w'].append((SP0 - 16, 16, 0))   # the record lets restore() put the arena back
+            if nrz_: u.reg_write(UC_ARM64_REG_SP, SP0 - 16)           # (android: the pair at the moved sp)
             u.reg_write(S, init['g'][18]); u.reg_write(T, TSD + 8 * SLOT18)
             start = IB + cp
     end = {'pc': None}
@@ -267,7 +298,8 @@ def trial(UO, SO, UP, SP, a, init):
     if a in fnptr:   # the function pointer block leaves the target in x17 (IP1, not preserved across a call / tail call by AAPCS64)
         g = list(sp_[0]); g[17] = so[0][17]; sp_ = (g,) + sp_[1:]
     ow = {x[0] for x in so[4]}
-    sp_ = sp_[:4] + ([x for x in sp_[4] if not ((SP0 - 128 <= x[0] < SP0 or tsd_slot_write(x)) and x[0] not in ow)],) + sp_[5:]
+    own = 512 if ANDROID else 128   # the block's saved pair (android: below a pre-index push it re-addressed)
+    sp_ = sp_[:4] + ([x for x in sp_[4] if not ((SP0 - own <= x[0] < SP0 or tsd_slot_write(x)) and x[0] not in ow)],) + sp_[5:]
     both = bool(so[5] and sp_[5])
     same = (so[5] == sp_[5]) if (so[5] or sp_[5]) else (so == sp_)
     deep = [x for x in SP['deep'] if x not in ow and x not in SO['r']]
@@ -338,6 +370,7 @@ if __name__ == '__main__':
             f.write('site\ttrials\teff\tdiffs\n')
             for a, n, eff, d, _ in res: f.write(f'{a:#x}\t{n}\t{eff}\t{len(d)}\n')
     ok = not bad and not zero and not miss   # A missed mutation = the criterion cannot tell a bad rewrite apart, so fail (earlier a miss was only printed, not judged)
+    if ANDROID: print(f'ANDROID {MOD} signal frames below sp before every block instruction; red-zone sites (belowsp.tsv) {len(BELOW)}')
     print(f'EQUIV {MOD} {"OK" if ok else "FAIL"} sites={len(res)} trials={T} eff_trials={E} both_fault={T - E - RZ} redzone_reads={RZ} '
           f'sites_eff_ge1={len(res) - len(zero)} sites_eff_ge{A.min_eff}={len(res) - len(low)} zero_eff={len(zero)} diff_sites={len(bad)} '
           f'windows={len(winend)} pieces_sections={len(secs)}(piece_starts={len(piece_start)}) explicit_jump_tables={len(brtab)} cond_windows={len(set(win_br) - set(piece_start))}(forced_branches={sum(len(v) for a, v in win_br.items() if a not in piece_start)}x2) gates(structck)={ngate} cuts(structck)={ncut} obs_gates(structck)={nobs} mutations={len(mut_sites)}({mut_by}) caught={caught} missed={miss} seed={A.seed}', flush=True)

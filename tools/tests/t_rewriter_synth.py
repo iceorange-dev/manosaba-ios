@@ -31,6 +31,12 @@ DM_TEST_CAVE_GATE_WRITTEN=1 (a cave behind an option written into the image as w
 7 fail (acq.tsv, the words, the copy, refusing the plain 0x900, and structck on each of the three products).
 Plan item 201: a third module pops sp by 0x40 at an x18 site (the save past the red zone after the pop) and by 0x10; equiv must flag the first.
 DM_TEST_EQUIV_RZ_START=1 (only the start sp's 128 bytes watched): 1 fail.
+Plan item 301b, the android target (DM_TARGET=android): a fourth module, the first with 0x108 / 0x114 as the third's pops and 0xb00 a function of
+x18 instructions on sp (ldr / str at unsigned offsets, a stp past the pair's reach, a pre-index push, a post-index pop, add x18, sp, #imm, ldur); the
+header names the target, no site keeps the red-zone form, a plain block starts stp xS, xT, [sp, #-0x10]! and takes the slot block from
+[tpidr_el0 + 16], the sp offsets moved by 16 (the far stp as two str), STRUCT OK, EQUIV OK with a signal frame below sp before every block
+instruction (both pops equal too), and the same module rewritten with the red-zone forms (DM_TEST_NRZ_OFF=1) differs under it.
+DM_TEST_NRZ_OFF=1 for the whole run: the fourth module's blocks take the red-zone forms: 6 fail (the four forms, structck's window prologues, equiv).
 Needs capstone, lz4, unicorn (the venv: work/build/cache/dm/venv/bin/python) and llvm-objdump (Xcode)."""
 import os, re, struct, subprocess, sys, tempfile
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
@@ -103,17 +109,18 @@ FUNCS = (0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700, 0x800, 0x900, 0xA00)
 ACQ = {0x900: 'ldaxr w8, [x0]', 0x914: 'ldaxrb w2, [x0]', 0x918: 'ldaxrh w3, [x0]', 0x91c: 'ldaxp x4, x5, [x0]', 0xa00: None}   # (0xa00: in a window)
 T0, T1 = [0x12C, 0x134, 0x13C, 0x144], [0x220, 0x228, 0x230]
 
-def build(words):
+def build(words, funcs=None):
+    funcs = funcs or FUNCS
     text = bytearray(0x1000)
     for a in range(0, 0x1000, 4): struct.pack_into('<I', text, a, NOP)
     for a, w in words.items(): struct.pack_into('<I', text, a, w)
     m0 = 8   # what an NSO's image starts with: a branch, then the MOD0 offset; MOD0 + 16 = eh_frame_hdr (relative to MOD0)
     struct.pack_into('<II', text, 0, NOP, m0); text[m0:m0 + 4] = b'MOD0'
-    struct.pack_into('<iiiiii', text, m0 + 4, 0, 0, 0, EHS - m0, EHS + 12 + 8 * len(FUNCS) - m0, 0)
+    struct.pack_into('<iiiiii', text, m0 + 4, 0, 0, 0, EHS - m0, EHS + 12 + 8 * len(funcs) - m0, 0)
     ro = bytearray(0x200)
     # eh_frame_hdr: version 1, eh_frame_ptr udata4, fde_count udata4, table datarel sdata4: one (start, fde) row per function
-    struct.pack_into('<BBBBII', ro, 0, 1, 0x03, 0x03, 0x3B, 0, len(FUNCS))
-    for k, f in enumerate(FUNCS): struct.pack_into('<ii', ro, 12 + 8 * k, f - EHS, f - EHS)
+    struct.pack_into('<BBBBII', ro, 0, 1, 0x03, 0x03, 0x3B, 0, len(funcs))
+    for k, f in enumerate(funcs): struct.pack_into('<ii', ro, 12 + 8 * k, f - EHS, f - EHS)
     for k, t in enumerate(T0): struct.pack_into('<i', ro, TAB0 - RO + 4 * k, t - TAB0)   # relative to the table itself
     for k, t in enumerate(T1): struct.pack_into('<i', ro, TAB1 - RO + 4 * k, t - 0x220)  # relative to the adr anchor
     data = bytes(0x100)
@@ -282,4 +289,45 @@ with tempfile.TemporaryDirectory() as td:
     code, log = run('-I', PATCH, nso2, os.path.join(td, 'out2'), 'm2', env=env)
     check('the rewriter refuses mrs x0, cntfrq_el0', code != 0 and 'cntfrq_el0' in log and 'a system register the rewriter does not handle' in log,
           log.strip().splitlines()[-1] if log.strip() else '')
+
+    # Plan item 301b: the android target. 0xb00: x18 on sp in every form sp_moved re-addresses
+    w4 = dict(w3)
+    for k, w in enumerate((0xA9BE7BFD, 0xF94007F2, 0xB9001FF2, 0xA91F4BF1, 0xA9BD4FF2, 0xA8C34FF2, 0x910103F2, 0xF84043F2, 0xA8C27BFD, RET)): w4[0xB00 + 4 * k] = w
+    W4 = ['stp x29, x30, [sp, #-0x20]!', 'ldr x18, [sp, #8]', 'str w18, [sp, #0x1c]', 'stp x17, x18, [sp, #0x1f0]', 'stp x18, x19, [sp, #-0x30]!',
+          'ldp x18, x19, [sp], #0x30', 'add x18, sp, #0x40', 'ldur x18, [sp, #4]', 'ldp x29, x30, [sp], #0x20', 'ret']
+    got4 = [(lambda l: f'{l[0].mnemonic} {l[0].op_str}'.strip())(list(md.disasm(struct.pack('<I', w4[0xB00 + 4 * k]), 0xB00 + 4 * k))) for k in range(len(W4))]
+    check('the fourth module: 0xb00 decodes as intended', got4 == W4, str(got4))
+    nso4 = os.path.join(td, 'm4'); open(nso4, 'wb').write(build(w4, FUNCS + (0xB00,))); out4 = os.path.join(td, 'out4')
+    env4 = {**env, 'DM_TARGET': 'android'}
+    code, log = run('-I', PATCH, nso4, out4, 'm4', env=env4)
+    check('301b: the rewriter runs for android', code == 0, log.strip().splitlines()[-1] if log.strip() else '')
+    if code == 0:
+        hdr4 = open(os.path.join(out4, 'm4.fixups.tsv')).read(); bel = [l for l in open(os.path.join(out4, 'm4.belowsp.tsv')) if not l.startswith('#')]
+        check('... the header names the target and no site keeps the red-zone form', '# TARGET_ANDROID\t1' in hdr4 and not bel, f'below sp: {bel}')
+        p4 = open(os.path.join(out4, 'm4.patched.bin'), 'rb').read()
+        def blk(a, n=12):
+            s_ = btarget(p4, a); return [f'{x.mnemonic} {x.op_str}'.strip() for x in md.disasm(p4[s_:s_ + 4 * n], s_)] if s_ else []
+        b1 = blk(0xB04)
+        check('... a plain block: stp xS, xT, [sp, #-0x10]!, the slot block from [tpidr_el0 + 16]', len(b1) > 2 and re.fullmatch(r'stp x\d+, x(\d+), \[sp, #-0x10\]!', b1[0])
+              and b1[1] == f'mrs x{re.match(r"stp x\d+, x(\d+)", b1[0]).group(1)}, tpidr_el0' and re.fullmatch(r'ldr x(\d+), \[x\1, #0x10\]', b1[2]) is not None, str(b1[:3]))
+        S1 = re.match(r'stp x(\d+)', b1[0]).group(1) if b1 and re.match(r'stp x(\d+)', b1[0]) else '?'
+        check('... sp offsets moved by 16: ldr x18, [sp, #8] → ldr xS, [sp, #0x18]; str w18, [sp, #0x1c] → str wS, [sp, #0x2c]',
+              f'ldr x{S1}, [sp, #0x18]' in b1 and any(re.fullmatch(r'str w\d+, \[sp, #0x2c\]', t) for t in blk(0xB08)), str(b1))
+        b3 = blk(0xB0C); S3 = re.match(r'stp x(\d+)', b3[0]).group(1) if b3 and re.match(r'stp x(\d+)', b3[0]) else '?'
+        check('... the stp past the pair\'s reach (0x1f0 + 16) as str x17, [sp, #0x200]; str xS, [sp, #0x208]',
+              [t for t in b3 if re.fullmatch(r'str x\d+, \[sp, #0x20[08]\]', t)] == ['str x17, [sp, #0x200]', f'str x{S3}, [sp, #0x208]'], str(b3))
+        b5 = blk(0xB10); S5 = re.match(r'stp x(\d+)', b5[0]).group(1) if b5 and re.match(r'stp x(\d+)', b5[0]) else '?'
+        check('... the push by 0x30: its pair saved below what it writes (sp down 0x40), the push at [sp, #0x10], sp back by 0x10',
+              b5[:1] == [f'stp x{S5}, x{b5[0].split(", ")[1][1:]}, [sp, #-0x40]!'] and f'stp x{S5}, x19, [sp, #0x10]' in b5
+              and any(re.fullmatch(rf'ldp x{S5}, x\d+, \[sp\], #0x10', t) for t in b5), str(b5))
+        code, so = run(STRUCTCK, out4, 'm4', nso4, env=env)
+        check('... structck: STRUCT OK', code == 0 and re.search(r'^STRUCT m4 OK', so, re.M) is not None, so.strip().splitlines()[-1])
+        code, eo = run(EQUIV, out4, 'm4', nso4, '--jobs', '2', env=env)
+        check('... equiv with a signal frame below sp before every block instruction: EQUIV OK, the pops by 0x40 and 0x10 too',
+              code == 0 and re.search(r'^EQUIV m4 OK', eo, re.M) is not None and 'ANDROID m4' in eo, eo.strip().splitlines()[-1])
+        out5 = os.path.join(td, 'out5')
+        code, log = run('-I', PATCH, nso4, out5, 'm4', env={**env4, 'DM_TEST_NRZ_OFF': '1'})
+        code, eo = run(EQUIV, out5, 'm4', nso4, '--jobs', '2', '--mutate', '0', env=env) if code == 0 else (code, log)
+        check('... the red-zone forms under android\'s slots (DM_TEST_NRZ_OFF): equiv differs', code != 0 and len(diffs(eo)) > 10,
+              eo.strip().splitlines()[-1] if eo.strip() else '')
 print(f'== {total} checks, {fails} failed =='); sys.exit(fails != 0)

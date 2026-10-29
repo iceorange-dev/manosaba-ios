@@ -134,6 +134,9 @@ def LDUR(t, n, off): return 0xF8400000 | ((off & 0x1FF) << 12) | (n << 5) | t   
 def LDRX(t, n, imm12=0): return 0xF9400000 | (imm12 << 10) | (n << 5) | t
 def STRX(t, n, imm12=0): return 0xF9000000 | (imm12 << 10) | (n << 5) | t
 def MRS_TPIDRRO(t): return 0xD53BD060 | t
+def MRS_TPIDR(t): return 0xD53BD040 | t
+def STR_PRE(t, n, off): return 0xF8000C00 | ((off & 0x1FF) << 12) | (n << 5) | t    # str xt, [xn, #off]!
+def LDR_POST(t, n, off): return 0xF8400400 | ((off & 0x1FF) << 12) | (n << 5) | t   # ldr xt, [xn], #off
 def ADRP(dd, pc, target):
     imm = ((target & ~0xFFF) - (pc & ~0xFFF)) >> 12; assert -(1 << 20) <= imm < (1 << 20)
     return 0x90000000 | ((imm & 3) << 29) | (((imm >> 2) & 0x7FFFF) << 5) | dd
@@ -155,6 +158,82 @@ NOP = 0xD503201F
 def dis(w, addr):
     l = list(md.disasm(struct.pack('<I', w), addr)); assert len(l) == 1, hex(w)
     return l[0]
+
+# ---- Where a thread's slots are and where a block keeps the registers it borrows (DM_TARGET, plan item 301b) ----
+# apple (the default): Darwin's TSD, a slot at tpidrro_el0 + its key page entry; a block borrows registers through Apple's 128-byte red zone below sp.
+# android: tpidrro_el0 reads 0 in a 64-bit Linux task and bionic owns tpidr_el0, so the host keeps each guest thread's slot block in bionic's
+# TLS_SLOT_APP (tpidr_el0 + 16; bionic's tls_defines.h: "available for use by apps in API level 29 and later") and the key page holds offsets into
+# that block: one load more per slot access (after shirai91/nx2android's DM_TARGET, MIT). Linux has no red zone: a signal whose handler lacks
+# SA_ONSTACK (libcore's, heapprofd's, ART's) builds its frame right below sp, over whatever a block saved there. So on android a block moves sp down
+# before it saves a register and back as it restores it, an instruction that addresses sp gets its offset moved by as much (sp_moved), and a site
+# that cannot be encoded so keeps the red-zone form, counted as below_sp and listed in <name>.belowsp.tsv (after jhaizhou-ops/d2r-mobile's NOREDZONE
+# / sp_frame, MIT, written anew). DM_TEST_NRZ_OFF=1 (negative control of t_rewriter_synth only): android's slots with the red-zone forms
+TARGET = os.environ.get('DM_TARGET', 'apple'); assert TARGET in ('apple', 'android'), f'DM_TARGET {TARGET}: apple or android'
+NRZ = TARGET == 'android' and not os.environ.get('DM_TEST_NRZ_OFF')
+TLS_SLOT_APP = 2
+below_sp = []
+def emit_tp(t):
+    """xt = the thread's slot block (the base the key page entries are offsets from)"""
+    if TARGET == 'android': emit(MRS_TPIDR(t)); emit(LDRX(t, t, TLS_SLOT_APP))
+    else: emit(MRS_TPIDRRO(t))
+def uses_sp(ins): return re.search(r'\b[w]?sp\b', ins.op_str) is not None
+def sp_moved(ins, w, dlt):
+    """An instruction w (ins after the x18 substitution) for a block that has moved sp down by F before it: (F, words) with the same effect on memory and
+    registers, sp's write-back (dlt) left to the block's restore, or None when it cannot be encoded. F is 16 unless the instruction writes below the
+    incoming sp (a pre-index push), when the saved pair goes below what it writes. Each new word is checked by disassembly: the same mnemonic and
+    operands but for the sp offset"""
+    if not uses_sp(ins): return (16, [w]) if dlt == 0 else None
+    rn, rd = (w >> 5) & 31, w & 31
+    o = dis(w, ins.address)   # the instruction as the block runs it (x18 already xS)
+    def check(nw, off):
+        d = dis(nw, ins.address)
+        strip = lambda t: re.sub(r'\[sp(, #-?(0x)?[0-9a-f]+)?\](!|, #-?(0x)?[0-9a-f]+)?', '[sp]', t)
+        return d.mnemonic == o.mnemonic and strip(d.op_str) == strip(o.op_str) and f'[sp, #{off:#x}]' in d.op_str
+    if (w >> 27) & 7 == 0b101 and not (w >> 26) & 1 and rn == 31:          # ldp / stp / ldpsw on sp
+        opc, mode = w >> 30, (w >> 23) & 3
+        if opc == 3 or opc == 1 and not (w >> 22) & 1 or mode == 0: return None   # (stgp, the no-allocate pairs)
+        sc = 8 if opc == 2 else 4
+        imm = ((((w >> 15) & 0x7F) ^ 0x40) - 0x40) * sc
+        if mode == 2:                                                       # signed offset: [sp, #imm]
+            if imm < 0 or dlt: return None
+            F, at = 16, imm
+        elif mode == 1: F, at = 16, 0                                       # post-index: at sp, then sp += dlt
+        else:                                                               # pre-index: at sp + dlt, then sp = sp + dlt
+            F, at = 16, dlt
+            while 16 - F > at: F += 16
+        off = at + F
+        if off % sc or off < 0 or (F + dlt) % 8 or not -512 <= F + dlt <= 504: return None
+        if off // sc > 63:   # past the pair's reach (252 / 504): two single-register ldr / str at unsigned offsets (ldpsw → ldrsw), each checked
+            L = (w >> 22) & 1; size, sopc = (3 if opc == 2 else 2), ((2 if opc == 1 else 1) if L else 0)
+            regs = o.op_str.split(', [')[0].split(', '); out = []
+            for k, rt in enumerate((w & 31, (w >> 10) & 31)):
+                nw = 0x39000000 | (size << 30) | (sopc << 22) | (((off + k * sc) // sc) << 10) | (31 << 5) | rt
+                d = dis(nw, ins.address)
+                if not d.mnemonic.startswith(('ldr', 'str')) or d.op_str != f'{regs[k]}, [sp, #{off + k * sc:#x}]': return None
+                out.append(nw)
+            return F, out
+        nw = (w & ~(0x7F << 15) & ~(3 << 23)) | ((off // sc) << 15) | (2 << 23)
+        return (F, [nw]) if check(nw, off) else None
+    if dlt: return None
+    if (w >> 27) & 7 == 0b111 and not (w >> 26) & 1 and rn == 31:          # single-register ldr / str on sp, no write-back
+        size = w >> 30; sc = 1 << size
+        if (w >> 24) & 3 == 1:                                              # unsigned offset
+            if (w >> 22) & 3 == 2 and size == 3: return None                # prfm
+            off = ((w >> 10) & 0xFFF) * sc + 16
+            if off // sc > 0xFFF: return None
+            nw = (w & ~(0xFFF << 10)) | ((off // sc) << 10)
+            return (16, [nw]) if check(nw, off) else None
+        if (w >> 24) & 3 == 0 and not (w >> 21) & 1 and (w >> 10) & 3 == 0:   # unscaled (ldur / stur)
+            off = ((((w >> 12) & 0x1FF) ^ 0x100) - 0x100) + 16
+            if not 16 <= off <= 255: return None                            # an original offset below sp is refused
+            nw = (w & ~(0x1FF << 12)) | ((off & 0x1FF) << 12)
+            return (16, [nw]) if check(nw, off) else None
+        return None
+    if w & 0xFF000000 in (0x91000000, 0xD1000000) and rn == 31 and rd != 31:   # add / sub xd, sp, #imm (no flags): then xd += 16
+        return 16, [w, ADDI(rd, rd, 16)]
+    if w & 0xFFE00000 in (0x8B200000, 0xCB200000) and rn == 31 and rd != 31:   # add / sub xd, sp, xm (extended register): then xd += 16
+        return 16, [w, ADDI(rd, rd, 16)]
+    return None
 class Data:
     """A word Capstone cannot decode (inline data in the text): no registers, no branch, and control never falls through it (decode_words)"""
     mnemonic, operands = '.word', ()
@@ -213,10 +292,19 @@ def sp_delta(ins):
 def site_plain(ins):
     S, T = pick(regs_in(ins))
     dlt = sp_delta(ins)
+    mv = sp_moved(ins, subst(ins, S), dlt) if NRZ else None
+    if mv:                                    # android: sp down F, the pair at the new sp, the instruction re-addressed, sp back with its write-back
+        F, words = mv; start = here()
+        emit(STP_PRE(S, T, 31, -F)); emit_tp(T); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+        for x in words: emit(x)
+        emit(STRX(S, T))
+        emit(LDP_POST(S, T, 31, F + dlt)); emit(B(here(), ins.address + 4))
+        return start
+    if NRZ: below_sp.append(ins.address); stat('below_sp')
     save = -16 if dlt == 0 else -112          # Instructions that modify sp write below sp, so the scratch save is placed deep in the reserved area
     assert dlt == 0 or dlt >= -96, f'sp delta {dlt} at {ins.address:x}'
     start = here()
-    emit(STP(S, T, 31, save)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    emit(STP(S, T, 31, save)); emit_tp(T); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
     emit(subst(ins, S))
     emit(STRX(S, T))                 # Always write back: capstone can miss reporting a write (the adds w18 instance)
     emit(LDP(S, T, 31, save - dlt)); emit(B(here(), ins.address + 4))
@@ -227,34 +315,35 @@ def site_cond(ins):
     S, T = pick(regs_in(ins))
     tgt = ins.operands[-1].imm
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    emit(STP_PRE(S, T, 31, -16) if NRZ else STP(S, T, 31, -16)); emit_tp(T); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
     m = ins.mnemonic
     taken = here() + 4 * 3
     off = (taken - here()) >> 2
     nw = ((w & 0xFF000000) | ((off & 0x7FFFF) << 5) | S) if m in ('cbz', 'cbnz') else ((w & 0xFFF80000) | ((off & 0x3FFF) << 5) | S)
     pc = here(); emit(nw)
     dd = dis(nw, pc); assert dd.mnemonic == m and dd.operands[-1].imm == taken
-    emit(LDP(S, T, 31, -16)); emit(B(here(), ins.address + 4))
+    emit(LDP_POST(S, T, 31, 16) if NRZ else LDP(S, T, 31, -16)); emit(B(here(), ins.address + 4))
     assert here() == taken
-    emit(LDP(S, T, 31, -16)); emit(B(here(), tgt))
+    emit(LDP_POST(S, T, 31, 16) if NRZ else LDP(S, T, 31, -16)); emit(B(here(), tgt))
     return start
 
 def site_pcrel(ins):
     tgt = ins.operands[1].imm
     S, T = pick(set())
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18')   # S first serves as a temporary for the key page offset; the next instruction then loads the target value
+    emit(STP_PRE(S, T, 31, -16) if NRZ else STP(S, T, 31, -16)); emit_tp(T); emit_slot_addr(T, S, 'K18')   # S first serves as a temporary for the key page offset; the next instruction then loads the target value
     pc = here(); emit(ADRP(S, pc, tgt))
     if ins.mnemonic == 'adr': emit(ADDI(S, S, tgt & 0xFFF))
     emit(STRX(S, T))
-    emit(LDP(S, T, 31, -16)); emit(B(here(), ins.address + 4))
+    emit(LDP_POST(S, T, 31, 16) if NRZ else LDP(S, T, 31, -16)); emit(B(here(), ins.address + 4))
     return start
 
 def site_br(ins, base, count):
     """Jump table br x18: target = base + 4i. Stash x16 in the red zone → equally spaced landing pads → restore x16 → original target."""
     start = here()
-    emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # x16 / x17 are temporary registers that can stay live within a function; save them to the red zone before borrowing
-    emit(MRS_TPIDRRO(16)); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16)); emit(LDUR(17, 31, -24))
+    if NRZ: emit(STP_PRE(16, 17, 31, -16))   # android: x16 at [sp], x17 at [sp, #8] after sp moves down 16
+    else: emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # x16 / x17 are temporary registers that can stay live within a function; save them to the red zone before borrowing
+    emit_tp(16); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16)); emit(LDRX(17, 31, 1) if NRZ else LDUR(17, 31, -24))
     padbase = start + 4 * 24
     delta = padbase - base
     op = ADDI if delta >= 0 else SUBI; dl = abs(delta)
@@ -268,7 +357,7 @@ def site_br(ins, base, count):
     tails = padbase + 4 * count
     for i in range(count): emit(B(here(), tails + 8 * i))
     for i in range(count):
-        emit(0xF85F0000 | (31 << 5) | 16)      # ldur x16,[sp,#-16]
+        emit(LDR_POST(16, 31, 16) if NRZ else 0xF85F0000 | (31 << 5) | 16)      # ldr x16, [sp], #16 / ldur x16,[sp,#-16]
         emit(B(here(), base + 4 * i))
     return start
 
@@ -278,15 +367,17 @@ def site_br_tab(ins, targets):
     which br x18 leaves alone); on a match x16 / x17 are restored and the block jumps to that target, which is exactly where br x18 would go;
     no match → brk #0x18 (an index the analysis did not foresee stops loudly). After nxnative's site_br_tab (seedds, MIT), which compares with cmp."""
     start = here()
-    emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # as in site_br: save x16 / x17 to the red zone before borrowing
-    emit(MRS_TPIDRRO(16)); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16))
+    if NRZ: emit(STP_PRE(16, 17, 31, -16))
+    else: emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # as in site_br: save x16 / x17 to the red zone before borrowing
+    emit_tp(16); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16))
     uniq = sorted(set(targets))
     pads = here() + 4 * (4 * len(uniq) + 1)
     for k, t in enumerate(uniq):
         emit(ADRP(17, here(), t)); emit(ADDI(17, 17, t & 0xFFF)); emit(SUBR(17, 17, 16)); emit(CBZ(17, here(), pads + 12 * k))
     emit(BRK(0x18))
     for t in uniq:
-        emit(LDUR(16, 31, -16)); emit(LDUR(17, 31, -24)); emit(B(here(), t))
+        if NRZ: emit(LDP_POST(16, 17, 31, 16)); emit(NOP); emit(B(here(), t))   # (three words, as the pads are spaced)
+        else: emit(LDUR(16, 31, -16)); emit(LDUR(17, 31, -24)); emit(B(here(), t))
     return start
 
 def site_xbranch(ins, link):
@@ -294,8 +385,8 @@ def site_xbranch(ins, link):
     The target goes to x17 (IP1: a linker veneer may clobber it on any call, so the callee cannot rely on it at entry); x16 is borrowed through the red zone.
     blr: x30 = original site + 4, so the callee returns straight into the original code and unwinding sees the original FDE, not the patch area."""
     start = here()
-    emit(STUR(16, 31, -16))
-    emit(MRS_TPIDRRO(17)); emit_slot_addr(17, 16, 'K18'); emit(LDRX(17, 17)); emit(LDUR(16, 31, -16))
+    emit(STR_PRE(16, 31, -16) if NRZ else STUR(16, 31, -16))
+    emit_tp(17); emit_slot_addr(17, 16, 'K18'); emit(LDRX(17, 17)); emit(LDR_POST(16, 31, 16) if NRZ else LDUR(16, 31, -16))
     if link:
         ret = ins.address + 4
         emit(ADRP(30, here(), ret)); emit(ADDI(30, 30, ret & 0xFFF))
@@ -307,8 +398,14 @@ def site_mov_sp(ins):
     """mov sp, x18 after `mov xA, sp; sub x18, xA, xB` (IL2CPP stackalloc: x18 holds the new, lower sp). x16 / x17 are borrowed through the
     red zone of the old sp and reloaded through x17 = old sp after sp moves: the old red zone now lies inside the allocation, above the new sp."""
     start = here()
+    if NRZ:   # android: the pair at the old sp - 16 (sp moved down onto it), reloaded through x17 once sp is the allocation's: inside the allocation from 16 bytes up
+        emit(STP_PRE(16, 17, 31, -16)); emit_tp(16); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16))
+        emit(MOV_X17_SP); emit(MOV_SP_X16)
+        emit(LDRX(16, 17)); emit(LDRX(17, 17, 1))
+        emit(B(here(), ins.address + 4))
+        return start
     emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))
-    emit(MRS_TPIDRRO(16)); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16))
+    emit_tp(16); emit_slot_addr(16, 17, 'K18'); emit(LDRX(16, 16))
     emit(MOV_X17_SP); emit(MOV_SP_X16)
     emit(LDUR(16, 17, -16)); emit(LDUR(17, 17, -24))
     emit(B(here(), ins.address + 4))
@@ -335,7 +432,8 @@ def site_sysreg_read(ins, kind):
     N = ins.bytes[0] & 31
     tmp = 16 if N != 16 else 17
     start = here()
-    emit(STUR(tmp, 31, -16)); emit(MRS_TPIDRRO(N)); emit_slot_addr(N, tmp, kind); emit(LDRX(N, N)); emit(LDUR(tmp, 31, -16))   # tmp is saved by borrowing the red zone
+    emit(STR_PRE(tmp, 31, -16) if NRZ else STUR(tmp, 31, -16)); emit_tp(N); emit_slot_addr(N, tmp, kind); emit(LDRX(N, N))
+    emit(LDR_POST(tmp, 31, 16) if NRZ else LDUR(tmp, 31, -16))   # tmp is saved by borrowing the red zone (android: below a moved sp)
     emit(B(here(), ins.address + 4))
     return start
 
@@ -343,9 +441,13 @@ def site_tpidr_write(ins):
     N = struct.unpack('<I', ins.bytes)[0] & 31
     (T,) = pick({N}, 1)
     start = here()
-    emit(0xF81F0000 | (31 << 5) | T)           # stur xT,[sp,#-16]
     tmp = next(x for x in (16, 17) if x not in (N, T))
-    emit(STUR(tmp, 31, -24)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, tmp, 'KTLS'); emit(STRX(N, T)); emit(LDUR(tmp, 31, -24))
+    if NRZ:
+        emit(STP_PRE(T, tmp, 31, -16)); emit_tp(T); emit_slot_addr(T, tmp, 'KTLS'); emit(STRX(N, T)); emit(LDP_POST(T, tmp, 31, 16))
+        emit(B(here(), ins.address + 4))
+        return start
+    emit(0xF81F0000 | (31 << 5) | T)           # stur xT,[sp,#-16]
+    emit(STUR(tmp, 31, -24)); emit_tp(T); emit_slot_addr(T, tmp, 'KTLS'); emit(STRX(N, T)); emit(LDUR(tmp, 31, -24))
     emit(0xF85F0000 | (31 << 5) | T)           # ldur xT,[sp,#-16]
     emit(B(here(), ins.address + 4))
     return start
@@ -354,7 +456,7 @@ def emit_gate_call():
     """Common section of a gate block (right after stp x29,x30,[sp,#-16]! and before blr x30): x30 = the gate address in thread slot KGATE.
     Fetching the slot through the key page borrows a second register; x29 is borrowed and restored from the stack right away: the x29 that _dm_gate
     saves must be the guest's own value (host code may identify a caller by [x29+8], and crash backtraces walk the x29 chain)."""
-    emit(MRS_TPIDRRO(30)); emit_slot_addr(30, 29, 'KGATE'); emit(LDRX(30, 30)); emit(LDRX(29, 31))
+    emit_tp(30); emit_slot_addr(30, 29, 'KGATE'); emit(LDRX(30, 30)); emit(LDRX(29, 31))
 
 def site_gate(ins, kind, arg):
     """svc / mrs cntpct_el0 → host gate. The gate address is taken from thread slot KGATE; the gate looks up gates.tsv by return point (the address of this block's ldp)."""
@@ -456,8 +558,10 @@ def site_window(seg):
     assert all(sp_delta(x) == 0 for x in seg), f'window {seg[0].address:#x} moves sp'   # the exits reload S / T from [sp, #-16]
     S, T = pick(used)
     lo, hi = seg[0].address, seg[-1].address + 4
+    nrz = NRZ and not any(uses_sp(x) for x in seg)   # (an instruction of the window addressing sp keeps the red-zone form)
+    if NRZ and not nrz: below_sp.append(lo); stat('below_sp')
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    emit(STP_PRE(S, T, 31, -16) if nrz else STP(S, T, 31, -16)); emit_tp(T); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
     copy0 = here(); n = len(seg)
     exits = copy0 + 4 * n
     ex_targets = []; words = []
@@ -482,7 +586,7 @@ def site_window(seg):
     # (one operation done twice / a lock-free list popped more than once). The game has 6 such windows (main 0x1848eb8 / 0x1848f28 / 0x1848f84, sdk 0x2ea0fc / 0x2ea4cc / 0x2ea644);
     # windows whose only branch is a cbnz back into the window are not affected. The equivalence check used to never draw the "compare equal" direction at random, so it stayed green (equiv.py now forces both directions of window branches).
     for t in [hi] + ex_targets:
-        emit(STRX(S, T)); emit(LDP(S, T, 31, -16)); emit(B(here(), t)); emit(NOP)
+        emit(STRX(S, T)); emit(LDP_POST(S, T, 31, 16) if nrz else LDP(S, T, 31, -16)); emit(B(here(), t)); emit(NOP)
     return start, lo, hi
 
 def site_region(seg, entry):
@@ -496,12 +600,14 @@ def site_region(seg, entry):
     assert all(sp_delta(x) == 0 for x in seg), f'exclusive section {entry:#x} moves sp'
     S, T = pick(used)
     inR = {x.address for x in seg}
+    nrz = NRZ and not any(uses_sp(x) for x in seg)
+    if NRZ and not nrz: below_sp.append(entry); stat('below_sp')
     runs = []
     for k, x in enumerate(seg):
         if k and x.address == seg[k - 1].address + 4: runs[-1][1] = k + 1
         else: runs.append([k, k + 1])
     start = here()
-    emit(STP(S, T, 31, -16)); emit(MRS_TPIDRRO(T)); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
+    emit(STP_PRE(S, T, 31, -16) if nrz else STP(S, T, 31, -16)); emit_tp(T); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
     pos, pieces, p = {}, [], here() + (4 if entry != seg[0].address else 0)
     for a, b in runs:
         pieces.append((seg[a].address, seg[b - 1].address + 4, p))
@@ -529,7 +635,7 @@ def site_region(seg, entry):
         if seg[b - 1].mnemonic != 'b': emit(B(here(), exit_to(hi)))
     assert here() == exits0
     for t in exits:
-        emit(STRX(S, T)); emit(LDP(S, T, 31, -16)); emit(B(here(), t)); emit(NOP)
+        emit(STRX(S, T)); emit(LDP_POST(S, T, 31, 16) if nrz else LDP(S, T, 31, -16)); emit(B(here(), t)); emit(NOP)
     return start, pieces
 
 # ---- Function boundaries (eh_frame_hdr) ----
@@ -852,7 +958,7 @@ for oa, wa, ob_, wb, r, key, why in params:
         assert r not in regs_in(ins), f'parameter slot: x{r} is used between A and B at {o:#x} ({ins.mnemonic} {ins.op_str})'
     start = here()
     tmp = 16 if r != 16 else 17
-    emit(STUR(tmp, 31, -16)); emit(MRS_TPIDRRO(r)); emit_slot_addr(r, tmp, key); emit(LDRX(r, r)); emit(LDUR(tmp, 31, -16)); emit(B(here(), oa + 4))
+    emit(STR_PRE(tmp, 31, -16) if NRZ else STUR(tmp, 31, -16)); emit_tp(r); emit_slot_addr(r, tmp, key); emit(LDRX(r, r)); emit(LDR_POST(tmp, 31, 16) if NRZ else LDUR(tmp, 31, -16)); emit(B(here(), oa + 4))
     struct.pack_into('<I', IMG, oa, B(oa, start)); struct.pack_into('<I', IMG, ob_, NOP); stat('param')
 
 # ---- Code caves (CAVES, see the rules section at the top): one instruction becomes a branch to a routine in the patch area ----
@@ -876,6 +982,7 @@ for off, ow, routine, why, *gate in caves:
             x = w if f == ('orig',) else f; ins = dis(x, here())
             assert cave_word_ok(ins), f'code cave {off:#x}: {ins.mnemonic} {ins.op_str} cannot run in the patch area (PC-relative, x18, svc, a system register or a branch: use a form)'
             emit(x); left = False
+            if NRZ and re.search(r'\[sp, #-', ins.op_str) and off not in below_sp: below_sp.append(off); stat('below_sp')   # a routine that keeps registers below sp
         elif f[0] == 'adrp_host': emit(ADRP(f[1], here(), HOST_PAGE_OFF)); left = False
         elif f[0] in ('b', 'bl'):
             assert 0 <= f[1] < TEXT_END and f[1] % 4 == 0, f'code cave {off:#x}: {f[0]} to {f[1]:#x} outside text'
@@ -900,6 +1007,7 @@ with open(os.path.join(outdir, 'build_src.sha256'), 'w') as f:
     f.write(hashlib.sha256(open(os.path.abspath(__file__), 'rb').read()).hexdigest() + '  patch_nso.py\n')
 with open(P('fixups.tsv'), 'w') as f:
     f.write(f'# PATCH_OFF\t{PATCH_OFF:#x}\n# KEY_PAGE_OFF\t{KEY_PAGE_OFF:#x}\n# KEY_PAGE_SIZE\t0x4000\n# TEXT_END\t{TEXT_END:#x}\n# RO_OFF\t{RO_OFF:#x}\n# DATA_OFF\t{DATA_OFF:#x}\n')
+    if TARGET == 'android': f.write(f'# TARGET_ANDROID\t1\n# NRZ\t{int(NRZ)}\n')   # (the apple header is as before)
     if HOST_PAGE_OFF: f.write(f'# HOST_PAGE_OFF\t{HOST_PAGE_OFF:#x}\n')
     for k in KEY_INDEX: f.write(f'# KEY_{k}_IDX\t{KEY_INDEX[k]}\n')
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import rewriter_stamp   # this rewriter + the rules: the host compares it (loader.c)
@@ -933,4 +1041,8 @@ with open(P('caves.tsv'), 'w') as f:   # columns: offset, original word, routine
 with open(P('obs.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for off, oid, ow, why in obs: f.write(f'{off:#x}\t{oid}\t{ow}\t{why}\n')
+if TARGET == 'android':   # the sites whose blocks still keep registers below sp (see DM_TARGET): unsafe under a signal without SA_ONSTACK
+    with open(P('belowsp.tsv'), 'w') as f:
+        f.write(f'# BUILD_ID\t{BUILD_ID}\n')
+        for a in sorted(below_sp): f.write(f'{a:#x}\n')
 print(NAME, stats, 'acquire', len(acq), 'cuts', len(cuts), 'options', len(opts), 'caves', len(cave_rows), 'obs', len(obs), 'patch', len(patch), 'PATCH_OFF', hex(PATCH_OFF), 'slot_refs', len(fix), 'gates', len(gates))

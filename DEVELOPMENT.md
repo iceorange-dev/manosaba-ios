@@ -327,9 +327,11 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   replay core shared with iOS, a Vulkan backend behind `nvn_backend.h`, in steps:
   301a the pool memory: AHardwareBuffer mapped over the pool (nx2android; HyperOS's gralloc refused it on a POCO F7 Ultra, BOTWRecompAndroid
   4fc0d28), an exported fd mapped at the pool's address (PKShield-Android `nvn_vk.c`), `VK_EXT_map_memory_placed` (no project uses it), copied
-  pools with write-back last: probed on the phone in an app first.
-  301b the rewriter without a red zone (signals without SA_ONSTACK write below sp on Android: jhaizhou-ops `NOREDZONE` / `sp_frame`; ours stashes
-  below sp at every site kind) and thread slots through bionic's TLS (`TLS_SLOT_APP`, nx2android; akeem000 086bd8a).
+  pools with write-back last. Measured on the K100 in the adb shell domain (2026-10-30, a probe of ours): all four work at a fixed 4 KB-aligned
+  guest address, a GPU copy of 32 MB right with no flush, the CPU as fast through each mapping as through plain memory (64 MB read 4.2-6.1 ms
+  against 5.9); `VK_EXT_map_memory_placed` (memoryMapPlaced 1, memoryMapRangePlaced 0, memoryUnmapReserve 1, 4 KB alignment) maps type 6
+  (device-local, host-visible, coherent, cached) exactly there and unmaps keeping the range. Left: the same in an app (untrusted_app; runcon from
+  the shell cannot exec there), with 301d's APK.
   301c the host headless under adb to `nnMain`: the Apple-only APIs behind a shim, Unity's thread stack reported without bionic's guard page
   (RogelioLB/nxnative-android), xattrs in the `user.` namespace (jhaizhou-ops `hle_fs.c`).
   301d an APK: NativeActivity, AAudio, touch and controllers, our own APK writer and signer (no Android SDK; NDK r30 on the Mac).
@@ -753,3 +755,20 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   game files each module's original words in the constructor's shape; T_NODE_AREA_BROKEN=1, a cut that changes nothing: 1 fails),
   `t_guest_mem` +3 (-DDM_TEST_AR_UNLOGGED, a refusal unseen: 1 fails). verify/regress.sh --fuzz for both games: all OK. Smoke: Tears of the
   Kingdom's two red lines as before, frame 1300 the same scene a few frames of animation apart (looked at), manosaba's shots as batch 121's.
+- [x] batch 123 · 301b the rewriter's android target (`DM_TARGET=android`, `tools/patch_nso.py`; after shirai91/nx2android's DM_TARGET and
+  jhaizhou-ops/d2r-mobile's NOREDZONE / sp_frame, MIT, written anew): the slot block at bionic's TLS_SLOT_APP (`mrs xT, tpidr_el0; ldr xT, [xT, #16]`,
+  bionic's tls_defines.h: slot 2, "available for use by apps in API level 29 and later"), and since Linux has no red zone (a signal whose handler
+  lacks SA_ONSTACK builds its frame right below sp) every block moves sp down before it saves a register and back as it restores it; an x18
+  instruction on sp is re-addressed by 16 (`sp_moved`: ldp / stp / ldpsw at signed offsets, pre-index pushes with the pair below what they write,
+  post-index pops, ldr / str at unsigned and unscaled offsets, a pair past its reach as two single-register accesses, add / sub on sp), and a site
+  that cannot be encoded keeps the red-zone form, listed in `<name>.belowsp.tsv`: manosaba 0 of its 55,245 sites, Tears of the Kingdom 7 (its code
+  caves and three exclusive sections on sp). The apple products are byte for byte as before but for the rewriter stamp. The verification knows the
+  target from the header (`TARGET_ANDROID`): structck reads the android forms (the slot base, sp followed through a block for the temporary
+  register pairs, the window and jump-table templates, the listed red-zone sites); equiv and fnfuzz give the patched side tpidr_el0 → slot block
+  and write a signal frame (256 bytes) below the current sp before every patch-area instruction, a patched access below that sp differs, and
+  fnfuzz leaves stack that frame overwrote and nobody wrote since out of the memory comparison (stale on both sides). verify/regress.sh --fuzz on
+  the android manosaba product (`work/build/android/manosaba.b301`): STRUCT, EQUIV, FNFUZZ and GATEFN OK, the mutation self-checks as on apple
+  (subsdk0 24 executed, 11 caught on both); the red-zone forms under android's slots (DM_TEST_NRZ_OFF=1) fail equiv at all 9,625 sites of subsdk0
+  and fnfuzz at 80 functions. `tools/tests/t_rewriter_synth.py` +10 (a fourth module with x18 on sp in every form; DM_TEST_NRZ_OFF=1 for the run:
+  6 fail). Both apple products' regress as before. Smoke: Tears of the Kingdom's two red lines, manosaba's shots as batch 122's (the images are
+  batch 122's word for word).
