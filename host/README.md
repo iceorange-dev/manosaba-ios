@@ -44,7 +44,9 @@ The sources are in directories by role: `hle/` the system services, `runtime/` l
 Mac front end and its input, `media/` the movie decoders, `diag/` diagnostics, `game/` what changes the game (hooks, mods, patches, cheats,
 the wide picture) and `cloud/` the save sync. The headers stay in `host/`, which every source finds through `-I.`. The Android host
 (`android/`, plan item 301) builds the same sources but the Apple-only ones; what differs by operating system goes through `plat.h`,
-`slots.h`, `uc.h`, `table.h` and `runtime/asm.h`.
+`slots.h`, `uc.h`, `table.h` and `runtime/asm.h`. Android has its own front ends (`front_headless.c` under adb, `app_android.c` and
+`front_android.c` in the app), its movie backend on the NDK's media API (`movie_android.c`) and its APK writer (`android/tools/apk.py`);
+`hle/hle_audio.c` plays to AAudio there.
 
 | File | What it does |
 |---|---|
@@ -63,7 +65,7 @@ the wide picture) and `cloud/` the save sync. The headers stay in `host/`, which
 | `hle/hle_hid.c`, `hle/hle_touch.c`, `dm_input.h` | `nn::hid` controllers and touchscreen, built from what the front end publishes; scripted input `DM_KEYS` |
 | `hle/hle_audio.c` | `nn::audio` AudioOut on Core Audio |
 | `hle/hle_codec.c` | `nn::codec` hardware Opus decoder |
-| `hle/hle_movie.c`, `media/movie_av.m`, `movie_av.h` | The Nintendo movie library (`movie::` in subsdk0, used by Unity's VideoPlayer) on AVFoundation |
+| `hle/hle_movie.c`, `media/movie_av.m`, `movie_av.h` | The Nintendo movie library (`movie::` in subsdk0, used by Unity's VideoPlayer) on AVFoundation (Android: `android/movie_android.c`, AMediaExtractor / AMediaCodec) |
 | `hle/hle_oe.c`, `hle/hle_lifecycle.c` | `nn::oe` operating environment (focus, operation mode, language); graceful exit |
 | `hle/hle_time.c` | `nn::time` from the system clock |
 | `hle/hle_account.c` | `nn::account`: one fixed local user |

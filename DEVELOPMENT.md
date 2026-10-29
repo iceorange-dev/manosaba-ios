@@ -36,8 +36,11 @@ out of git by design.
 Check a working copy with `make -C host/tests run`, `make -C host/tests run-ubsan`, `make -C gfx/tests run`, `make -C gfx/tests run-m3`,
 `make -C gfx/tex/tests run`, the tool tests (`for t in tools/tests/t_*.py; do python -I "$t"; done` in the venv), `verify/regress.sh --fuzz`,
 `tools/audit_public.py`, then a Mac run (README, Getting started) and `ios/run.sh build`. For Android (plan item 301): `make -C android
-GAME=manosaba` and `make -C android test` (NDK r30), and with the test phone connected `make -C android run-tests` and a headless run of
-manosaba under adb (`work/scripts/android_smoke.sh <dir> <seconds>`: the RomFS and system font pushed once to `/data/local/tmp/dm`).
+GAME=manosaba`, `apk` and `test` (NDK r30; the APK's checks in `tools/tests/t_apk.py`), and with the test phone connected `make -C android
+run-tests`, a headless run of manosaba under adb (`work/scripts/android_smoke.sh <dir> <seconds>`: the RomFS and system font pushed once to
+`/data/local/tmp/dm`) and a run of the app (`work/scripts/android_app_smoke.sh <dir> <seconds>`: installed through the phone's root, a test save of its
+own; it needs the phone unlocked, since HyperOS keeps the app behind the lock screen, and says so as skipped). `android/run.sh` builds,
+installs and runs the app by hand.
 
 **How a change is made.** One plan item at a time, each with a unit test and a broken version of the change that must fail it. A batch of
 items ends with the gfx tests (Metal 4 and Metal 3), the texture tests, the host tests and their sanitizer run, the public audit and the tool
@@ -333,11 +336,13 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   pools with write-back last. Measured on the K100 in the adb shell domain (2026-10-30, a probe of ours): all four work at a fixed 4 KB-aligned
   guest address, a GPU copy of 32 MB right with no flush, the CPU as fast through each mapping as through plain memory (64 MB read 4.2-6.1 ms
   against 5.9); `VK_EXT_map_memory_placed` (memoryMapPlaced 1, memoryMapRangePlaced 0, memoryUnmapReserve 1, 4 KB alignment) maps type 6
-  (device-local, host-visible, coherent, cached) exactly there and unmaps keeping the range. Left: the same in an app (untrusted_app; runcon from
-  the shell cannot exec there), with 301d's APK.
-  301d an APK: NativeActivity, AAudio, touch and controllers, our own APK writer and signer (no Android SDK; NDK r30 on the Mac). The host becomes
-  a shared library: the assembly's branches and `adrp` to global symbols (`dm_hcall`, `nvn_slot`) must bind inside it (`-Bsymbolic` or hidden
-  symbols; a PLT stub would take x16 / x17, which the thunks pass). MP4 / MOV movies through MediaCodec (`android/movie_none.c` reads none).
+  (device-local, host-visible, coherent, cached) exactly there and unmaps keeping the range. The same in an app (untrusted_app_34, the probe
+  packed by 301d's APK writer): all four, 64 MB read 2.1-2.4 ms through each against 2.3 plain (the app in front: higher clocks than the shell's);
+  RW → RX and RWX, x18 kept, `cntpct_el0` trapped, 256 GB of PROT_NONE as in the shell.
+  301d2 what the app still lacks, with 301e's drawing: the on-screen controls (`host/front/touchpad.c`, drawn on iOS by UIKit) and the
+  software keyboard (`front_text_input` says nothing is shown: a NativeActivity without code is no text editor, so the system shows no
+  keyboard for it; nx2android draws its own); the phone's motion sensors (ASensorManager → `dm_motion_set`) and vibration (`dm_vibration_take`
+  → the Vibrator through JNI).
   301e the Vulkan backend, in `gfx/nvn/vk/` in the null backend's place (`gfx/nvn/null/null.c` lists the set: `nvn_backend.h`, the core
   headers' and nvn_mtl.h / nvn_obj.h's `mtl_*`, to be named for any backend when the second one lands): the NVN fence on the game's last own
   submission (LASRecompAndroid 54686f6), the swapchain in the window texture's sRGB format with a present semaphore per image (nx2android
@@ -793,7 +798,8 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
     ELF `__start_` / `__stop_`), `runtime/asm.h` (entry.S, hstack.S and gfx/nvn's nvn_entry.S and the thunks `gen_protos.py` writes: the Apple
     objects identical section by section, relocations and symbols); `android/compat/` for Darwin names (TargetConditionals, OSCacheControl,
     CommonCrypto's SHA-256, mach_time on CLOCK_MONOTONIC, `CLOCK_UPTIME_RAW` the same clock, the one-argument `pthread_setname_np`).
-  - The time zone by bionic's tzalloc / localtime_rz and `persist.sys.timezone`; sound to the silent sink (AAudio: 301d); movies WebM only.
+  - The time zone by bionic's tzalloc / localtime_rz and `persist.sys.timezone`; sound to the silent sink (AAudio: 301d); no movie read
+    (`android/movie_none.c` opened none, WebM's included: 301d).
   - Graphics: the nn::vi and nv:: takeovers, NVN's takeover and the replay core built for Android on `gfx/nvn/null/null.c`, the null backend:
     a submission completes when committed, its event writes and counter reports land then (timestamps from the guest clock, 0 samples
     passed), nothing is drawn, no screen (pacing as the Mac host without a window). Without NVN's takeover the sdk's own driver ran and aborted
@@ -806,3 +812,38 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   and, with the phone connected, runs them and 40 s of manosaba headless (`work/scripts/android_smoke.sh`). gfx 153 / 153 on Metal 4 and Metal
   3, host 182 / 182, sanitizer, texture, audit and tool tests as before, both IPAs. Smoke: Tears of the Kingdom's two red lines and its shots in
   the spread of the last batches (s1300 against batch 123 8.6, batch 123 against 122 9.7), manosaba's shots as batch 123's, no red line.
+- [x] batch 125 · 301d the app (`make -C android GAME=manosaba apk`, `android/run.sh`): manosaba runs as an app on the Redmi K100 Pro Max at 60 fps
+  from its 600th frame, with sound, touch, controllers and saves, no red line; nothing is drawn yet (301e).
+  - The APK by `android/tools/apk.py` (after shirai91/nx2android's mkapk.py, MIT, written anew; Python and the openssl command, no Android SDK):
+    a binary manifest (AOSP's public-final.xml IDs, attrs_manifest.xml values) for a NativeActivity without code, landscape, its configuration
+    changes handled, appCategory game; resources.arsc with the icon (nodpi); the library stored at a 16 KB boundary (extractNativeLibs false);
+    the product's files as assets; APK Signature Scheme v2 (RSA-2048, PKCS#1 v1.5 with SHA-256) by a self-signed key kept in
+    `~/.config/dm-android` (another key needs an uninstall, which deletes the saves). The same inputs give the same bytes. On the phone `dumpsys
+    package`: versionCode 275, minSdk / targetSdk 35, apkSigningVersion 2, DEBUGGABLE (RELEASE=1 leaves it out).
+  - The host as `libdmhost.so`: the objects shared with adb shell's dmhost (`build/<game>/obj`, header dependencies by -MMD; -fPIC, since a
+    library's thread-local variables need the dynamic TLS model), linked -Bsymbolic and --no-undefined: no PLT stub and no text relocation for
+    the library's own symbols (no JUMP_SLOT names one), its symbols kept for dladdr / dlsym.
+  - `android/app_android.c`, the app's shell (as ios/Sources/main.m): the external files folder for RomFS, sysfont, env.txt and boot.txt (what
+    adb writes there is the shell user's: `run.sh push-data` makes it readable to others, the app's folder above stays 2770), the internal one for
+    the save, temp and the product copied out of the APK when the APK changed (107.7 MB in 266 ms); the device's language (zh-TW → zh-Hant); a
+    dialog when the game data is missing; the main thread's queue (a non-blocking pipe on its looper: a blocking read held the main thread at the
+    first focus change, an ANR); the system bars hidden. `DM_TEST_SHOW_WHEN_LOCKED=1` shows it over the lock screen, which HyperOS refuses
+    while its own app op (MIUIOP 10020) is off, as on the test phone.
+  - `android/front_android.c` with `input_map.h`: the lifecycle as the iPhone's scene events (onPause out of focus; onStop suspended, sound
+    paused, guest clock and graphics held: 5 s at the home screen moved the guest clock 1 ms; onStart / onResume back), touches normalised to
+    the letterboxed picture (a tap at the window's centre read (960, 540), one in the black bars none), controllers merged as on Apple
+    (`KEYCODE_BUTTON_*`, sticks with up positive, hat, triggers), Back taken so that it does not finish the game, volume keys left alone.
+  - Sound: AAudio in `hle_audio.c` under the AudioUnit's names, the callback's body shared (`render_into`): low latency, shared, 48 kHz, a 192
+    frame burst, two queued; a stream that lost its device is opened again at the watchdog's retry. AudioFlinger lists the app's fast track.
+  - Movies: `android/movie_android.c` (AMediaExtractor, AMediaCodec; WebM to movie_webm.c as on Apple) in `movie_none.c`'s place: samples as
+    stored, decoded video in buffers as NV12 (through an AImageReader this phone's H.264 decoder chose a compressed layout, 0x7fa30c06, whose
+    chroma the CPU cannot read; in buffers it gives 21, stride = width, slice height = height at 1080p too), decoded audio PCM16. An executable
+    starts binder's thread pool (`android/binder_pool.h`), else the codecs never answer (the decoder took input and gave nothing).
+  - 301a in the app domain (above).
+  Tests: `tools/tests/t_apk.py` 12 with a reader of its own (`T_APK_BROKEN=digest`: 1 fails; `align`: 2); on the phone `t_input` 14
+  (`-DDM_TEST_INPUT_Y_DOWN`: 2 fail), `t_movie` 10 on clips ffmpeg makes (`-DDM_TEST_MOVIE_UV_SWAPPED`: 2 fail). By hand on the phone, unlocked:
+  the app in front 100 s at 60 fps, saves, the lifecycle and touches above. The batch builds the APK and runs the app 40 s
+  (`work/scripts/android_app_smoke.sh`: installed through the phone's root, a test save of its own; skipped, and said so, when the phone is
+  locked, as in this batch). gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs; the
+  headless run 40 s at 60 fps with 4 save commits. Smoke: Tears of the Kingdom's two red lines, frame 1300 the same scene (looked at), manosaba's
+  shots as batch 124's.

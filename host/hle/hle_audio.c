@@ -10,8 +10,14 @@
 #include <TargetConditionals.h>
 #ifdef __APPLE__
 #include <AudioToolbox/AudioToolbox.h>
-#else   // no sound card backend here yet (Android's AAudio: plan item 301d): au_open fails, every output plays to the silent sink, and the AudioUnit
-        // calls below never run (a->au stays NULL)
+#elif defined(__ANDROID__)   // AAudio (plan item 301d): a stream with a data callback takes the AudioUnit's place, under the AudioUnit's names
+#include <aaudio/AAudio.h>
+typedef AAudioStream *AudioUnit; typedef int32_t OSStatus;
+static inline OSStatus AudioOutputUnitStart(AudioUnit u) { return AAudioStream_requestStart(u); }
+static inline OSStatus AudioOutputUnitStop(AudioUnit u) { return AAudioStream_requestStop(u); }
+static inline OSStatus AudioUnitUninitialize(AudioUnit u) { (void)u; return 0; }
+static inline OSStatus AudioComponentInstanceDispose(AudioUnit u) { return AAudioStream_close(u); }
+#else   // no sound card backend here: au_open fails, every output plays to the silent sink, and the AudioUnit calls below never run (a->au stays NULL)
 typedef void *AudioUnit; typedef int32_t OSStatus;
 static inline OSStatus AudioOutputUnitStart(AudioUnit u) { (void)u; return -1; }
 static inline OSStatus AudioOutputUnitStop(AudioUnit u) { (void)u; return 0; }
@@ -136,23 +142,25 @@ static void downmix51(const int16_t *in, int16_t *out, unsigned frames) {
 }
 // DM_AUDIO_MUTE=1 (tests on the Mac, at night): the sound card is opened and fed as usual and silence goes out (read at the first OpenAudioOut)
 static int g_audio_mute = -1;
-#ifdef __APPLE__
-static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *bl) {
-    (void)f; (void)ts; (void)bus; (void)frames;
-    aout *a = ctx;
+// The sound card's callback, whatever the backend: n bytes of the output's format (stereo after the 5.1 downmix) into out, on the audio thread
+static void render_into(aout *a, void *out, uint32_t n) {
 #ifdef DM_TEST_MUTE_NO_PULL   // negative control of t_audio only: muted without taking the game's blocks
-    if (g_audio_mute > 0) { memset(bl->mBuffers[0].mData, 0, bl->mBuffers[0].mDataByteSize); return noErr; }
+    if (g_audio_mute > 0) { memset(out, 0, n); return; }
 #endif
     atomic_fetch_add_explicit(&g_render_calls, 1, memory_order_relaxed); atomic_fetch_add_explicit(&a->cb_n, 1, memory_order_relaxed);
     if (atomic_load_explicit(&a->sinks, memory_order_relaxed)) atomic_fetch_add_explicit(&g_consumer_dupes, 1, memory_order_relaxed);   // counted only: no logging on the audio thread
-    if (!a->mix) pull(a, bl->mBuffers[0].mData, bl->mBuffers[0].mDataByteSize);
-    else { int16_t *o = bl->mBuffers[0].mData; unsigned left = bl->mBuffers[0].mDataByteSize / 4;   // stereo 16-bit: 4 bytes per frame
+    if (!a->mix) pull(a, out, n);
+    else { int16_t *o = out; unsigned left = n / 4;   // stereo 16-bit: 4 bytes per frame
         while (left) { unsigned k = left < MIXMAX ? left : MIXMAX; pull(a, (uint8_t *)a->mixbuf, (uint64_t)k * 12); downmix51(a->mixbuf, o, k); o += 2 * k; left -= k; } }
-    // Diagnostic switch DM_AUDIO_OUT_DUMP=<file>: append the data handed to CoreAudio as is (stereo after the downmix). This machine has no loopback device and cannot record the system output; to tell whether the dialogue was handed over, look at this file
+    // Diagnostic switch DM_AUDIO_OUT_DUMP=<file>: append the data handed to the sound card as is (stereo after the downmix). This machine has no loopback device and cannot record the system output; to tell whether the dialogue was handed over, look at this file
     { static FILE *df; static int on = -1; if (on < 0) { const char *e = getenv("DM_AUDIO_OUT_DUMP"); on = e != NULL; if (on && !(df = fopen(e, "wb"))) LOG("[red] DM_AUDIO_OUT_DUMP: cannot open %s", e); }
-      if (df) fwrite(bl->mBuffers[0].mData, 1, bl->mBuffers[0].mDataByteSize, df); }
-    if (g_audio_mute > 0) memset(bl->mBuffers[0].mData, 0, bl->mBuffers[0].mDataByteSize);   // (after taking the blocks: the game's pacing goes on)
-    return noErr;
+      if (df) fwrite(out, 1, n, df); }
+    if (g_audio_mute > 0) memset(out, 0, n);   // (after taking the blocks: the game's pacing goes on)
+}
+#ifdef __APPLE__
+static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *bl) {
+    (void)f; (void)ts; (void)bus; (void)frames;
+    render_into(ctx, bl->mBuffers[0].mData, bl->mBuffers[0].mDataByteSize); return noErr;
 }
 #if !TARGET_OS_IPHONE
 static void dev_name(AudioObjectID id, char *o, size_t n) {   // output device name (for the log)
@@ -198,12 +206,53 @@ static int au_open(aout *a) {   // 0 = the sound card is open; -1 = it cannot be
       LOG("audio: CoreAudio output opened in %.1f ms on %s thread \"%s\"%s", ms, thr_cur_name(tn, 1) ? "the guest" : "a host", gn, ms > 1000 ? " [red] slow: that thread waited (tomodachi-native once saw 40 s)" : ""); }
     return 0;
 }
+#elif defined(__ANDROID__)
+static aaudio_data_callback_result_t aa_render(AAudioStream *s, void *ctx, void *out, int32_t frames) {
+    (void)s; aout *a = ctx; render_into(a, out, (uint32_t)frames * 2u * (a->mix ? 2u : (uint32_t)a->ch)); return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+// The stream lost its device (a headset unplugged, the audio server restarted): it stops calling back, the watchdog hands the output to the silent
+// sink, and au_go opens a new stream when it retries (au_revive). This runs on a thread of AAudio's, not the audio one
+static void aa_error(AAudioStream *s, void *ctx, aaudio_result_t err) { (void)s; (void)ctx; LOG("audio: AAudio stream error %s", AAudio_convertResultToText(err)); }
+static int au_open(aout *a) {   // 0 = the stream is open; -1 = it cannot be (a->au null, the caller uses the silent sink)
+    uint64_t t0 = now_ns();
+    a->mix = a->ch == 6; if (a->mix && !a->mixbuf) a->mixbuf = malloc(MIXMAX * 12);   // 5.1: downmixed to stereo here, as on Apple
+    if (a->mix && !a->mixbuf) { a->au = NULL; LOG("[red] cannot allocate the downmix buffer: this output uses a silent sink"); return -1; }
+    int och = a->mix ? 2 : a->ch; AAudioStreamBuilder *b = NULL; aaudio_result_t r = AAudio_createStreamBuilder(&b);
+    if (r == AAUDIO_OK) {
+        AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16); AAudioStreamBuilder_setChannelCount(b, och); AAudioStreamBuilder_setSampleRate(b, RATE);
+        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY); AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+        AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_GAME); AAudioStreamBuilder_setContentType(b, AAUDIO_CONTENT_TYPE_MUSIC);
+        AAudioStreamBuilder_setDataCallback(b, aa_render, a); AAudioStreamBuilder_setErrorCallback(b, aa_error, a);
+        r = AAudioStreamBuilder_openStream(b, &a->au); AAudioStreamBuilder_delete(b);
+    }
+    if (r != AAUDIO_OK) { a->au = NULL; LOG("[red] audio: AAudio refused the stream (%s): this output uses a silent sink", AAudio_convertResultToText(r)); return -1; }
+    // two bursts queued: the low-latency path's usual depth (the game queues 4 x 240 frames ahead)
+    int32_t burst = AAudioStream_getFramesPerBurst(a->au); if (burst > 0) AAudioStream_setBufferSizeInFrames(a->au, 2 * burst);
+    if (a->mix) LOG("audio: the game gives 6 channels (5.1) → downmixed to stereo (center / surround ×0.707 into left and right, no LFE, −3 dB overall, saturating)");
+    LOG("audio: AAudio output opened in %.1f ms: %d Hz, %d channels, burst %d frames, buffer %d of %d frames, %s, %s", (now_ns() - t0) / 1e6,
+        AAudioStream_getSampleRate(a->au), AAudioStream_getChannelCount(a->au), burst, AAudioStream_getBufferSizeInFrames(a->au), AAudioStream_getBufferCapacityInFrames(a->au),
+        AAudioStream_getPerformanceMode(a->au) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY ? "low latency" : "[red] not the low-latency path",
+        AAudioStream_getSharingMode(a->au) == AAUDIO_SHARING_MODE_EXCLUSIVE ? "exclusive" : "shared");
+    return 0;
+}
 #else
-static int au_open(aout *a) {   // no sound card backend on this host yet: the silent sink plays every output
-    static int said; if (!said++) LOG("audio: no sound card backend on this host yet (plan item 301d): outputs play to the silent sink");
+static int au_open(aout *a) {   // no sound card backend on this host: the silent sink plays every output
+    static int said; if (!said++) LOG("audio: no sound card backend on this host: outputs play to the silent sink");
     a->au = NULL; return -1;
 }
 #endif
+static int ao_index(const aout *a);
+// Before a start: an AAudio stream that lost its device cannot start again, a new one is opened (Apple's units stay valid)
+static void au_revive(aout *a) {
+#ifdef __ANDROID__
+    if (a->au && AAudioStream_getState(a->au) == AAUDIO_STREAM_STATE_DISCONNECTED) {
+        AAudioStream_close(a->au); a->au = NULL;
+        LOG("audio #%d: the stream lost its device: %s", ao_index(a), au_open(a) ? "[red] no new one" : "a new one opened");
+    }
+#else
+    (void)a;
+#endif
+}
 // Silent sink: consumes in real time at 48 kHz every 5 ms; more than 100 ms behind (the thread was frozen in an iOS suspension), it starts again
 // from now instead of catching up in a burst (audren_pace.h sink_step, plan item 122)
 static void *null_sink(void *p) {
@@ -232,6 +281,7 @@ static int ao_index(const aout *a) { for (int i = 0; i < AOMAX; i++) if (g_aos[i
 // Start the AudioUnit of an output (callers hold g_aos_lock; no backend running). When the device refuses (the session is held by a call or being
 // reset) the silent sink stands in and the watchdog retries after 1, 2, 4, then every 8 s (nxnative b301431, MIT; it used to drop the unit for good)
 static void au_go(aout *a, uint64_t now) {
+    au_revive(a);
     OSStatus st = a->au ? AudioOutputUnitStart(a->au) : -1;
     a->wd_n = atomic_load_explicit(&a->cb_n, memory_order_relaxed); a->wd_t = now;
     if (!st) { a->backend = BK_AU; a->stalled = 0; return; }

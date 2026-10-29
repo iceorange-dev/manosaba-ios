@@ -46,6 +46,10 @@ with their parsed scripts and UI objects (a census of the managed heap after 9 r
 The Switch version is reported to end with an error now and then in long sessions too, and version 2.0.4's notes say such errors were made less
 likely.
 
+On Android (plan item 301, under way): on a Redmi K100 Pro Max (Android 17) manosaba runs as an app of this repository's own (no Android SDK:
+`android/tools/apk.py` writes and signs the APK) at 60 fps, with sound (AAudio), touch, game controllers and saves, but nothing is drawn yet:
+the Vulkan backend is the next step.
+
 ## Status (Tears of the Kingdom 1.4.3)
 
 Played on a Mac (Apple silicon, macOS 26) in a window and on an iPhone 17 Pro (iOS 26.4, free developer account, handheld mode):
@@ -92,6 +96,8 @@ product it has not been tried again. Details: [DEVELOPMENT.md](DEVELOPMENT.md#te
    ```
 
 4. iPhone / iPad: [ios/README.md](ios/README.md). Mac app: `tools/mac_app.sh`.
+5. Android (not drawing yet, see above): `DM_TARGET=android tools/build_product.sh $DM_ROOT/build/android/manosaba.b301`, then
+   `android/run.sh build`, `install`, `launch` once, `push-data`, `launch` (NDK r30; [DEVELOPMENT.md § Testing](DEVELOPMENT.md#testing)).
 
 ## Reporting problems
 
@@ -174,7 +180,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   reported without bionic's guard page).
 - **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's Android port:
   the address-region refusals logged and the node area cut for a Unity 6 sdk build, the rewriter's Android target (thread slots in bionic's
-  TLS_SLOT_APP), credited in the code; its Android facts guide the Android port.
+  TLS_SLOT_APP), an APK written and signed without the Android SDK (binary manifest, aligned ZIP, APK Signature Scheme v2), credited in the
+  code; its Android facts guide the Android port.
 - **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): a stamp of the
   rewriter in the product, the rewriter refusing system registers it does not know, the SDK's abort text at a Break.
 - **[LibHac](https://www.nuget.org/packages/LibHac/0.19.0)** ([Alex Barney](https://github.com/Thealexbarney), MIT; the NuGet package, as its

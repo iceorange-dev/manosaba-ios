@@ -1,5 +1,6 @@
 // The Android host's front end without a window (host/front.h; plan item 301c, the host under adb): the guest runs as the Mac host's does without
-// DM_WINDOW, on a thread of its own. The APK's front end (NativeActivity, its window, input and text entry) takes this file's place in 301d.
+// DM_WINDOW, on a thread of its own. The app's front end is front_android.c with app_android.c (plan item 301d).
+#include "binder_pool.h"
 #include "front.h"
 #include "dm.h"
 
@@ -17,3 +18,8 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
 }
 void front_save_failed(int err) { LOG("[red] a save transaction failed (errno %d); the committed save is unchanged", err); }
 void dm_front_controller_key(void) {}
+int dm_main(int argc, char **argv);   // host/runtime/main.c, built with -Dmain=dm_main (the app's library calls it from a thread of its own)
+int main(int argc, char **argv) {
+    if (dm_binder_pool_start()) LOG("[red] no binder thread pool: movies' decoders will not answer");   // binder_pool.h (an app's process has one)
+    return dm_main(argc, argv);
+}
