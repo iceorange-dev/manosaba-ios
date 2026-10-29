@@ -6,8 +6,11 @@
 //                 address as on Metal), the address lookup, the argument arena
 //   vk_submit.c   submissions: a ring of command buffers, a timeline semaphore whose value is the NVN fence, the completion thread that lands
 //                 event writes and counter reports after the GPU has finished, waits and drains
-//   vk_tex.c      textures and samplers: NVN formats, images by serial, uploads of CPU-filled storage (block linear deswizzled on the CPU)
-//   vk_ops.c      the execution interface's copies, clears and passes; draws and dispatches come with the shaders (301e2)
+//   vk_tex.c      textures and samplers: NVN formats, images by serial, uploads of CPU-filled storage (block linear deswizzled on the CPU; again
+//                 when the CPU writes it after, nvn_dirty.h), views, the texture and sampler pools
+//   vk_ops.c      the execution interface's copies and clears
+//   vk_shader.c   the game's shaders: the bundle gfx/tools/dmsh_vk.py writes (DM_VK_SHADERS), modules and their reflection (vk_shader.h)
+//   vk_draw.c     draws: the pass (dynamic rendering), pipelines, the pushed resources, the dynamic state
 //   vk_present.c  the swapchain on the app's window and the present of the game's window texture
 #pragma once
 #include <pthread.h>
@@ -29,7 +32,7 @@ typedef struct {
     VkPhysicalDeviceProperties props; VkPhysicalDeviceMemoryProperties mem;
     pthread_mutex_t qmu;                                   // the queue is the game's and the present's: one submit at a time
     // what was taken
-    int placed, unmap_reserve, push_ds, custom_border, vi_dyn, eds2, depth_clip_ctl, robust2, bc, android_surface;
+    int placed, unmap_reserve, push_ds, custom_border, vi_dyn, eds2, depth_clip_ctl, robust2, bc, android_surface, idx8;
     uint32_t max_push_ds;
     PFN_vkMapMemory2KHR map2; PFN_vkUnmapMemory2KHR unmap2; PFN_vkCmdPushDescriptorSetKHR push;
 } vk_ctx;
@@ -40,6 +43,7 @@ uint32_t vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryProperty
 // vk_pools.c
 typedef struct { uintptr_t lo, hi; VkBuffer buf; VkDeviceMemory mem; int placed; } vk_pool;   // lo, hi first (nvn_pool_find.h)
 int vk_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);   // the pool buffer holding [addr, addr + len) and the offset there
+int vk_addr_span(uint64_t addr, VkBuffer *buf, VkDeviceSize *off, uint64_t *left);   // ... and the bytes from addr to its pool's end
 
 // vk_submit.c: the submission being recorded
 typedef struct { int kind; volatile uint32_t *val; uint32_t mode, v; uint64_t addr; uint32_t type; } vk_post;   // kind 1 event, 2 timestamp, 3 samples passed
@@ -58,15 +62,25 @@ struct vk_img {
     VkImage img; VkDeviceMemory mem; VkFormat fmt; VkImageAspectFlags aspect;
     uint32_t w, h, d, layers, levels; VkImageType type;
     int gpu_written;                             // rendered into, cleared or copied into by the GPU: its storage no longer tells its content
-    int uploaded;                                // its storage's content copied in once
+    int cube;                                    // made cube-compatible (2D, six layers or more, square)
+    int uploaded;                                // its storage's content copied in (again when the CPU writes it after stamp)
+    uint64_t stamp;                              // the dirty-page stamp of the content last copied in (nvn_dirty.h)
 };
 int vk_fmt(int nvn_format, VkFormat *f, VkComponentMapping *swz);   // 1 exact, 2 a substitute, 0 none (vk_fmt.c)
 vk_img *vk_tex(const tex_t *t);                 // the image of a texture object (made on first use; NULL: none can be made)
 void vk_tex_ready(vk_img *im, VkCommandBuffer cb);   // before a GPU read: CPU-filled content uploaded (recorded into cb before its use)
-VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach);   // a view (cached); attach: for rendering (one level, its layers)
+VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int dim);   // a view (cached); attach: for rendering (one level, its layers);
+                                                // dim: the shader's declared dimension (dmsh_vk.py dim_of), -1 the texture's own
+int vk_tex_by_id(uint32_t id, tex_t *t, view_t *v);   // the texture pool's entry for a texture ID (0: none registered)
+int vk_samp_by_id(uint32_t id, samp_par *p);
+void vk_tex_upload_now(vk_img *im);             // its storage's content copied in now, ahead of the submission being recorded
+void vk_tex_stats(uint64_t *made, uint64_t *bytes, uint64_t *up_n, uint64_t *up_bytes, uint64_t *reup_n);
+void vk_stats_line(void);                       // vk_draw.c: draws, pipelines, uploads so far (every 600 presents)
 
-// vk_ops.c: the render pass the clears and (later) draws record into
-void vk_pass_end_now(void);
+// vk_ops.c / vk_draw.c: the render pass
+void vk_pass_end_now(void);                     // end the open pass (vk_draw.c) and land the clears still pending
+int vk_pass_is_open(void);
+void vk_land_clears(void);                      // vk_ops.c: R's pending clears with no pass open
 
 // vk_present.c
 void vk_window_gone(void);                      // the app's window is going: the swapchain dropped first (front_android.c, main thread)

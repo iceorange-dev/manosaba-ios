@@ -39,7 +39,8 @@ static void init(void) {
     VkExtensionProperties *de = calloc(nde ? nde : 1, sizeof *de); vkEnumerateDeviceExtensionProperties(V.pd, NULL, &nde, de);
 
     // What the device has
-    VkPhysicalDeviceMapMemoryPlacedFeaturesEXT placed = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT};
+    VkPhysicalDeviceIndexTypeUint8Features idx8 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES};
+    VkPhysicalDeviceMapMemoryPlacedFeaturesEXT placed = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT, &idx8};
     VkPhysicalDeviceCustomBorderColorFeaturesEXT border = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT, &placed};
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT vi = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, &border};
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT eds2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, &vi};
@@ -63,7 +64,11 @@ static void init(void) {
     V.placed = map2 && has_ext(de, nde, VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME) && placed.memoryMapPlaced;
     V.unmap_reserve = V.placed && placed.memoryUnmapReserve;
     V.push_ds = has_ext(de, nde, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+    const char *idx8_ext = has_ext(de, nde, VK_KHR_INDEX_TYPE_UINT8_EXTENSION_NAME) ? VK_KHR_INDEX_TYPE_UINT8_EXTENSION_NAME :
+                           has_ext(de, nde, VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME) ? VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME : NULL;
+    V.idx8 = idx8_ext && idx8.indexTypeUint8;
     free(de);
+    if (!V.vi_dyn) VDIE("VK_EXT_vertex_input_dynamic_state is needed (the vertex input is set at each draw; %s does not have it)", V.props.deviceName);
     if (!V.placed) VDIE("VK_EXT_map_memory_placed is needed for pools at the guest's addresses (%s does not have it)", V.props.deviceName);
     const char *dext[16]; uint32_t ndx = 0;
     dext[ndx++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME; dext[ndx++] = VK_KHR_MAP_MEMORY_2_EXTENSION_NAME; dext[ndx++] = VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME;
@@ -73,11 +78,12 @@ static void init(void) {
     if (V.vi_dyn) dext[ndx++] = VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME;
     if (V.custom_border) dext[ndx++] = VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME;
     if (V.push_ds) dext[ndx++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
+    if (V.idx8) dext[ndx++] = idx8_ext;
     rb2.robustBufferAccess2 = rb2.robustImageAccess2 = VK_FALSE; placed.memoryMapRangePlaced = VK_FALSE;
     {   // the chain: features2 → 1.1 → 1.2 → 1.3 → the taken extensions' structs
-        VkBaseOutStructure *ext[6] = {(void *)&rb2, (void *)&dcc, (void *)&eds2, (void *)&vi, (void *)&border, (void *)&placed};
-        int on[6] = {V.robust2, V.depth_clip_ctl, V.eds2, V.vi_dyn, V.custom_border, 1};
-        void *head = NULL; for (int i = 0; i < 6; i++) if (on[i]) { ext[i]->pNext = head; head = ext[i]; }
+        VkBaseOutStructure *ext[7] = {(void *)&rb2, (void *)&dcc, (void *)&eds2, (void *)&vi, (void *)&border, (void *)&placed, (void *)&idx8};
+        int on[7] = {V.robust2, V.depth_clip_ctl, V.eds2, V.vi_dyn, V.custom_border, 1, V.idx8};
+        void *head = NULL; for (int i = 0; i < 7; i++) if (on[i]) { ext[i]->pNext = head; head = ext[i]; }
         f13.pNext = head;
     }
     V.bc = f2.features.textureCompressionBC;
@@ -96,8 +102,8 @@ static void init(void) {
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &pp}; vkGetPhysicalDeviceProperties2(V.pd, &p2); V.max_push_ds = pp.maxPushDescriptors;
     }
     VLOG("%s, Vulkan %u.%u.%u, driver %#x; queue family %u; placed pools (unmap reserving %d), push descriptors %d (%u), BC %d, custom border colours %d, "
-         "dynamic vertex input %d, extended dynamic state 2 %d, depth clip control %d, null descriptors %d", V.props.deviceName,
+         "dynamic vertex input %d, extended dynamic state 2 %d, depth clip control %d, null descriptors %d, 8-bit indices %d", V.props.deviceName,
          VK_API_VERSION_MAJOR(V.props.apiVersion), VK_API_VERSION_MINOR(V.props.apiVersion), VK_API_VERSION_PATCH(V.props.apiVersion), V.props.driverVersion,
-         V.qf, V.unmap_reserve, V.push_ds, V.max_push_ds, V.bc, V.custom_border, V.vi_dyn, V.eds2, V.depth_clip_ctl, V.robust2);
+         V.qf, V.unmap_reserve, V.push_ds, V.max_push_ds, V.bc, V.custom_border, V.vi_dyn, V.eds2, V.depth_clip_ctl, V.robust2, V.idx8);
 }
 void vk_init(void) { pthread_once(&g_once, init); }

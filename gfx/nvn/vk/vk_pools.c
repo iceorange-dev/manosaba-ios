@@ -89,6 +89,11 @@ int vk_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off) {
     if (i >= 0) { *buf = g_pools[i].buf; *off = addr - g_pools[i].lo; }
     pthread_mutex_unlock(&g_mu); return i >= 0;
 }
+int vk_addr_span(uint64_t addr, VkBuffer *buf, VkDeviceSize *off, uint64_t *left) {
+    pthread_mutex_lock(&g_mu); int i = find_locked(addr, 1);
+    if (i >= 0) { *buf = g_pools[i].buf; *off = addr - g_pools[i].lo; *left = g_pools[i].hi - addr; }
+    pthread_mutex_unlock(&g_mu); return i >= 0;
+}
 void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { (void)p; (void)off; (void)n; }   // coherent memory: nothing to do
 
 // The argument arena (the core's uniform snapshots and renamed updates, usnap.h): 64 MB of host-visible coherent memory in rings of submissions,

@@ -31,7 +31,8 @@ them anyway): they are translated offline, once, into Metal libraries.
   - The Android host runs the same interface layer and core on Android's backends: under adb the null one (`nvn/null/null.c`, plan item 301c), a
     GPU that draws nothing and finishes each submission when it is committed, its event writes and counter reports landing then (its file lists
     every function a backend provides); in the app the Vulkan one (`nvn/vk/`, plan item 301e: pools placed at their own addresses, submissions
-    fenced by a timeline semaphore, textures, copies, clears and presents so far; draws with 301e2).
+    fenced by a timeline semaphore, textures, copies, clears, draws with the game's shaders from a Vulkan bundle of the same translation
+    (`tools/dmsh_vk.py`, plan item 301e2), presents).
   - Memory pools become zero-copy `MTLBuffer`s on the game's memory; GPU address = CPU address, so only unified-memory devices are supported.
   - GPU completion effects (sync objects, events, counters) become visible only after the Metal command buffer has completed.
   - Pipeline and depth-stencil states are cached by state hash.
@@ -56,6 +57,7 @@ capture  (<key>.ctl + <key>.data per shader)
        spirv-cross                                  → MSL
        xcrun metal / metallib                       → <cache root>/b-<V>/<key>_b.metallib + <key>_b.json
   tools/c1_guard.py <cache>/b-<V>                   → c1 list (read next to the stage map)
+  tools/dmsh_vk.py   (dmsh_build.py's jobs, SPIR-V kept for Vulkan)   → <game>.dmvk, the Android app's bundle (DM_VK_SHADERS)
 ```
 
 - **Capture**: either the host writes every shader the game creates (`DM_SHDUMP=<dir>`; run it with an empty stage map the first time), or an
@@ -69,6 +71,10 @@ capture  (<key>.ctl + <key>.data per shader)
   rebuild `tools/dmsh_xlate` if its sources changed, `dmsh_chain.py --update-lock` (tools) / `--header`, then `dmsh_build.py`, `c1_guard.py`,
   and rebuild the host.
 - **c1 list**: shaders whose index into their built-in constant section c1 could not be proven bounded; each gets its own 64 KiB c1 buffer.
+- **Vulkan bundle** (plan item 301e2): `tools/dmsh_vk.py <capture dir> <out>` (DM_GAME, DM_ROOT) translates the same jobs to SPIR-V, moves
+  each stage's bindings so a program's two stages share one descriptor set (pixel +64), adds the reflection the Vulkan backend binds by
+  (`nvn/vk/vk_shader.c`) and checks every module with the NDK's spirv-val; one file, carried in the APK (android/Makefile `SHADERS`). It
+  takes dmsh_build.py's functions as they are and is not part of the chain version (the Metal chain does not change with it).
   Without a list matching V, every shader is treated that way (and a red line says so).
 
 Binding conventions used by the translation:
@@ -151,7 +157,7 @@ Binding conventions used by the translation:
 | `nvn/core/exec.c`, `nvn/core/exec.h` | The replay loop (`nvn_exec`): the command walk in replay order, the commands that only set state, FenceSync, SetRenderTargets (continued, a deferred group's Q, new targets) and the clears (load actions or drawn); every other command handed to the backend |
 | `nvn/core/cond.c`, `nvn/core/cond.h` | Conditional rendering: SetRenderEnable(Conditional) and the samples-passed results it reads (`occ_note`, `occ_pending`) |
 | `nvn/null/null.c`, `nvn/null/readings.c` | The null backend (adb shell's Android host, plan item 301c): every function a backend provides; submissions complete at commit, nothing is drawn. The readings file (no performance readings) serves the Vulkan backend too |
-| `nvn/vk/` | The Vulkan backend (the Android app's, plan item 301e): `vk.h` lists its parts (device, pools, submissions, textures and formats, copies / clears / passes, present) |
+| `nvn/vk/` | The Vulkan backend (the Android app's, plan item 301e): `vk.h` lists its parts (device, pools, submissions, textures and formats, copies / clears, shaders, draws, present) |
 | `nvn/nvn_backend.h` | The execution interface: what the replay hands a backend, command by command, and the render pass state it asks of it (`nvn_be_*`); each core module declares what else it asks of the backend |
 | `nvn/core/prog.c`, `nvn/core/prog.h` | The program bound per stage (prog_bind: per-stage keys combined into a composite program) |
 | `nvn/core/live.c`, `nvn/core/live.h` | The texture living at a storage address (a finalized registration follows it), and the texture objects' host copies that recorded commands use |

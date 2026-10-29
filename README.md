@@ -47,8 +47,9 @@ The Switch version is reported to end with an error now and then in long session
 likely.
 
 On Android (plan item 301, under way): on a Redmi K100 Pro Max (Android 17) manosaba runs as an app of this repository's own (no Android SDK:
-`android/tools/apk.py` writes and signs the APK) at 60 fps, with sound (AAudio), touch, game controllers and saves, but nothing is drawn yet:
-the Vulkan backend is the next step.
+`android/tools/apk.py` writes and signs the APK) at 60 fps, with sound (AAudio), touch, game controllers and saves, drawn by a Vulkan backend
+of its own (`gfx/nvn/vk/`, the game's shaders from the same translation as Metal's): the title screen so far (later scenes not checked yet); compute,
+images and the render-pass merging are still to come (plan items 301e2b, 301e3).
 
 ## Status (Tears of the Kingdom 1.4.3)
 
@@ -96,7 +97,8 @@ product it has not been tried again. Details: [DEVELOPMENT.md](DEVELOPMENT.md#te
    ```
 
 4. iPhone / iPad: [ios/README.md](ios/README.md). Mac app: `tools/mac_app.sh`.
-5. Android (not drawing yet, see above): `DM_TARGET=android tools/build_product.sh $DM_ROOT/build/android/manosaba.b301`, then
+5. Android (see above): `DM_TARGET=android tools/build_product.sh $DM_ROOT/build/android/manosaba.b301`, the shader bundle
+   (`DM_GAME=manosaba gfx/tools/dmsh_vk.py <shader captures> $DM_ROOT/build/android/manosaba.dmvk`), then
    `android/run.sh build`, `install`, `launch` once, `push-data`, `launch` (NDK r30; [DEVELOPMENT.md § Testing](DEVELOPMENT.md#testing)).
 
 ## Reporting problems

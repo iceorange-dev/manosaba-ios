@@ -6,6 +6,7 @@
 // Colour images whose format has an sRGB twin may be viewed as either, listed (VK_KHR_image_format_list) rather than any format, which keeps
 // Adreno's framebuffer compression (nx2android tex.c: UBWC lost with free MUTABLE_FORMAT; MIT, a fact taken).
 #include "vk.h"
+#include "../nvn_dirty.h"
 #include "../nvn_hmap.h"
 #include "../nvn_tex.h"
 #include "../../tex/nvn_deswizzle.h"
@@ -39,6 +40,7 @@ static VkFormat usable(VkFormat f, int depth) {
     return feats(f) ? f : VK_FORMAT_UNDEFINED;
 }
 
+static int cf_cube(const vk_img *im) { return im->cube; }
 static vk_img *make(const tex_t *t) {
     const nvn_texdesc *d = &t->d; VkFormat f; VkComponentMapping swz;
     int kind = vk_fmt(d->format, &f, &swz);
@@ -54,7 +56,7 @@ static vk_img *make(const tex_t *t) {
     im->d = tg == NVN_TEXTURE_TARGET_3D ? (d->depth ? d->depth : 1) : 1;
     im->layers = tg == NVN_TEXTURE_TARGET_3D ? 1 : (L.layers ? L.layers : 1);
     if (tg == NVN_TEXTURE_TARGET_1D_ARRAY) im->h = 1;
-    if ((tg == NVN_TEXTURE_TARGET_CUBEMAP || tg == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY) && im->layers >= 6 && im->w == im->h) cf |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    if (im->type == VK_IMAGE_TYPE_2D && im->layers >= 6 && im->w == im->h && !(d->samples > 1)) { cf |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT; im->cube = 1; }   // (viewable as a cube whatever its target)
     if (im->type == VK_IMAGE_TYPE_3D) cf |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;   // its slices as render targets
     VkFormatFeatureFlags ff = feats(uf);
     VkImageUsageFlags us = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -134,12 +136,13 @@ static staging *staging_new(uint64_t n, uint8_t **cpu) {
 static void level_dims(const vk_img *im, unsigned lv, uint32_t *w, uint32_t *h, uint32_t *d) {
     *w = im->w >> lv ? im->w >> lv : 1; *h = im->h >> lv ? im->h >> lv : 1; *d = im->d >> lv ? im->d >> lv : 1;
 }
-static uint64_t g_up_bytes, g_up_n;
+static uint64_t g_up_bytes, g_up_n, g_reup_n;
 void vk_tex_ready(vk_img *im, VkCommandBuffer cb) {
     if (!im || im->uploaded || im->gpu_written) return;
     im->uploaded = 1;
     const nvn_texdesc *d = &im->t.d; const uint8_t *src = im->t.mem;
     if (!src) return;   // (no storage: nothing to copy)
+    im->stamp = nvn_dirty_protect_stamp(src, im->t.size);   // taken before the copy: a CPU write after it shows in nvn_dirty_since (the Metal backend's pkg_upload)
     int bw, bh, bpb = nvn_fmt_bpb(d->format, &bw, &bh); if (!bpb || d->samples > 1) return;
     int linear = (d->flags & NVN_TEXTURE_FLAGS_LINEAR) != 0;
     // every level and layer, tightly packed by block rows
@@ -177,9 +180,9 @@ static int views_take_locked(vk_img *im, VkImageView *out, int max) {
     if (vs) { for (int i = 0; i < vs->n && n < max; i++) out[n++] = vs->e[i].v; free(vs); }
     return n;
 }
-VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach) {
+VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int dim) {
     if (!im) return VK_NULL_HANDLE;
-    uint8_t key[12] = {0}; if (has_v && v) memcpy(key, v, sizeof *v); key[10] = (uint8_t)attach; key[11] = (uint8_t)has_v;
+    uint8_t key[12] = {0}; if (has_v && v) memcpy(key, v, sizeof *v); key[10] = (uint8_t)(attach | (dim + 1) << 1); key[11] = (uint8_t)has_v;
     pthread_mutex_lock(&g_mu);
     view_set *vs = nvn_hm_get(&g_views, &im->serial);
     if (vs) for (int i = 0; i < vs->n; i++) if (!memcmp(vs->e[i].key, key, sizeof key)) { VkImageView r = vs->e[i].v; pthread_mutex_unlock(&g_mu); return r; }
@@ -197,6 +200,20 @@ VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach) {
     int tg = has_v && v && v->set_target ? v->target : im->t.d.target;
     if (!attach && (tg == NVN_TEXTURE_TARGET_CUBEMAP || tg == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY) && nly >= 6 && im->w == im->h)
         vt = tg == NVN_TEXTURE_TARGET_CUBEMAP && nly == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    // the dimension the shader declares (dmsh_vk.py dim_of), when the image can be viewed so: a 2D texture read as an array of one, an array's
+    // first layer as 2D, layers as a cube
+    if (!attach && dim >= 0) {
+        static const VkImageViewType want[9] = {VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY, VK_IMAGE_VIEW_TYPE_3D,
+                                                VK_IMAGE_VIEW_TYPE_1D, VK_IMAGE_VIEW_TYPE_1D_ARRAY, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY};
+        VkImageViewType w = dim < 9 ? want[dim] : vt;
+        int img2d = im->type == VK_IMAGE_TYPE_2D, cube_ok = img2d && im->w == im->h && (cf_cube(im)) && nly >= 6;
+        if (w == VK_IMAGE_VIEW_TYPE_2D && img2d) { vt = w; nly = 1; }
+        else if (w == VK_IMAGE_VIEW_TYPE_2D_ARRAY && img2d) vt = w;
+        else if ((w == VK_IMAGE_VIEW_TYPE_CUBE || w == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) && cube_ok) { vt = w; if (w == VK_IMAGE_VIEW_TYPE_CUBE) nly = 6; else nly -= nly % 6; }
+        else if (w == VK_IMAGE_VIEW_TYPE_3D && im->type == VK_IMAGE_TYPE_3D) vt = w;
+        else if ((w == VK_IMAGE_VIEW_TYPE_1D || w == VK_IMAGE_VIEW_TYPE_1D_ARRAY) && im->type == VK_IMAGE_TYPE_1D) { vt = w; if (w == VK_IMAGE_VIEW_TYPE_1D) nly = 1; }
+        else VRED("a texture's image (type %d, %u layers) cannot be viewed as the shader declares it (%d): viewed as it is", (int)im->type, im->layers, dim);
+    }
     VkComponentMapping cm = {0};
     const nvn_texdesc *d = &im->t.d;
     if (!attach) {   // the format's own (RGBX: a one), then the texture's swizzle over it, then the view's
@@ -280,5 +297,20 @@ void mtl_reg_samp(int id, const samp_par *p) {
     g_rsamp[id] = *p; g_rsamp_set[id] = 1;
     pthread_mutex_unlock(&g_mu);
 }
-void mtl_set_tex_pool_n(int n) { (void)n; }
-void vk_tex_stats(uint64_t *made, uint64_t *bytes, uint64_t *up_n, uint64_t *up_bytes) { *made = g_made; *bytes = g_bytes; *up_n = g_up_n; *up_bytes = g_up_bytes; }
+void vk_tex_stats(uint64_t *made, uint64_t *bytes, uint64_t *up_n, uint64_t *up_bytes, uint64_t *reup_n) { *made = g_made; *bytes = g_bytes; *up_n = g_up_n; *up_bytes = g_up_bytes; *reup_n = g_reup_n; }
+
+// The texture and sampler a handle names (texture ID: the low 20 bits, sampler ID: the high 12), as the pools registered them
+int vk_tex_by_id(uint32_t id, tex_t *t, view_t *v) {
+    pthread_mutex_lock(&g_mu); int ok = id < (uint32_t)g_nrtex && g_rtex[id].set; if (ok) { *t = g_rtex[id].t; *v = g_rtex[id].v; } pthread_mutex_unlock(&g_mu); return ok;
+}
+int vk_samp_by_id(uint32_t id, samp_par *p) {
+    pthread_mutex_lock(&g_mu); int ok = id < (uint32_t)g_nrsamp && g_rsamp_set[id]; if (ok) *p = g_rsamp[id]; pthread_mutex_unlock(&g_mu); return ok;
+}
+// Uploaded now in a command buffer of its own (queued before the submission being recorded): a draw's textures, inside or outside its pass
+void vk_tex_upload_now(vk_img *im) {
+    if (!im || im->gpu_written) return;
+    // the CPU wrote it since: again (outside the tracked pools, state 2, nothing tells: kept, as before the tracking)
+    if (im->uploaded && im->t.mem && im->t.size && nvn_dirty_state(im->t.mem, im->t.size, im->stamp) == 1) { im->uploaded = 0; g_reup_n++; }
+    if (im->uploaded) return;
+    VkCommandBuffer cb = vk_once_begin(); vk_tex_ready(im, cb); vk_once_end(cb, 0);
+}

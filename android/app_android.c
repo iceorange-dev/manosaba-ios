@@ -197,6 +197,7 @@ static void boot(ANativeActivity *a) {
         goto out;
     }
     if (!apk || product_out(a->assetManager, apk)) { dm_dialog("Cannot start", "The game's code could not be copied out of the app. See boot.txt."); goto out; }
+    { char sh[600]; snprintf(sh, sizeof sh, "%s/product/shaders.dmvk", g_int); setenv("DM_VK_SHADERS", sh, 0); }   // the Vulkan backend's shaders (gfx/nvn/vk/vk_shader.c)
     LOG("app: RomFS %s, fonts %s, save %s", getenv("DM_ROMFS"), getenv("DM_SYSFONT") ? getenv("DM_SYSFONT") : "(none)", getenv("DM_SAVE"));
     {   // dmhost <product> <modules...>, as the iOS app's arguments
         static char prod[600]; snprintf(prod, sizeof prod, "%s/product", g_int);

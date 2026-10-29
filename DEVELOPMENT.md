@@ -41,6 +41,8 @@ run-tests`, a headless run of manosaba under adb (`work/scripts/android_smoke.sh
 `/data/local/tmp/dm`) and a run of the app (`work/scripts/android_app_smoke.sh <dir> <seconds>`: installed through the phone's root, a test save of its
 own, shown over the lock screen: HyperOS allows it with its "show on lock screen" setting for the app, on on the test phone; a locked phone
 without it is reported as skipped). `android/run.sh` builds, installs and runs the app by hand; `t_vk_be` tests the Vulkan backend there.
+The APK carries the Vulkan shader bundle (`DM_GAME=manosaba gfx/tools/dmsh_vk.py work/shextract work/build/android/manosaba.dmvk`, DM_ROOT the
+workspace; again after a change of the game's shaders or of dmsh_vk.py; `tools/tests/t_dmsh_vk.py` checks the workspace's).
 
 **How a change is made.** One plan item at a time, each with a unit test and a broken version of the change that must fail it. A batch of
 items ends with the gfx tests (Metal 4 and Metal 3), the texture tests, the host tests and their sanitizer run, the public audit and the tool
@@ -345,15 +347,16 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   → the Vibrator through JNI).
   301e the Vulkan backend, `gfx/nvn/vk/` (the app's; adb shell's host keeps the null one). Of the other Android ports (2026-10-30 survey,
   docs/sources.md) none keeps pools at their addresses on Qualcomm's driver; the 840's has `VK_EXT_map_memory_placed`, so ours does, as on Metal.
-  301e2 shaders and drawing: a Vulkan bundle from the translation chain's SPIR-V (dmsh_build.py's jobs, the SPIR-V kept, one set with each
-  stage's bindings shifted, reflection from the SPIR-V names, spirv-val from the NDK), pipelines (dynamic rendering, extended dynamic state 1 / 2,
-  dynamic vertex input, a pipeline cache), push descriptors (32 on the 840; sets beyond), draws, dispatches, clears with a channel mask; the Adreno
-  findings to check for: a varying the next stage reads that this one does not write (pipeline creation fails), more than about 700 draws in one
-  command buffer, LRZ across passes, subgroup instructions in called functions (the 750-799 compiler); storage buffers at 64-byte alignment
-  (the translator's `sb_align`), subgroups (64 lanes, none in vertex shaders on the 840: the warp32 rewrite), 284's items.
-  301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the TBDR rewrites and the write-back
-  of GPU-written CPU-visible memory, re-uploads of CPU-written textures (dirty tracking), the 5-bit formats, pre-rotation, screenshots,
-  the readings; the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
+  301e2b what 301e2 left for the next scenes and Tears of the Kingdom: dispatches (compute pipelines, the c0 grid), storage images, texel
+  buffers and textures sampled through image slots (zeros with a red line now), indexed quads, quad strips and line loops, programs of more
+  than 32 descriptors (push descriptors' limit on the 840: a set of their own), storage buffers off 64-byte alignment (bound from below now:
+  the translator's `sb_align`), clears with a channel mask; the Adreno findings to check for: a varying the next stage reads that this one
+  does not write (pipeline creation fails), more than about 700 draws in one command buffer, LRZ across passes, subgroup instructions in
+  called functions (the 750-799 compiler), subgroups (64 lanes, none in vertex shaders on the 840: the warp32 rewrite), 284's items.
+  301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the TBDR rewrites (the
+  same-target continuation first: without it every SetRenderTargets ends the pass, 12 passes a frame on the title for 12.5 draws) and the
+  write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, screenshots, the readings; the NVN fence on the game's last
+  own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
@@ -880,3 +883,32 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   draws. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs, the headless run.
   Smoke: Tears of the Kingdom's two red lines, frame 1300 the same scene in another pose (looked at); manosaba's shots as batch 125's but
   s600, the title in its fade (looked at: the same picture, brightness 63.1 against 61.1).
+- [x] batch 127 · 301e2 shaders and draws on Vulkan: the app draws manosaba on the K100, the title with its picture at 60 fps, no red line
+  (looked at against the Mac's title: the same picture).
+  - `gfx/tools/dmsh_vk.py`: the Vulkan bundle (one file, `<game>.dmvk`, in the APK as the product's `shaders.dmvk`, `DM_VK_SHADERS`):
+    dmsh_build.py's jobs and handle decoding taken from that file as they are, the translator's SPIR-V for Vulkan, each stage's bindings moved
+    (pixel +64) so a program's stages share one set, the storage-image capabilities the translator leaves out added, every module through
+    spirv-val (Vulkan 1.3), a reflection of each binding's kind and NVN slot, the vertex inputs, the c1 bytes; manosaba's 2740 shaders, 50.8 MB.
+    Not part of the chain version. Two faults of its first form, each with a broken variant now: offsets counted with 32-byte entries where
+    they are 28, and a pixel shader's reflection moved a second time (all its pipelines failed with VK_ERROR_UNKNOWN: bindings not in the layout).
+  - `vk_shader.c`: the bundle mapped, a shader found by its key, its module made once.
+  - `vk_draw.c`: the pass opened by the first draw (dynamic rendering; the core's pending clears as load actions), a pipeline per program,
+    attachment formats and the state that is not dynamic (blend, channel masks, polygon mode, primitive class; a pipeline cache), the rest
+    dynamic (viewport flipped as the Metal backend's orientation, the same winding: counter-clockwise stays counter-clockwise, which the first
+    try had turned around and so culled the title's picture; scissor, depth bias, blend constants, stencil, cull, topology, depth and stencil
+    tests, primitive restart, rasterizer discard, the vertex input), pushed descriptors (uniform slots through the core's snapshots, Ryujinx's
+    support buffer, c1 from a bank, c0 / c2 filled as the Metal backend's drv_fill, storage slots, textures by the pools' IDs at their pool's
+    base with the sampler from a separate slot or the same handle, views as the shader declares them), quads through shared indices, 8-bit
+    indices (VK_KHR_index_type_uint8), the c[2] layout and the pools' bases set by the interface layer.
+  - `vk_tex.c`: an upload takes the dirty-page stamp first (the Metal backend's way), and a texture the CPU wrote after it is copied in again
+    before its next read; texture and sampler lookups by ID; uploads ahead of the submission for a draw's textures.
+  - Every 600 presents a line of the backend's counts (draws, dropped, passes, pipelines, zeros sampled, uploads); the app smoke prints the draws.
+  - The rest moved to 301e2b (dispatches, images, texel buffers, indexed quads, more than 32 descriptors) and 301e3 (the same-target
+    continuation first: 12 passes a frame for 12.5 draws on the title).
+  Tests: `tools/tests/t_dmsh_vk.py` 13 (bundle read back, bindings moved and reflected, a glslc-made pixel shader's reflection, manosaba's
+  c[2] handles; the workspace's bundle; `T_DMVK_BROKEN=stride`: 2 fail, `=shift2`: 1 fails); on the phone `t_vk_be` 14 with a bundle of two
+  GLSL shaders (`android/tests/mk_vk_bundle.py`): a counter-clockwise quad drawn with back faces culled, NDC's upper half in the top rows, the
+  pixel shader's uniform and texture found (`-DDM_TEST_VK_WINDING_SWAPPED`: 3 fail). The app 40 s at 60 fps, 4 save commits, 32087 draws,
+  none dropped, no red line; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool
+  tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frame 1300 the same scene in another pose (looked at); manosaba's shots as
+  batch 126's.

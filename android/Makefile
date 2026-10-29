@@ -64,26 +64,30 @@ $(B)/libdmhost.so: $(OBJ) $(VK_OBJ) $(APP_OBJ)
 	$(CC) -shared -o $@ $^ -Wl,-soname,libdmhost.so -Wl,-Bsymbolic -Wl,--no-undefined -landroid -llog -laaudio -lmediandk -lvulkan -lm -ldl
 
 # The APK (android/tools/apk.py): the library, the product's files the loader reads (the modules' images and what ios/tools/product_files.py lists), the icon.
-# PRODUCT: the android product (default $DM_ROOT/build/android/<game>.b301, DM_ROOT the workspace, ../work when unset); PKG: the package name;
+# PRODUCT: the android product (default $DM_ROOT/build/android/<game>.b301, DM_ROOT the workspace, ../work when unset); SHADERS: the Vulkan shader
+# bundle (gfx/tools/dmsh_vk.py; default $DM_ROOT/build/android/<game>.dmvk), carried as the product's shaders.dmvk; PKG: the package name;
 # RELEASE=1: not debuggable (debuggable lets adb's run-as read the app's own files: the save, the copied product); the version code is the commit
 # count, so a newer build installs over an older one. Written each time (about 6 s; the same inputs give the same bytes): the workspace's paths
 # may hold spaces, which make's prerequisites cannot, so they appear only quoted in the recipe
 WS = $(if $(DM_ROOT),$(DM_ROOT),../work)
 PRODUCT ?= $(WS)/build/android/$(GAME).b301
+SHADERS ?= $(WS)/build/android/$(GAME).dmvk
 PKG ?= io.github.iceorange_dev.$(GAME)
 MODS := $(shell python3 -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))['modules']))" $(GAMEDIR)/game.json)
 LABEL := $(shell python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['title'])" $(GAMEDIR)/game.json)
 ICON := $(shell python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'].get('icon', ''))" $(GAMEDIR)/game.json)
 $(B)/$(GAME).apk: $(B)/libdmhost.so tools/apk.py FORCE
+	@test -f "$(SHADERS)" || { echo "[red] no shader bundle at $(SHADERS): DM_GAME=$(GAME) gfx/tools/dmsh_vk.py <captures> <it>"; exit 1; }
 	sips -Z 432 -s format png "$(WS)/$(ICON)" --out $(B)/icon.png > /dev/null
 	python3 tools/apk.py --lib $(B)/libdmhost.so --out $@ --package $(PKG) --label "$(LABEL)" --icon $(B)/icon.png $(if $(filter 1,$(RELEASE)),--release) \
-		--version-code $$(git rev-list --count HEAD) --version-name $$(git rev-parse --short HEAD) --product "$(PRODUCT)" --modules "$(MODS)"
+		--version-code $$(git rev-list --count HEAD) --version-name $$(git rev-parse --short HEAD) --product "$(PRODUCT)" --modules "$(MODS)" \
+		--asset "product/shaders.dmvk=$(SHADERS)"
 apk: $(B)/$(GAME).apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early
-TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind
+TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
 	mkdir -p $@
@@ -114,13 +118,18 @@ build/tests/movie1080.mp4: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=blue:s=1920x1080:r=30:d=0.2 -c:v libx264 -pix_fmt yuv420p -bf 0 $@
 build/tests/movie.webm: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=red:s=320x240:r=30:d=1 -c:v libvpx-vp9 -g 10 -pix_fmt yuv420p $@
-# the Vulkan backend without a window, with the core modules it calls (plan item 301e1)
-VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c) ../gfx/nvn/nvn_tex.c ../gfx/tex/nvn_deswizzle.c
+# the Vulkan backend without a window, with the core modules it calls (plan item 301e1), and its draws' shaders (301e2)
+VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
+	../gfx/tex/nvn_deswizzle.c
 VKT_FLAGS = -O1 -g -Wall -Wno-format -D_GNU_SOURCE -I$(H) -I../gfx/nvn/include -I../gfx/nvn/vk -Icompat -include compat/darwin.h
 build/tests/t_vk_be: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -o $@ $(VKT_SRC) -lvulkan -landroid -lm
 build/tests/t_vk_be_early: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_EVENT_EARLY -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk_be_wind: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_WINDING_SWAPPED -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk.dmvk: tests/mk_vk_bundle.py ../gfx/tools/dmsh_vk.py ../games/manosaba/game.json | build/tests
+	python3 tests/mk_vk_bundle.py $@
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')
 run-tests: test
 	sh tests/run_on_phone.sh "$(SERIAL)" "$(TEST_DATA)" $(TESTS)

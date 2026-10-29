@@ -1,5 +1,5 @@
 // gfx/nvn/vk/vk_misc.c: what the interface layer tells a backend that the Vulkan one does not use yet (plan item 301e): program keys and releases
-// (the shaders come with 301e2), the store lookahead index, the c2 layout and depth convention (the translation's answers), the upscaling pass,
+// (the shaders come with 301e2), the store lookahead index, the depth convention (the translation's answer), the upscaling pass,
 // frame numbers, pipeline warming, screenshots and texture dumps.
 #include "vk.h"
 
@@ -7,7 +7,6 @@ int g_dm_present_link;   // the present pacing switch (nvn_mtl.m's): 0, no displ
 void mtl_prog_release(prog_t *p) { (void)p; }
 void mtl_prog_fkeys(uint64_t serial, const uint8_t fk[6][8]) { (void)serial; (void)fk; }
 void mtl_sub_index(const uint64_t *h, int n) { (void)h; (void)n; }
-void mtl_set_c2_layout(int tex, int ntex, int samp, int nsamp) { (void)tex; (void)ntex; (void)samp; (void)nsamp; }
 void mtl_set_depth_mode(int m) { (void)m; }
 void mtl_set_upscale_pass(const char *fs, int color, const char *compose_fs, int compose_color) { (void)fs; (void)color; (void)compose_fs; (void)compose_color; }
 void mtl_set_frame(uint64_t f) { (void)f; }
