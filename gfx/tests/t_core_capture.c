@@ -58,7 +58,7 @@ int main(void) {
     check("... two copies", 2, g_us.n);
     g_cap_cur = NULL; mtl_cap_free(c);
     // a GPU write of submission 5 reaches 0x800; the call is made at fence 4, the replay runs at fence 6
-    g_len = 0; ubo(A(0x800), 32); rec(OP_END, NULL, 0); g_us.gwn = 0; us_gw_note(A(0x800), 4, 5);
+    g_len = 0; ubo(A(0x800), 32); rec(OP_END, NULL, 0); g_us.gwn = 0; us_gw_note(A(0x800), 4, 5, 0);
     g_done = 4; c = mtl_sub_capture(&h, 1, 10); g_done = 6; mtl_sub_install(c); g_us.n = 0;
     mtl_sub_snapshot(&h, 1);
     check("a range a write not complete at the call reaches: not copied, though complete at the replay [-DDM_TEST_XLAT_CAP_STALE]", 0, us_find(A(0x800), 4) != NULL);

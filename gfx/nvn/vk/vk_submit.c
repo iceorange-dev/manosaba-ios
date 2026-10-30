@@ -9,6 +9,7 @@
 // it was committed in (gpu_tag_begin / gpu_tag_done: the fps line's GPU time; the spans are on the GPU's clock, not the CPU's).
 #include "vk.h"
 #include "../core/frame.h"
+#include "../core/pend.h"
 #include "../core/upd.h"
 #include "../core/usnap.h"
 #include <stdlib.h>
@@ -88,9 +89,14 @@ void mtl_sub_begin(void) {
     mtl_init();
     pthread_mutex_lock(&g_mu); uint64_t f = g_fence + 1; slot_t *s = &g_slot[f % NSLOT];
     while (s->fence > g_done) pthread_cond_wait(&g_cv, &g_mu);   // its last submission done
-    pthread_mutex_unlock(&g_mu);
+    uint64_t done = g_done; pthread_mutex_unlock(&g_mu);
     VK(vkResetCommandPool(V.dev, s->pool, 0));
     s->begun = 0; s->npost = 0; g_cur = s;
+#ifndef DM_TEST_VK_PEND_KEPT   // negative control of t_vk_be only: the pending writes never retired (the table fills, then overflows for good)
+    pend_begin(done);   // the writes of completed submissions are in memory now (core/pend.h)
+#else
+    (void)done;
+#endif
 }
 VkCommandBuffer vk_cb(void) {
     if (!g_cur) VDIE("a command recorded outside a submission");

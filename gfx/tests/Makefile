@@ -66,6 +66,13 @@ t_core_upd: t_core_upd.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_upd.c $(CORE_C)
 t_core_usnap: t_core_usnap.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_usnap.c $(CORE_C)
+# Its negative controls for plan item 301e3 (an earlier submission's renamed updates laid over the snapshot)
+t_core_usnap_allknown: t_core_usnap.c $(CORE_DEP)
+	clang $(CFLAGS) -Werror -DDM_TEST_US_GW_ALL_KNOWN -o $@ t_core_usnap.c $(CORE_C)
+t_core_usnap_nolay: t_core_usnap.c $(CORE_DEP)
+	clang $(CFLAGS) -Werror -DDM_TEST_US_NO_LAY -o $@ t_core_usnap.c $(CORE_C)
+t_core_usnap_laydone: t_core_usnap.c $(CORE_DEP)
+	clang $(CFLAGS) -Werror -DDM_TEST_PEND_LAY_DONE -o $@ t_core_usnap.c $(CORE_C)
 t_hmap: t_hmap.c ../nvn/nvn_hmap.h
 	clang -O1 -Wall -o $@ t_hmap.c
 t_cover: t_cover.c ../nvn/nvn_cover.h
@@ -295,6 +302,9 @@ run: \
 	t_core_tbdr \
 	t_core_upd \
 	t_core_usnap \
+	t_core_usnap_allknown \
+	t_core_usnap_nolay \
+	t_core_usnap_laydone \
 	t_cover \
 	t_cull_prim \
 	t_d16clear \
@@ -429,6 +439,18 @@ run: \
 	./t_core_tbdr
 	./t_core_upd
 	./t_core_usnap
+	@status=0; ./t_core_usnap_allknown > t_core_usnap_allknown.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_core_usnap_allknown.log)" -ne 2 ]; then \
+	   cat t_core_usnap_allknown.log; echo "t_core_usnap_allknown: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_core_usnap_allknown: every GPU write taken as renamed updates fails 2, as expected'; fi
+	@status=0; ./t_core_usnap_nolay > t_core_usnap_nolay.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_core_usnap_nolay.log)" -ne 2 ]; then \
+	   cat t_core_usnap_nolay.log; echo "t_core_usnap_nolay: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_core_usnap_nolay: the updates not laid over the copy fail 2, as expected'; fi
+	@status=0; ./t_core_usnap_laydone > t_core_usnap_laydone.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_core_usnap_laydone.log)" -ne 1 ]; then \
+	   cat t_core_usnap_laydone.log; echo "t_core_usnap_laydone: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_core_usnap_laydone: completed writes laid too fail 1, as expected'; fi
 	./t_cover
 	./t_copy_pitch
 	./t_pool_find

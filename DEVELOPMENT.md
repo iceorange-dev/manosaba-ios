@@ -363,9 +363,10 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   updates since batch 129, barriers kept in the pass since batch 131: 3.9 draws a pass in the first trial; its passes now end for new
   targets (40-66 % in 10-second spans), renamed updates written before a draw whose range has no snapshot (16-50 %) and submissions
   (10-17 %). In the debate those flushes were 3300-10800 in 300 frames while the Vulkan arena made each submission wait for the one before
-  it (batch 133), 400-2700 after; the snapshot line then still counts 96-496 ranges in 300 frames not copied for a GPU write of an earlier
-  submission still running (`us_gw_note`, the Metal backend's too; the renamed updates' own writes, whose bytes are known, are among the
-  writes noted): whether those are the flushes' ranges is to be checked) and
+  it (batch 133), 400-2700 after, and none since batch 134: they were the ranges the snapshot left out for the last submission's renamed
+  updates written, still running, which are now copied with those bytes laid over (core, the Metal backend's too; Tears of the Kingdom's
+  capture path still leaves them out). The debate's GPU time in passes stayed the same (8.4-9.8 ms a frame in 600-present spans against
+  8.5-9.7), so those passes' loads and stores were not its cost) and
   the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth; each pass's
   GPU time by its targets since batch 132: in the trial 7.4-7.7 ms a frame in passes, 3.3 of them in about 1.2 passes a frame of 3-4 draws
   on a 1280 x 720 target with depth, a projection matrix among their uniforms; that pass loads and stores about 15 MB, so the cost is its
@@ -1018,3 +1019,24 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 132's; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host
   182 / 182 (`t_sleep` alone after the others), sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red
   lines, its shots as batch 132's; manosaba's as batch 132's.
+- [x] batch 134 · 301e3 part: a range the last submission's renamed uniform updates were written to gets its snapshot while that submission
+  still runs. The snapshot had left out every range a GPU write of a running submission reaches (its result not in memory yet), the
+  renamed updates' own writes among them, so in the debate each update of such a range in the next submission wrote the log to memory
+  before its draw (no snapshot for its private copy), ending the render pass: 882-2671 times in 300 frames. Those writes are now noted as
+  known (`us_gw_note`'s new argument; the backends' `upd_flush`), and a range only known writes reach is copied with the pending updates'
+  bytes laid over memory in order (`pend_lay`: those of submissions completed by the copy are in memory, which may hold a newer byte of
+  the game, so they are not laid); any other write still leaves it out, as does an overflowed pending-write table. The Vulkan backend now
+  retires the pending writes of completed submissions at a submission's start (`pend_begin`, as the Metal backend): its table had filled
+  in a few seconds and stayed overflowed. The debate on the phone: no update written for a draw any more (once a submission, at its end),
+  0 ranges left out (192-496 before), 120-380 copied with updates laid over in 300 frames; no pass ended by updates written in 600 frames
+  (about 1700 before), the 1920 x 1080 target's passes 1.0 a frame (1.7-2.0); GPU time in passes unchanged (above); 58-60 fps at the
+  debate, the same loading stall at the trial's start in both runs (frames 6000-6300, p95 70-76 ms); the debate's pictures looked at, no
+  red line. Tears of the Kingdom's translation thread takes its snapshot from the capture and is unchanged. (227 laid those bytes the same
+  way as part of the GPU one frame behind, declined with it; there the CPU had written 1 of 63,392 such ranges before the next submit call
+  on the Mac, while loading.)
+  Tests: `t_core_usnap` 36 (+5: a range of known writes copied with them laid, one another write reaches left out, a completed write not
+  laid over the game's newer byte, an overflowed table, a range noted both ways; `-DDM_TEST_US_GW_ALL_KNOWN` fails 2, `-DDM_TEST_US_NO_LAY`
+  2, `-DDM_TEST_PEND_LAY_DONE` 1); on the phone `t_vk_be` 32 (the update's pending write retired when the next submission starts:
+  `-DDM_TEST_VK_PEND_KEPT` 1 fails). The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 133's; the headless run 40 s. gfx
+  156 / 156 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two
+  red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots as batch 133's (looked at).

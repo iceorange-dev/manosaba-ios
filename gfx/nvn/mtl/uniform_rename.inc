@@ -26,7 +26,7 @@ static void upd_flush(void) {   // the updates not in memory yet into memory on 
                 if (!mtl_addr(e->lo, e->hi - e->lo, &eb, &eo)) MDIE("renamed uniform update %#llx+%#llx is no longer in a memory pool", (unsigned long long)e->lo, (unsigned long long)(e->hi - e->lo));
                 ring_put(e->data, e->hi - e->lo, &rb, &ro); enc_b_copy_buffer(blit(), rb, ro, (__bridge id<MTLBuffer>)eb, eo, e->hi - e->lo); }
         }
-        if (us_on()) us_gw_note(lo, hi - lo, g_fence + 1);   // a GPU write for the next submissions; the snapshot stays (private copies add every update to it)
+        if (us_on()) us_gw_note(lo, hi - lo, g_fence + 1, 1);   // a GPU write for the next submissions, its bytes the pending updates'; the snapshot stays (private copies add every update to it)
         i = j;
     }
     ul_clear(l); g_nupd = 0; g_ren.flushes++;

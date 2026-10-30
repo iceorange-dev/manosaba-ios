@@ -6,9 +6,14 @@
 // write reaches (and forgets writes completed); lookups find the copy holding a range, none across two, the last copy found only when it holds
 // the range (alternating lookups); a GPU write drops the copies it reaches (noted once for repeats); a source made unreadable drops its copy and
 // the copies after it are made (one guard for the run, one after the fault), in parts over the workers too; the capture's copies the same;
-// DM_NVN_UBO_SNAPSHOT=0 copies nothing, yet the walk still reads deferred handles.
-// The last copy found taken whatever the range (-DDM_TEST_US_LAST_UNCHECKED, t_usnap's broken variant): 7 fail.
+// DM_NVN_UBO_SNAPSHOT=0 copies nothing, yet the walk still reads deferred handles. A range that a running submission's renamed updates were written
+// to (plan item 301e3) is copied with their bytes laid over memory, one another write reaches still not, a completed write not laid over a newer
+// byte of the game, nothing copied when the pending-write table overflowed; a range noted both ways counts as written otherwise.
+// The last copy found taken whatever the range (-DDM_TEST_US_LAST_UNCHECKED, t_usnap's broken variant): 7 fail. Every write taken as renamed updates
+// (-DDM_TEST_US_GW_ALL_KNOWN): 2 fail; the updates not laid over (-DDM_TEST_US_NO_LAY): 2 fail; completed writes laid too
+// (-DDM_TEST_PEND_LAY_DONE): 1 fails.
 #include "../nvn/core/usnap.h"
+#include "../nvn/core/pend.h"
 #include "core_test.h"
 #include "../../host/dm.h"
 #include <stdio.h>
@@ -114,6 +119,29 @@ int main(void) {
     check("the next submission, the write's submission still running: its range not copied, counted", 1, g_us.n == 1 && !us_find(A(0, 0x4020), 8) && g_us.skip_gpu - s0 == 1);
     g_done = 101; submit();
     check("... once it completed: copied again, and the write forgotten", 1, g_us.n == 2 && us_find(A(0, 0x4020), 8) && g_us.gwn == 0);
+
+    // an earlier submission's renamed updates written, still running (plan item 301e3)
+    lists_reset(); ubo(0, A(0, 0x8000), 64); ubo(0, A(0, 0x9000), 64); rec(0, OP_END, NULL, 0);
+    static uint8_t upd1[16], upd2[8]; memset(upd1, 0xa5, sizeof upd1); memset(upd2, 0x3c, sizeof upd2);
+    g_us.gwn = 0; memset(&g_pend, 0, sizeof g_pend); g_done = 200;
+    pend_add(A(0, 0x8010), 16, upd1, 0, 201); us_gw_note(A(0, 0x8010), 16, 201, 1);   // as the backends' upd_flush note them
+    us_drop_range(A(0, 0x9020), 8, 201);   // a storage buffer the shader may write
+    s0 = g_us.skip_gpu; uint64_t l0 = g_us.laid; submit();
+    { const us_ent *c = us_find(A(0, 0x8000), 64);
+      check("a range a running submission's renamed updates were written to is copied (counted); one another write of it reaches is not", 1,
+            c && !us_find(A(0, 0x9000), 64) && g_us.laid - l0 == 1 && g_us.skip_gpu - s0 == 1);
+      check("... the copy: memory with the updates' bytes laid over", 1, c && !memcmp(c->cpu + 0x10, upd1, 16) && !memcmp(c->cpu, g_pool[0] + 0x8000, 16) && !memcmp(c->cpu + 0x20, g_pool[0] + 0x8020, 32)); }
+    memcpy(g_pool[0] + 0x8010, upd1, 16); g_pool[0][0x8010] = 0x77;   // the GPU wrote them, then the game one byte
+    pend_add(A(0, 0x8030), 8, upd2, 0, 202); us_gw_note(A(0, 0x8030), 8, 202, 1);
+    g_done = 201; submit();
+    { const us_ent *c = us_find(A(0, 0x8000), 64);
+      check("... the next, that one done and another running: the game's newer byte kept, the running one's bytes laid", 1,
+            c && c->cpu[0x10] == 0x77 && c->cpu[0x11] == 0xa5 && !memcmp(c->cpu + 0x30, upd2, 8)); }
+    g_pend.over = 1; s0 = g_us.skip_gpu; submit();
+    check("... the pending-write table overflowed: not copied", 1, !us_find(A(0, 0x8000), 64) && g_us.skip_gpu - s0 == 1);
+    g_us.gwn = 0; us_gw_note(A(0, 0x9020), 8, 203, 1); us_drop_range(A(0, 0x9020), 8, 203);
+    check("a range noted as renamed updates and then written otherwise in the same submission: noted once, not known", 1, g_us.gwn == 1 && !g_us.gw[0].known);
+    g_us.gwn = 0; memset(&g_pend, 0, sizeof g_pend); for (int i = 0x8010; i < 0x8020; i++) g_pool[0][i] = (uint8_t)i;
 
     // faults
     { uint8_t *bad = g_pool[1] + 0x10000; mprotect(bad, 4096, PROT_NONE);

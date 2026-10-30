@@ -20,3 +20,6 @@ void pend_begin(uint64_t done);   // Submission start: the writes of submissions
 // order: an inline update's bytes, or what a GPU copy reads from its source as of that copy (MacNativeGames' pend_read, MIT). 0 when that is not known
 // (a copy without a source, the table overflowed, copies nested too deep)
 int pend_read_x(uint64_t a, void *out, uint64_t n, int upto, int depth);
+// The pending writes of submissions after done laid over out (= [a, a + n) as memory held it once done had completed), oldest first: 1, or 0 when
+// one there has no bytes of its own (a GPU copy) or the table overflowed. A completed write is not laid: memory has it, or a newer CPU write
+int pend_lay(uint64_t a, uint8_t *out, uint64_t n, uint64_t done);

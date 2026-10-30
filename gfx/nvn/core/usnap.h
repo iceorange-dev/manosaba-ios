@@ -9,8 +9,10 @@
 // into its argument arena (ranges up to 256 bytes apart in one memory pool merged, at most 1 MiB each, each copy at the same offset modulo 256), and
 // bindings and replay-time reads use the copy. A GPU write within the submission that reaches a copied range (inline update, buffer copy, texture to
 // buffer copy, a writable storage buffer) drops that copy from then on: later readers see memory, where the GPU applies the writes in order. A range
-// that a GPU write of an earlier, still running submission reaches is not copied (its result is not in memory yet). DM_NVN_UBO_SNAPSHOT=0 reads live
-// memory.
+// that a GPU write of an earlier, still running submission reaches is not copied (its result is not in memory yet), unless every such write is
+// renamed uniform updates written (upd.h), whose bytes the pending-write table holds (pend.h): that range is copied and those bytes laid over it in
+// order (plan item 301e3: in manosaba's debate the next submission's snapshot left out the ranges the last one's updates were written to, so each
+// update there wrote the log to memory before its draw, ending the render pass 3-9 times a frame). DM_NVN_UBO_SNAPSHOT=0 reads live memory.
 #pragma once
 #include <stdatomic.h>
 #include <stddef.h>
@@ -19,9 +21,9 @@
 #include "../nvn_obj.h"
 #include "core.h"
 
-typedef struct { uint64_t lo, hi; uint8_t *cpu; uint64_t gpu; void *buf; int dropped; } us_ent;   // buf: the arena block holding the copy
+typedef struct { uint64_t lo, hi; uint8_t *cpu; uint64_t gpu; void *buf; int dropped, lay; } us_ent;   // buf: the arena block holding the copy; lay: pending writes laid over it
 typedef struct { uint64_t lo, hi; } us_rng;
-typedef struct { uint64_t lo, hi, fence; } us_gw;      // GPU writes, with the fence of their submission
+typedef struct { uint64_t lo, hi, fence; int known; } us_gw;   // GPU writes, with the fence of their submission; known: renamed updates written (their bytes in g_pend)
 typedef struct {
     us_ent *ent; int n, cap;              // This submission's copies, sorted and disjoint
     us_rng *rng; int rn, rcap;            // The bound ranges the walk collected
@@ -29,7 +31,7 @@ typedef struct {
     int last;                             // The copy the last lookup found, tried first (plan item 225: consecutive draws bind the same blocks; ~13,000 lookups a frame)
     int on;                               // -1: not read yet (tests set it directly)
     int par; uint64_t par_n;              // DM_NVN_UBO_SNAPSHOT_PAR=0: one thread; par_n: snapshots copied in parts
-    uint64_t subs, ranges, copies, bytes, drops, skip_gpu, ns;
+    uint64_t subs, ranges, copies, bytes, drops, skip_gpu, ns, laid;   // laid: ranges copied with an earlier submission's pending writes laid over
     _Atomic uint64_t faults, jumps;       // jumps: sigsetjmp calls of the copies (t_usnap)
 } us_state;
 extern us_state g_us;
@@ -59,7 +61,7 @@ void us_rng_sort(us_rng *a, int n);
 int us_merge(us_rng *u, int n);   // Sorted ranges merged in place, the result disjoint: up to 256 bytes apart in one memory pool, at most 1 MiB; returns how many
 // GPU writes of submissions after fence keep, sorted by start (the rest forgotten); returns how many, *gw_max the longest
 int us_gw_keep(uint64_t keep, uint64_t *gw_max);
-int us_gw_reaches(uint64_t lo, uint64_t hi, int ng, uint64_t gw_max);   // One of those ng writes reaches [lo, hi)
+int us_gw_reaches(uint64_t lo, uint64_t hi, int ng, uint64_t gw_max);   // Of those ng writes, none reaches [lo, hi) (0), only known ones (1), another (2)
 void us_reserve(int n);                    // Room for n copies in g_us.ent
 us_ent *us_add(uint64_t lo, uint64_t hi);   // The next copy, its place in the arena at the same offset modulo 256 as the original (the bytes not copied yet)
 void us_copy_all(void);                     // Fill every copy in g_us.ent, under the fault guard; a copy whose source faults is dropped
@@ -80,7 +82,9 @@ static inline const us_ent *us_find(uint64_t a, uint64_t n) {   // The live copy
     if (lo < g_us.n && g_us.ent[lo].lo <= a && a + n <= g_us.ent[lo].hi && !g_us.ent[lo].dropped) { g_us.last = lo; return &g_us.ent[lo]; }
     return NULL;
 }
-void us_gw_note(uint64_t a, uint64_t n, uint64_t fence);   // A GPU write of the submission that completes at fence reaches [a, a + n): the next submissions do not copy it until it completes
+// A GPU write of the submission that completes at fence reaches [a, a + n): the next submissions do not copy it until it completes, unless known (the
+// write is renamed updates whose bytes are in g_pend: they are laid over the copy)
+void us_gw_note(uint64_t a, uint64_t n, uint64_t fence, int known);
 int us_drop_range(uint64_t a, uint64_t n, uint64_t fence); // ... and its copies are dropped from then on (later readers see memory); 1 when one was
 void us_report(uint64_t f);   // Every 300 frames
 

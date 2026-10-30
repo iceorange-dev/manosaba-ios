@@ -28,3 +28,16 @@ int pend_read_x(uint64_t a, void *out, uint64_t n, int upto, int depth) {
     }
     return 1;
 }
+int pend_lay(uint64_t a, uint8_t *out, uint64_t n, uint64_t done) {
+    if (g_pend.over) return 0;
+    for (int i = 0; i < g_pend.n; i++) {
+#ifndef DM_TEST_PEND_LAY_DONE   // negative control of t_core_usnap only: completed writes laid too (over a newer CPU write)
+        if (g_pend.fence[i] <= done) continue;
+#endif
+        if (a >= g_pend.hi[i] || a + n <= g_pend.lo[i]) continue;
+        if (!g_pend.data[i]) return 0;
+        uint64_t lo = a > g_pend.lo[i] ? a : g_pend.lo[i], hi = a + n < g_pend.hi[i] ? a + n : g_pend.hi[i];
+        memcpy(out + (lo - a), g_pend.data[i] + (lo - g_pend.lo[i]), hi - lo);
+    }
+    return 1;
+}

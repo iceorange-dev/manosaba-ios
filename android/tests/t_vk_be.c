@@ -19,11 +19,13 @@
 // only the op: 2 fail). Barriers in a pass: it goes on, ended before a draw after one sampling the pass's attachment and at one after storage
 // written (-DDM_TEST_VK_BAR_NO_SPLIT: 2 fail, the passes timed with it). The argument arena while a submission runs: the next one's allocation
 // beside its own does not wait for it, one entering blocks it used on the last lap does (-DDM_TEST_VK_ARENA_WAIT_OPEN, the old wait: 1 fails). Each
-// pass's GPU time summed by its targets (DM_VK_PASS_GPU; -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails).
+// pass's GPU time summed by its targets (DM_VK_PASS_GPU; -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails). The pending writes
+// of completed submissions retired when the next starts (-DDM_TEST_VK_PEND_KEPT, never: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
 #include "../../gfx/nvn/core/usnap.h"
+#include "../../gfx/nvn/core/pend.h"
 #include "../../gfx/nvn/core/frame.h"
 #include <android/native_window.h>
 #include "../../tex/nvn_deswizzle.h"
@@ -319,6 +321,8 @@ int main(void) {
           (unsigned long long)g_upd_passes, ut[1], ut[2], ub[1], ub[2]);
     float mem[4]; memcpy(mem, g_ubo3, sizeof mem);
     CHECK(mem[0] == 1 && mem[1] == 0 && mem[2] == 1 && mem[3] == 1, "the update reaches memory when the submission ends (%g %g %g %g)", mem[0], mem[1], mem[2], mem[3]);
+    int pend0 = g_pend.n; mtl_sub_begin(); int pend1 = g_pend.n, pover = g_pend.over; mtl_wait(mtl_sub_commit(), UINT64_MAX);
+    CHECK(pend0 > 0 && pend1 == 0 && !pover, "its pending write (core/pend.h) is retired when the next submission starts, that one done (%d entries, then %d; overflowed %d)", pend0, pend1, pover);
     uint64_t pe_n = 0; for (int i = 0; i < VK_PE_N; i++) pe_n += g_cont_pe[i] + g_upd_pe[i];
     CHECK(g_cont_pe[VK_PE_SAMPLES] == 1 && g_cont_pe[VK_PE_RT] == 1 && g_upd_pe[VK_PE_SUBMIT] == 1 && pe_n == 3,
           "why passes ended: sampling the attachment %llu and SetRenderTargets %llu (the continued pass), the submission %llu (its renamed updates pending; %llu in all)",

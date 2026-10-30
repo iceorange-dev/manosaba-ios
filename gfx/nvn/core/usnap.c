@@ -1,5 +1,6 @@
 // gfx/nvn/core/usnap.c: uniform snapshots, see usnap.h
 #include "usnap.h"
+#include "pend.h"
 #include "../../../host/dm.h"
 #include <pthread.h>
 #include <setjmp.h>
@@ -77,17 +78,22 @@ int us_gw_keep(uint64_t keep, uint64_t *gw_max) {
     return ng;
 }
 int us_gw_reaches(uint64_t lo, uint64_t hi, int ng, uint64_t gw_max) {
-    uint64_t from = lo > gw_max ? lo - gw_max : 0; int a = 0, b = ng;
+    uint64_t from = lo > gw_max ? lo - gw_max : 0; int a = 0, b = ng, r = 0;
     while (a < b) { int m = (a + b) / 2; if (g_us.gw[m].lo < from) a = m + 1; else b = m; }
-    for (int j = a; j < ng && g_us.gw[j].lo < hi; j++) if (g_us.gw[j].hi > lo) return 1;
-    return 0;
+    for (int j = a; j < ng && g_us.gw[j].lo < hi; j++) if (g_us.gw[j].hi > lo) {
+#ifndef DM_TEST_US_GW_ALL_KNOWN   // negative control of t_core_usnap only: every write taken as renamed updates written
+        if (!g_us.gw[j].known) return 2;
+#endif
+        r = 1;
+    }
+    return r;
 }
 void us_reserve(int n) { if (g_us.cap < n) { g_us.cap = n + 256; g_us.ent = realloc(g_us.ent, (size_t)g_us.cap * sizeof *g_us.ent); } }
 us_ent *us_add(uint64_t lo, uint64_t hi) {
     uint64_t pad = lo & 255, sz = hi - lo; uint8_t *cpu; uint64_t gpu; void *buf;
     nvn_be_arena((size_t)(sz + pad), &cpu, &gpu, &buf);   // same offset modulo 256 as the original
     us_ent *c = &g_us.ent[g_us.n++];
-    c->lo = lo; c->hi = hi; c->cpu = cpu + pad; c->gpu = gpu + pad; c->buf = buf; c->dropped = 0;
+    c->lo = lo; c->hi = hi; c->cpu = cpu + pad; c->gpu = gpu + pad; c->buf = buf; c->dropped = c->lay = 0;
     g_us.bytes += sz;
     return c;
 }
@@ -169,24 +175,36 @@ void us_snapshot(const uint64_t *h, int n) {
     us_reserve(nr);
     for (int i = 0; i < nr; i++) {
         if (!nvn_be_pool_span(u[i].lo, u[i].hi - u[i].lo)) continue;   // not in one pool: read live memory
-        if (ng && us_gw_reaches(u[i].lo, u[i].hi, ng, gw_max)) { g_us.skip_gpu++; continue; }   // a GPU write still running reaches it: read on the GPU timeline
-        us_add(u[i].lo, u[i].hi);
+        int gw = ng ? us_gw_reaches(u[i].lo, u[i].hi, ng, gw_max) : 0;
+        if (gw == 2 || (gw == 1 && g_pend.over)) { g_us.skip_gpu++; continue; }   // a GPU write still running reaches it, its bytes not known: read on the GPU timeline
+        us_add(u[i].lo, u[i].hi)->lay = gw == 1;
     }
+    // Read after the arena allocations above and before the bytes: the writes completed by then are in memory, and the bytes of those not completed
+    // are still in their submissions' arenas (a block is reused only once its submission completed)
+    uint64_t done = nvn_be_done_fence();
     uint64_t uf0 = atomic_load(&g_us.faults);
     us_copy_all();
+    for (int i = 0; i < g_us.n; i++) if (g_us.ent[i].lay && !g_us.ent[i].dropped) {   // renamed updates of a running submission over memory, in order
+#ifndef DM_TEST_US_NO_LAY   // negative control of t_core_usnap only: memory as it is, the updates not laid over
+        if (!pend_lay(g_us.ent[i].lo, g_us.ent[i].cpu, g_us.ent[i].hi - g_us.ent[i].lo, done)) { g_us.ent[i].dropped = 1; continue; }
+#else
+        (void)done;
+#endif
+        g_us.laid++;
+    }
     if (atomic_load(&g_us.faults) != uf0) { static int once; if (once++ < 8) MLOG("[red] uniform snapshot: %llu source range(s) not readable (unmapped after the pool was registered): those copies dropped, their draws read memory", (unsigned long long)(atomic_load(&g_us.faults) - uf0)); }
     g_us.copies += (uint64_t)g_us.n;
     g_us.ns += core_now_ns() - t0;
 }
-void us_gw_note(uint64_t a, uint64_t n, uint64_t fence) {
-    int dup = 0;   // the same range written again and again (a storage buffer bound for many draws): noted once
-    for (int j = g_us.gwn - 1; j >= 0 && j >= g_us.gwn - 8; j--) if (g_us.gw[j].lo == a && g_us.gw[j].hi == a + n && g_us.gw[j].fence == fence) { dup = 1; break; }
+void us_gw_note(uint64_t a, uint64_t n, uint64_t fence, int known) {
+    int dup = 0;   // the same range written again and again (a storage buffer bound for many draws): noted once, known only if every time
+    for (int j = g_us.gwn - 1; j >= 0 && j >= g_us.gwn - 8; j--) if (g_us.gw[j].lo == a && g_us.gw[j].hi == a + n && g_us.gw[j].fence == fence) { g_us.gw[j].known &= known; dup = 1; break; }
     if (!dup) { if (g_us.gwn == g_us.gwcap) { g_us.gwcap = g_us.gwcap ? g_us.gwcap * 2 : 4096; g_us.gw = realloc(g_us.gw, (size_t)g_us.gwcap * sizeof *g_us.gw); }
-                g_us.gw[g_us.gwn++] = (us_gw){a, a + n, fence}; }
+                g_us.gw[g_us.gwn++] = (us_gw){a, a + n, fence, known}; }
 }
 int us_drop_range(uint64_t a, uint64_t n, uint64_t fence) {
     if (!n || !us_on()) return 0;
-    us_gw_note(a, n, fence);
+    us_gw_note(a, n, fence, 0);
     if (!g_us.n) return 0;
     int lo = 0, hi = g_us.n;
     while (lo < hi) { int m = (lo + hi) / 2; if (g_us.ent[m].hi <= a) lo = m + 1; else hi = m; }
@@ -195,11 +213,11 @@ int us_drop_range(uint64_t a, uint64_t n, uint64_t fence) {
     return any;
 }
 void us_report(uint64_t f) {
-    static uint64_t p[7]; uint64_t c[7] = {g_us.subs, g_us.ranges, g_us.copies, g_us.bytes, g_us.drops, g_us.skip_gpu, g_us.ns};
+    static uint64_t p[8]; uint64_t c[8] = {g_us.subs, g_us.ranges, g_us.copies, g_us.bytes, g_us.drops, g_us.skip_gpu, g_us.ns, g_us.laid};
     if (f % 300 || c[0] == p[0]) return;
     double ns = (double)(c[0] - p[0]);
-    MLOG("uniform snapshots up to frame %llu: %llu submissions, per submission %.0f bindings in %.0f copies, %.1f KB, %.3f ms; %llu copies dropped by a GPU write of their submission, %llu ranges not copied (a GPU write of an earlier submission still running)",
+    MLOG("uniform snapshots up to frame %llu: %llu submissions, per submission %.0f bindings in %.0f copies, %.1f KB, %.3f ms; %llu copies dropped by a GPU write of their submission, %llu ranges not copied (a GPU write of an earlier submission still running), %llu copied with an earlier submission's renamed updates laid over",
          (unsigned long long)f, (unsigned long long)(c[0] - p[0]), (c[1] - p[1]) / ns, (c[2] - p[2]) / ns, (c[3] - p[3]) / ns / 1024, (c[6] - p[6]) / ns / 1e6,
-         (unsigned long long)(c[4] - p[4]), (unsigned long long)(c[5] - p[5]));
+         (unsigned long long)(c[4] - p[4]), (unsigned long long)(c[5] - p[5]), (unsigned long long)(c[7] - p[7]));
     memcpy(p, c, sizeof p);
 }

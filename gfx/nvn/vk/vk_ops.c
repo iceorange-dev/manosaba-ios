@@ -171,7 +171,7 @@ void vk_upd_flush(void) {
                 VkBufferCopy rg = {ao, eo, e->hi - e->lo}; vkCmdCopyBuffer(cb, (VkBuffer)(uintptr_t)ab, eb, 1, &rg); vk_barrier_all(cb);
             }
         }
-        if (us_on()) us_gw_note(lo, hi - lo, vk_cur_fence());   // a GPU write for the next submissions' snapshots (this one's copies add every update)
+        if (us_on()) us_gw_note(lo, hi - lo, vk_cur_fence(), 1);   // a GPU write for the next submissions' snapshots, its bytes the pending updates' (this one's copies add every update)
         i = j;
     }
     vk_barrier_all(cb);
