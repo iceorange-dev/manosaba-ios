@@ -345,7 +345,9 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   (device-local, host-visible, coherent, cached) exactly there and unmaps keeping the range. The same in an app (untrusted_app_34, the probe
   packed by 301d's APK writer): all four, 64 MB read 2.1-2.4 ms through each against 2.3 plain (the app in front: higher clocks than the shell's);
   RW → RX and RWX, x18 kept, `cntpct_el0` trapped, 256 GB of PROT_NONE as in the shell.
-  301d2 what the app still lacks, with 301e's drawing: the on-screen controls (`host/front/touchpad.c`, drawn on iOS by UIKit) and the
+  301g the settings panel (the user, 2026-10-30: an interface like the iPhone's for anyone): done in batch 138.
+  301d2 what the app still lacks, with 301e's drawing: the on-screen controls (`host/front/touchpad.c`, drawn on iOS by UIKit; manosaba plays
+  by touch, so they are Tears of the Kingdom's: the user, 2026-10-30) and the
   software keyboard (`front_text_input` says nothing is shown: a NativeActivity without code is no text editor, so the system shows no
   keyboard for it; nx2android draws its own); the phone's motion sensors (ASensorManager → `dm_motion_set`) and vibration (`dm_vibration_take`
   → the Vibrator through JNI).
@@ -1096,3 +1098,25 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   The app 40 s at 60 fps (its log: status 0 followed, "frame rate 60 fps (the setting; thermal state 0)"), 4 save commits, its frame 1800 as
   batch 136's; the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 183 / 183, sanitizer, texture, audit and tool tests, both
   IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots as batch 136's.
+- [x] batch 138 · 301g the settings panel on Android, as the iPhone's. Back (it was taken and dropped) or three fingers on the screen open it
+  (`android/front_android.c`; `input_map.h` `dm_and_three_tap`: once a gesture); it is Java in Android's own widgets
+  (`android/java/io/github/iceorange_dev/dm/Panel.java`, the APK's first classes.dex: javac against android-35's android.jar, d8; `apk.py
+  --dex`, hasCode true), loaded through the activity's class loader with its two native methods registered (`app_android.c`). Frame rate
+  60 / 30, hold 30 fps when hot, render resolution (game / native / 900 / 720 / 540, at the next launch), show frame rate (the fps / GPU
+  line in the top right corner, a window of its own that takes no touches). Each change is written at once to `files/settings.txt` (the app's
+  own folder, NAME=value) and handed to the native side, which applies the frame rate while the game runs (`dm_setting`, without touching
+  the environment other threads read). At the start `android/settings.c` takes env.txt and that file, env.txt winning, DM_SETTINGS=0 in
+  env.txt leaving the file out (the test scripts write it, so a test neither sees nor changes the player's settings), and native becomes the
+  screen's 16:9 picture from `Panel.displaySize` through `host/native_size.h`, now the iPhone's too (`ios/Sources/main.m`). `envfile.h` gains
+  `dm_env_file_each` (its parser, which the settings take without setting the environment). On the phone: Back opened the panel with the
+  defaults (uiautomator's dump); 30, native and show frame rate tapped: the file held the three, the frame rate went to 30 at once ("front:
+  frame rate 30 fps (the setting)") and the line showed "30 fps · GPU 11.7 ms" over the title; at the next launch "app: the screen
+  2608x1200", "native DM_RENDER_HEIGHT=1200", the game rendering 2132x1200 at 30 fps. The three-finger tap was not tried on the phone (adb's
+  input taps with one finger); its rule is checked by `t_input`. Native measured before at 1080p's frame rate in the debate (60 fps, GPU
+  9.6-12.9 ms against about 12).
+  Tests: `t_native_size` 6 (the K100, the iPhone Air, 16:9, portrait, an iPad, too small: `-DDM_TEST_NATIVE_LONG_SIDE` fails 3); on the
+  phone `t_settings` 8 (`-DDM_TEST_SETTINGS_OVER_ENV` fails 2, `-DDM_TEST_SETTINGS_ALWAYS` 1), `t_input` 16 (the three-finger rule:
+  `-DDM_TEST_THREE_TAP_REPEAT` fails 2); `t_apk` 13 (with --dex: classes.dex and hasCode). The app 40 s at 60 fps (DM_SETTINGS=0), 4 save
+  commits, its frame 1800 as batch 137's; the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 185 / 185, sanitizer, texture,
+  audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's
+  shots as batch 137's.

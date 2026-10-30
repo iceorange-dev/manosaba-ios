@@ -6,10 +6,11 @@
 //   Input, on a thread of its own with the input queue on its looper (android/input_map.h has the mapping): touches → the game's touch screen,
 //   normalised to the game picture; game controllers (KEYCODE_BUTTON_*, sticks, hat, triggers) → the controller, every one merged as on Apple
 //   (gamepad.m: buttons ORed, each stick from the one pushed furthest); keys that are not the game's (volume, Back's system meaning aside) stay
-//   the system's. Back is taken and dropped, so that it does not close the game.
+//   the system's. Back opens the settings panel (plan item 301g; it would otherwise close the game), as three fingers on the screen do.
 //   Frame rate: the player's (DM_FPS, 60 unless 30) held at 30 from thermal state serious up, as on the iPhone (nvn_fps_policy, plan item 135;
-//   DM_HOT_HOLD=0 keeps it at any state, as "Hold 30 fps when hot" off); applied at the start and again when the thermal status changes
-//   (diag_android.c). Android's power saving mode is not read (no NDK call tells it).
+//   DM_HOT_HOLD=0 keeps it at any state, as "Hold 30 fps when hot" off), from env.txt or the settings panel (settings.c); applied at the start and
+//   again when the thermal status or the panel's settings change (diag_android.c, app_android.c). Android's power saving mode is not read (no NDK
+//   call tells it).
 // Not yet: the software keyboard (front_text_input says nothing is shown: hle_swkbd.c keeps the game's text), the on-screen controls, motion and
 // vibration (with 301e's drawing and 301f).
 #include <android/input.h>
@@ -24,24 +25,27 @@
 #include "game.h"
 #include "hle.h"
 #include "input_map.h"
+#include "settings.h"
 #include "../gfx/nvn/nvn_pace.h"
 #include <stdlib.h>
 
 void dm_dialog(const char *title, const char *msg);   // app_android.c
 void dm_main_post(void (*fn)(void *), void *arg);
 void dm_bars_hide(void *unused);
+void dm_panel_open(void *unused);   // app_android.c: the settings panel (the main thread)
 uint64_t dm_audio_render_calls(void);
 
 // ---------- frame rate ----------
 int dm_thermal_now(void); void dm_thermal_watch(void (*fn)(void));   // diag_android.c
 void mtl_fps_set(int fps);                                            // gfx/nvn/vk/vk_present.c
-static void fps_apply(void) {
-    const char *e = getenv("DM_FPS"), *h = getenv("DM_HOT_HOLD"); int user = e && atoi(e) == 30 ? 30 : 60, hold = !(h && !strcmp(h, "0")), th = dm_thermal_now();
+static void fps_apply(void) {   // (the settings as android/settings.c has them: env.txt's, else the panel's)
+    char e[16], h[16]; int user = dm_setting("DM_FPS", e, sizeof e) && atoi(e) == 30 ? 30 : 60, hold = !(dm_setting("DM_HOT_HOLD", h, sizeof h) && !strcmp(h, "0")), th = dm_thermal_now();
     int f = nvn_fps_policy(user, 0, th, hold); static _Atomic int last;
     if (atomic_exchange(&last, f) != f) LOG("front: frame rate %d fps (%s; thermal state %d)", f, f < user ? (th >= 3 ? "thermal state critical" : "thermal state serious")
                                              : th >= 2 && !hold && user > 30 ? "the setting; hot, but DM_HOT_HOLD=0" : "the setting", th);
     mtl_fps_set(f);
 }
+void front_android_settings_changed(void) { fps_apply(); }   // app_android.c: the settings panel changed something
 
 // ---------- the host's side of front.h ----------
 static void *guest_main(void *g) { ((void (*)(void))g)(); return NULL; }
@@ -119,6 +123,7 @@ static int touch_event(const AInputEvent *e) {
     float r[4]; dm_and_letterbox((float)atomic_load(&g_win_w), (float)atomic_load(&g_win_h), dm_game.screen_w > 0 ? dm_game.screen_w : 1280, dm_game.screen_h > 0 ? dm_game.screen_h : 720, r);
     int32_t act = AMotionEvent_getAction(e), kind = act & AMOTION_EVENT_ACTION_MASK;
     size_t idx = (size_t)(act & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    static int three; if (dm_and_three_tap(kind, AMotionEvent_getPointerCount(e), &three)) dm_main_post(dm_panel_open, NULL);   // the settings panel
     if (kind == AMOTION_EVENT_ACTION_CANCEL) { touch_lift_all(); return 1; }
     if (kind == AMOTION_EVENT_ACTION_DOWN || kind == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         float nx, ny; int32_t pid = AMotionEvent_getPointerId(e, idx);
@@ -148,7 +153,7 @@ static int joy_event(const AInputEvent *e) {
 }
 static int key_event(const AInputEvent *e) {
     int32_t k = AKeyEvent_getKeyCode(e), act = AKeyEvent_getAction(e);
-    if (k == AKEYCODE_BACK) return 1;   // taken: Back would finish the activity, and the game with it
+    if (k == AKEYCODE_BACK) { if (act == AKEY_EVENT_ACTION_UP) dm_main_post(dm_panel_open, NULL); return 1; }   // the settings panel (Back would finish the activity, and the game with it)
     static int by_position = -1; if (by_position < 0) by_position = dm_face_by_position(getenv("DM_FACE_BUTTONS"), NULL, NULL);   // (after env.txt)
     uint64_t bit = dm_and_key_bit(k, by_position); if (!bit) return 0;
     int i = pad_slot(AInputEvent_getDeviceId(e)); if (i < 0) return 0;

@@ -8,6 +8,7 @@
 //   d-pad; a trigger axis (LTRIGGER / BRAKE, RTRIGGER / GAS) past half way is ZL / ZR.
 //   Touches: the game picture is the largest rectangle of the game's aspect ratio centred in the window (as the iOS view, a difference under 1%
 //   fills it); a finger is normalised to it, [0, 1) from the top left; a finger that goes down outside the picture is not the game's.
+//   Three fingers together open the settings panel (once a gesture; the touches still reach the game).
 #pragma once
 #include <android/input.h>
 #include <android/keycodes.h>
@@ -63,4 +64,14 @@ static inline int dm_and_touch_norm(const float r[4], float x, float y, float *n
     int in = u >= 0 && u < 1 && v >= 0 && v < 1;
     *nx = fminf(fmaxf(u, 0), .99999f); *ny = fminf(fmaxf(v, 0), .99999f);
     return in;
+}
+// The settings panel's gesture (plan item 301g, the iPhone's three-finger tap): it opens when a third finger goes down, once until every finger has
+// lifted again (*armed keeps that between the events); 1 when it opens now
+static inline int dm_and_three_tap(int32_t kind, size_t pointers, int *armed) {
+    if (kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_CANCEL) { *armed = 0; return 0; }
+#ifndef DM_TEST_THREE_TAP_REPEAT   // negative control of tests/t_input.c only: every further finger opens it again
+    if (*armed) return 0;
+#endif
+    if (kind == AMOTION_EVENT_ACTION_POINTER_DOWN && pointers >= 3) { *armed = 1; return 1; }
+    return 0;
 }

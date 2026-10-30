@@ -29,7 +29,7 @@ HOST_SRC = $(sort $(wildcard $(H)/hle/hle_*.c)) $(H)/hle/hle.c \
 # (gfx/nvn/null: nothing drawn) under adb, the Vulkan one (gfx/nvn/vk, plan item 301e) in the app
 GFX_SRC = ../gfx/hle_vi.c ../gfx/hle_nv.c $(addprefix ../gfx/nvn/,hle_nvn.c nvn_dirty.c nvn_tex.c nvn_trace.c nvn_entry.S nvn_thunks.S) \
 	$(sort $(wildcard ../gfx/nvn/core/*.c)) ../gfx/tex/nvn_fmt_mtl.c ../gfx/tex/nvn_deswizzle.c ../gfx/nvn/null/readings.c
-ANDROID_SRC = $(addprefix ../android/,diag_android.c movie_android.c plat_linux.c slots.c compat/sha256.c)
+ANDROID_SRC = $(addprefix ../android/,diag_android.c movie_android.c plat_linux.c settings.c slots.c compat/sha256.c)
 GAME_SRC = $(sort $(wildcard $(GAMEDIR)/*.c))
 VK_SRC = $(sort $(wildcard ../gfx/nvn/vk/*.c))
 OBJ = $(patsubst ../%,$(B)/obj/%.o,$(HOST_SRC) $(GFX_SRC) $(ANDROID_SRC) $(GAME_SRC)) $(B)/obj/game_profile.c.o
@@ -76,17 +76,29 @@ PKG ?= io.github.iceorange_dev.$(GAME)
 MODS := $(shell python3 -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))['modules']))" $(GAMEDIR)/game.json)
 LABEL := $(shell python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['title'])" $(GAMEDIR)/game.json)
 ICON := $(shell python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'].get('icon', ''))" $(GAMEDIR)/game.json)
-$(B)/$(GAME).apk: $(B)/libdmhost.so tools/apk.py FORCE
+# The app's Java classes (android/java: the settings panel, plan item 301g) as classes.dex: javac against the platform's android.jar, d8. JDK and the
+# Android SDK's build-tools and platform (Homebrew's openjdk@21 and android-commandlinetools, sdkmanager "build-tools;35.0.1" "platforms;android-35")
+ANDROID_SDK ?= /opt/homebrew/share/android-commandlinetools
+JAVA_HOME ?= /opt/homebrew/opt/openjdk@21
+ANDROID_JAR ?= $(ANDROID_SDK)/platforms/android-$(API)/android.jar
+D8 ?= $(ANDROID_SDK)/build-tools/35.0.1/d8
+JAVA_SRC = $(sort $(shell find java -name '*.java'))
+$(B)/classes.dex: $(JAVA_SRC)
+	@test -x "$(JAVA_HOME)/bin/javac" -a -f "$(ANDROID_JAR)" -a -x "$(D8)" || { echo "[red] no JDK / android.jar / d8: JAVA_HOME=$(JAVA_HOME) ANDROID_SDK=$(ANDROID_SDK)"; exit 1; }
+	rm -rf $(B)/java && mkdir -p $(B)/java
+	$(JAVA_HOME)/bin/javac --release 11 -Xlint:-options -classpath $(ANDROID_JAR) -d $(B)/java $(JAVA_SRC)
+	JAVA_HOME=$(JAVA_HOME) $(D8) --min-api 34 --lib $(ANDROID_JAR) --output $(B) $$(find $(B)/java -name '*.class')   # (this d8 knows API levels up to 34)
+$(B)/$(GAME).apk: $(B)/libdmhost.so $(B)/classes.dex tools/apk.py FORCE
 	@test -f "$(SHADERS)" || { echo "[red] no shader bundle at $(SHADERS): DM_GAME=$(GAME) gfx/tools/dmsh_vk.py <captures> <it>"; exit 1; }
 	sips -Z 432 -s format png "$(WS)/$(ICON)" --out $(B)/icon.png > /dev/null
-	python3 tools/apk.py --lib $(B)/libdmhost.so --out $@ --package $(PKG) --label "$(LABEL)" --icon $(B)/icon.png $(if $(filter 1,$(RELEASE)),--release) \
+	python3 tools/apk.py --lib $(B)/libdmhost.so --dex $(B)/classes.dex --out $@ --package $(PKG) --label "$(LABEL)" --icon $(B)/icon.png $(if $(filter 1,$(RELEASE)),--release) \
 		--version-code $$(git rev-list --count HEAD) --version-name $$(git rev-parse --short HEAD) --product "$(PRODUCT)" --modules "$(MODS)" \
 		--asset "product/shaders.dmvk=$(SHADERS)"
 apk: $(B)/$(GAME).apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_thermal t_thermal_raw
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_thermal t_thermal_raw t_settings t_settings_over t_settings_always
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -101,6 +113,12 @@ build/tests/t_hthread_nov: tests/t_hthread.c plat_linux.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -DDM_TEST_STOP_NO_V -o $@ $^
 build/tests/t_slots: tests/t_slots.c slots.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $^
+build/tests/t_settings: tests/t_settings.c settings.c settings.h $(H)/envfile.h $(H)/native_size.h | build/tests
+	$(CC) -O1 -Wall -Werror -I$(H) -o $@ tests/t_settings.c settings.c
+build/tests/t_settings_over: tests/t_settings.c settings.c settings.h $(H)/envfile.h $(H)/native_size.h | build/tests
+	$(CC) -O1 -Wall -Werror -DDM_TEST_SETTINGS_OVER_ENV -I$(H) -o $@ tests/t_settings.c settings.c
+build/tests/t_settings_always: tests/t_settings.c settings.c settings.h $(H)/envfile.h $(H)/native_size.h | build/tests
+	$(CC) -O1 -Wall -Werror -DDM_TEST_SETTINGS_ALWAYS -I$(H) -o $@ tests/t_settings.c settings.c
 build/tests/t_thermal: tests/t_thermal.c diag_android.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $^ -landroid
 build/tests/t_thermal_raw: tests/t_thermal.c diag_android.c | build/tests
@@ -109,6 +127,8 @@ build/tests/t_input: tests/t_input.c input_map.h | build/tests
 	$(CC) -O1 -Wall -I. -I$(H) -o $@ $< -lm
 build/tests/t_input_ydown: tests/t_input.c input_map.h | build/tests
 	$(CC) -O1 -Wall -I. -I$(H) -DDM_TEST_INPUT_Y_DOWN -o $@ $< -lm
+build/tests/t_input_three: tests/t_input.c input_map.h | build/tests
+	$(CC) -O1 -Wall -I. -I$(H) -DDM_TEST_THREE_TAP_REPEAT -o $@ $< -lm
 MOVIE_SRC = tests/t_movie.c movie_android.c ../host/media/movie_webm.c
 build/tests/t_movie: $(MOVIE_SRC) | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I. -I$(H) -Icompat -include compat/darwin.h -o $@ $^ -lmediandk -lm

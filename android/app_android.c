@@ -2,8 +2,10 @@
 // ANativeActivity_onCreate on the main thread; this file is the app's shell, as ios/Sources/main.m is the iPhone's:
 //   Folders: the app's external files folder (Android/data/<package>/files, adb reaches it) holds the player's game data, RomFS/ and sysfont/
 //   (android/run.sh push-data), env.txt (DM_ switches, host/envfile.h) and the log, boot.txt (the last session's kept as boot.previous.txt); the
-//   internal one (files/) holds the save, temp and the product the APK carries (assets/product, copied out when the APK changed: the loader reads
-//   files); the cache folder the game's cache storage.
+//   internal one (files/) holds the save, temp, the product the APK carries (assets/product, copied out when the APK changed: the loader reads
+//   files) and the settings panel's settings.txt (android/settings.c: env.txt wins over it); the cache folder the game's cache storage.
+//   The settings panel (plan item 301g) is Java (android/java/.../Panel.java, the APK's classes.dex), loaded through the activity's class loader;
+//   its two native methods are registered here.
 //   The host starts on a thread of its own once the game data is there; when it is not, a dialog says what is missing and where it goes.
 //   front_android.c has the window, the lifecycle and input.
 // The main thread runs the system's callbacks; other threads hand it work through dm_main_post (a pipe on its looper), for the Java calls that must
@@ -26,6 +28,7 @@
 #include "lang.h"
 #include "logstamp.h"
 #include "romfs_validate.h"
+#include "settings.h"
 
 int dm_main(int argc, char **argv);   // host/runtime/main.c, built with -Dmain=dm_main
 void front_android_install(ANativeActivity *a);   // front_android.c: the activity's callbacks
@@ -84,6 +87,46 @@ void dm_dialog(const char *title, const char *msg) {   // any thread
     LOG("app: dialog \"%s\": %s", title, msg);
     if (on_main_thread()) dialog_now(d); else dm_main_post(dialog_now, d);
 }
+// ---------- the settings panel (Java: android/java/io/github/iceorange_dev/dm/Panel.java) ----------
+static jclass g_panel;   // a global reference, or NULL when the APK has no such class
+static char g_settings[600];   // its file
+int dm_perf_line(char *out, size_t n);   // gfx/nvn/hle/timing.inc
+void front_android_settings_changed(void);   // front_android.c
+static jboolean perf_on(void) { char v[8]; return dm_setting("DM_PERF_LINE", v, sizeof v) && !strcmp(v, "1"); }
+static void panel_perf(JNIEnv *E) {
+    if (!g_panel) return;
+    (*E)->CallStaticVoidMethod(E, g_panel, (*E)->GetStaticMethodID(E, g_panel, "perf", "(Landroid/app/Activity;Z)V"), g_act->clazz, perf_on()); jx(E, "Panel.perf");
+}
+static void JNICALL j_applied(JNIEnv *E, jclass c) {   // (the main thread: a change in the panel)
+    (void)c; dm_settings_reload(); front_android_settings_changed(); panel_perf(E);
+}
+static jstring JNICALL j_perf_line(JNIEnv *E, jclass c) { (void)c; char b[128]; dm_perf_line(b, sizeof b); return (*E)->NewStringUTF(E, b); }
+static void panel_load(JNIEnv *E) {
+    jobject cl = jcall_obj(E, g_act->clazz, "getClassLoader", "()Ljava/lang/ClassLoader;"); if (!cl) return;
+    jclass CL = (*E)->FindClass(E, "java/lang/ClassLoader"); jstring nm = (*E)->NewStringUTF(E, "io.github.iceorange_dev.dm.Panel");
+    jobject c = (*E)->CallObjectMethod(E, cl, (*E)->GetMethodID(E, CL, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"), nm);
+    if (jx(E, "loading the settings panel") || !c) { LOG("[red] app: the APK has no settings panel (classes.dex)"); goto out; }
+    g_panel = (*E)->NewGlobalRef(E, c);
+    JNINativeMethod nat[] = {{"applied", "()V", (void *)j_applied}, {"perfLine", "()Ljava/lang/String;", (void *)j_perf_line}};
+    if ((*E)->RegisterNatives(E, g_panel, nat, 2) || jx(E, "the settings panel's native methods")) { (*E)->DeleteGlobalRef(E, g_panel); g_panel = NULL; }
+out:
+    (*E)->DeleteLocalRef(E, nm); (*E)->DeleteLocalRef(E, CL); (*E)->DeleteLocalRef(E, cl); if (c) (*E)->DeleteLocalRef(E, c);
+}
+void dm_panel_open(void *unused) {   // the main thread (front_android.c posts it: Back, three fingers)
+    (void)unused; if (!g_panel) return; JNIEnv *E = g_act->env;
+    jstring p = (*E)->NewStringUTF(E, g_settings);
+    (*E)->CallStaticVoidMethod(E, g_panel, (*E)->GetStaticMethodID(E, g_panel, "show", "(Landroid/app/Activity;Ljava/lang/String;)V"), g_act->clazz, p);
+    if (!jx(E, "Panel.show")) LOG("app: settings panel");
+    (*E)->DeleteLocalRef(E, p);
+}
+static int display_size(unsigned *w, unsigned *h) {   // the screen's pixels (Panel.displaySize), for the setting Native
+    if (!g_panel) return 0; JNIEnv *E = g_act->env;
+    jintArray a = (*E)->CallStaticObjectMethod(E, g_panel, (*E)->GetStaticMethodID(E, g_panel, "displaySize", "(Landroid/app/Activity;)[I"), g_act->clazz);
+    if (jx(E, "Panel.displaySize") || !a) return 0;
+    jint v[2]; (*E)->GetIntArrayRegion(E, a, 0, 2, v); (*E)->DeleteLocalRef(E, a);
+    *w = (unsigned)v[0]; *h = (unsigned)v[1]; LOG("app: the screen %ux%u", *w, *h); return v[0] > 0 && v[1] > 0;
+}
+
 // The system bars hidden (WindowInsetsController, API 30), shown again for a while by a swipe from the edge
 void dm_bars_hide(void *unused) {
     (void)unused; JNIEnv *E = g_act->env;
@@ -111,7 +154,7 @@ static void log_open(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *e = getenv("DM_LOG_TIME"); if (!e || strcmp(e, "0")) logstamp_stderr();
 }
-static void say_env(const char *n, const char *v) { LOG("app: env.txt %s=%s", n, v); }
+static void say_setting(const char *who, const char *n, const char *v) { LOG("app: %s %s=%s", who, n, v); }
 
 // ---------- the product, from the APK ----------
 // Copied to files/product when the APK it came from is another (its path, size and time: a new install has a new path); each file is written
@@ -162,7 +205,8 @@ static void boot(ANativeActivity *a) {
     jobject jp = jcall_obj(E, a->clazz, "getPackageCodePath", "()Ljava/lang/String;"), jn = jcall_obj(E, a->clazz, "getPackageName", "()Ljava/lang/String;");
     const char *apk = jp ? (*E)->GetStringUTFChars(E, jp, NULL) : NULL, *pkg = jn ? (*E)->GetStringUTFChars(E, jn, NULL) : NULL;
     LOG("app: %s %s, %s (Android %s, SDK %s); package %s, %s", dm_game.id, dm_game.version, model, rel, sdk, pkg ? pkg : "?", apk ? apk : "?");
-    { char p[600]; snprintf(p, sizeof p, "%s/env.txt", g_ext); int n = dm_env_file_apply(p, say_env); LOG("app: %s: %d switches%s", p, n < 0 ? 0 : n, n < 0 ? " (none: no file)" : ""); }
+    { char p[600]; snprintf(p, sizeof p, "%s/env.txt", g_ext); snprintf(g_settings, sizeof g_settings, "%s/settings.txt", g_int);
+      dm_settings_boot(g_settings, p, display_size, say_setting); }   // env.txt over the panel's settings (android/settings.c)
     // DM_TEST_SHOW_WHEN_LOCKED=1 (unattended tests on the phone): the activity shows over the lock screen and turns the screen on (Activity.
     // setShowWhenLocked / setTurnScreenOn, API 27); the phone stays locked, nothing else of it opens. Never on by default. HyperOS also wants its
     // own app op for it (MIUIOP 10020, the phone owner's "show on lock screen" setting): while it is off the app is held behind the lock screen
@@ -224,5 +268,7 @@ JNIEXPORT void ANativeActivity_onCreate(ANativeActivity *a, void *saved, size_t 
     if (pipe2(g_post, O_CLOEXEC | O_NONBLOCK) == 0) ALooper_addFd(ALooper_forThread(), g_post[0], ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, on_post, NULL);
     ANativeActivity_setWindowFlags(a, AWINDOW_FLAG_KEEP_SCREEN_ON | AWINDOW_FLAG_FULLSCREEN, 0);
     dm_bars_hide(NULL);
+    panel_load(a->env);
     boot(a);
+    panel_perf(a->env);   // the frame rate line, when it is on
 }

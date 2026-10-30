@@ -38,6 +38,8 @@ run: \
 	$(B)/t_il2cpp_obj \
 	$(B)/t_il2cpp_obj_nocheck \
 	$(B)/t_envfile \
+	$(B)/t_native_size \
+	$(B)/t_native_size_long \
 	$(B)/t_freeze \
 	$(B)/t_freeze_none \
 	$(B)/t_fs \
@@ -254,6 +256,11 @@ run: \
 	   cat $(B)/t_il2cpp_obj_nocheck.log; echo "t_il2cpp_obj_nocheck: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_il2cpp_obj_nocheck: any string taken for a class name names a binary one, as expected"
 	TMPDIR="$(abspath $(B))" $(B)/t_envfile
+	$(B)/t_native_size
+	@status=0; $(B)/t_native_size_long > $(B)/t_native_size_long.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_native_size_long.log)" -ne 3 ]; then \
+	   cat $(B)/t_native_size_long.log; echo "t_native_size_long: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_native_size_long: the long side's 9/16 alone fails 3, as expected"
 	$(B)/t_freeze
 	@status=0; $(B)/t_freeze_none > $(B)/t_freeze_none.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ freeze: one dump" $(B)/t_freeze_none.log; then \
@@ -828,6 +835,10 @@ $(B)/t_sleep: t_sleep.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_sleep.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_envfile: t_envfile.c ../envfile.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_envfile.c
+$(B)/t_native_size: t_native_size.c ../native_size.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_native_size.c
+$(B)/t_native_size_long: t_native_size.c ../native_size.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_NATIVE_LONG_SIDE -I.. -o $@ t_native_size.c
 $(B)/t_gameslot: t_gameslot.c ../game/game_slot.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-result -I.. -o $@ t_gameslot.c ../game/game_slot.c
 $(B)/t_ktrace: t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

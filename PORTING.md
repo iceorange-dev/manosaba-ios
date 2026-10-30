@@ -23,6 +23,10 @@ ios/run.sh build / install / push-data / launch;  tools/mac_app.sh
   `pip install -r tools/requirements.txt`, and for Unity games `pip install --no-deps -r engines/unity/requirements.txt`.
 - The shader translator: `DOTNET_ROOT=$(brew --prefix dotnet)/libexec dotnet build -c Release gfx/tools/dmsh_xlate/dmsh_xlate.csproj -o $DM_ROOT/build/gfx/dmsh_xlate`
   (keep `DOTNET_ROOT` exported when running `dmsh_build.py`).
+- For the Android app (`android/`, plan item 301): the casks `android-ndk` (NDK r30), `android-platform-tools` (adb) and
+  `android-commandlinetools`, the formula `openjdk@21`, and for the settings panel's Java (classes.dex) `JAVA_HOME=$(brew --prefix openjdk@21)
+  sdkmanager --sdk_root=$(brew --prefix)/share/android-commandlinetools "build-tools;35.0.1" "platforms;android-35"` (it asks you to accept the
+  Android SDK licence).
 
 `DM_ROOT` (default `~/dm-work`) holds everything that is not source: game data, build outputs, runs. Nothing under it goes into git.
 

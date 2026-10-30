@@ -1,7 +1,8 @@
 // android/input_map.h, what the app makes of Android's input (plan item 301d), on the phone: a controller's keys as the Switch's buttons (A / B / X /
 // Y by the system's names, by position with DM_FACE_BUTTONS=position; the shoulders, triggers, stick buttons, Start / Select, the d-pad), keys that
 // are not the game's (volume, Back) left alone; sticks up positive and saturated, the hat and the triggers as buttons; the game picture letterboxed
-// in the window and a finger normalised to it, one outside it not the game's. -DDM_TEST_INPUT_Y_DOWN (the sticks' Y as Android gives it): 2 fail.
+// in the window and a finger normalised to it, one outside it not the game's. -DDM_TEST_INPUT_Y_DOWN (the sticks' Y as Android gives it): 2 fail. Three
+// fingers open the settings panel once a gesture (-DDM_TEST_THREE_TAP_REPEAT, every further finger again: 2 fail).
 #include "input_map.h"
 #include <stdio.h>
 static int n, fail;
@@ -29,5 +30,11 @@ int main(void) {
     CHECK(dm_and_touch_norm(r, 276 + 2247 / 2.0f, 632, &x, &y) && x > 0.499f && x < 0.501f && y == 0.5f, "the picture's centre is (0.5, 0.5) (%.4f, %.4f)", x, y);
     CHECK(!dm_and_touch_norm(r, 100, 600, &x, &y) && x == 0, "a finger left of the picture is not the game's (clamped %.3f)", x);
     CHECK(dm_and_touch_norm(r, 276, 0, &x, &y) && x == 0 && y == 0 && !dm_and_touch_norm(r, 276 + 2247, 10, &x, &y) && x < 1, "the top left corner is (0, 0); the right edge is outside, clamped below 1");
+    int armed = 0, opens = 0, at = 0; const int32_t seq[] = {AMOTION_EVENT_ACTION_DOWN, AMOTION_EVENT_ACTION_POINTER_DOWN, AMOTION_EVENT_ACTION_POINTER_DOWN,
+        AMOTION_EVENT_ACTION_POINTER_DOWN, AMOTION_EVENT_ACTION_POINTER_UP, AMOTION_EVENT_ACTION_POINTER_DOWN, AMOTION_EVENT_ACTION_UP}; const size_t cnt[] = {1, 2, 3, 4, 4, 4, 1};
+    for (int i = 0; i < 7; i++) if (dm_and_three_tap(seq[i], cnt[i], &armed)) { opens++; at = i; }
+    CHECK(opens == 1 && at == 2, "the panel opens at the third finger, once in the gesture (a fourth, a finger lifted and put down again: not again; %d opens)", opens);
+    opens = 0; for (int i = 0; i < 7; i++) opens += dm_and_three_tap(seq[i], cnt[i], &armed);
+    CHECK(opens == 1, "... and again in the next gesture, every finger having lifted (%d)", opens);
     printf("t_input: %d checks, %d failed\n", n, fail); return fail != 0;
 }

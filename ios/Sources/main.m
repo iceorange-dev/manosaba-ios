@@ -37,6 +37,7 @@
 #include "romfs_parts.h"
 #include "coolstart.h"
 #include "nvn_pace.h"   // nvn_fps_policy (plan item 135)
+#include "native_size.h"   // dm_native_size (the setting "Native")
 
 int dm_main(int argc, char **argv);   // host/runtime/main.c, compiled with -Dmain=dm_main
 UIView *front_ios_view(CGRect frame, CGFloat scale);   // scale = the screen's native scale
@@ -300,9 +301,8 @@ static void gfx_settings_boot(void) {
                      // at (DM_RENDER_HEIGHT). manosaba renders it (games/manosaba/graphics.c; the width as Screen.SetResolution's hook scales 2560x1440);
                      // Tears of the Kingdom goes docked and renders the largest 16:9 its heap holds, 1920x1080 (games/totk/frame_step.c)
         UIWindowScene *ws = nil; for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) if ([sc isKindOfClass:UIWindowScene.class]) { ws = (UIWindowScene *)sc; break; }
-        CGSize nb = ws ? ws.screen.nativeBounds.size : CGSizeZero; double lng = MAX(nb.width, nb.height), sht = MIN(nb.width, nb.height);
-        unsigned H = (unsigned)MIN(sht, floor(lng * 9 / 16)) & ~1u, W = ((2560u * H + 720u) / 1440u) & ~1u;
-        if (H >= 360) { char b[32]; snprintf(b, sizeof b, "%ux%u", W, H); setenv("DM_DISPLAY_SIZE", b, 0); snprintf(b, sizeof b, "%u", H); setenv("DM_RENDER_HEIGHT", b, 0); }
+        CGSize nb = ws ? ws.screen.nativeBounds.size : CGSizeZero; unsigned W, H;
+        if (dm_native_size((unsigned)nb.width, (unsigned)nb.height, &W, &H)) { char b[32]; snprintf(b, sizeof b, "%ux%u", W, H); setenv("DM_DISPLAY_SIZE", b, 0); snprintf(b, sizeof b, "%u", H); setenv("DM_RENDER_HEIGHT", b, 0); }
     } else if (h > 0) { char b[16]; snprintf(b, sizeof b, "%ld", (long)h); setenv("DM_RENDER_HEIGHT", b, 0); }
     if (g_gfx_fx) setenv("DM_UPSCALE", "metalfx", 0);
     plog("boot: graphics settings: %ld fps (%s), render height %s%s%s, MetalFX %s, hold 30 fps when hot %s", (long)g_gfx_fps, why, getenv("DM_RENDER_HEIGHT") ?: "the game's",

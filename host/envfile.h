@@ -8,7 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static inline int dm_env_file_apply(const char *path, void (*say)(const char *name, const char *value)) {
+// Each switch of the file in order through fn (a name twice: twice, the last one last); returns how many, -1 when there is no file
+static inline int dm_env_file_each(const char *path, void (*fn)(const char *name, const char *value, void *ctx), void *ctx) {
     FILE *f = fopen(path, "r"); if (!f) return -1;
     char line[1024]; int n = 0;
     while (fgets(line, sizeof line, f)) {
@@ -21,7 +22,11 @@ static inline int dm_env_file_apply(const char *path, void (*say)(const char *na
         if (strncmp(s, "DM_", 3) && strncmp(s, "MTL_", 4)) continue;
         for (char *c = s; *c; c++) if (!isalnum((unsigned char)*c) && *c != '_') { s = NULL; break; }
         if (!s) continue;
-        setenv(s, v, 1); n++; if (say) say(s, v);
+        fn(s, v, ctx); n++;
     }
     fclose(f); return n;
 }
+static inline void dm_env_set_(const char *name, const char *value, void *ctx) {
+    setenv(name, value, 1); void (*say)(const char *, const char *) = (void (*)(const char *, const char *))ctx; if (say) say(name, value);
+}
+static inline int dm_env_file_apply(const char *path, void (*say)(const char *name, const char *value)) { return dm_env_file_each(path, dm_env_set_, (void *)say); }

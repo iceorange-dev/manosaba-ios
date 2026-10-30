@@ -4,7 +4,7 @@ entry's data and CRC), the library stored at a 16 KB boundary and resources.arsc
 attribute's resource ID through the resource map as AOSP's public-final.xml gives it, attributes in ascending ID, the tree and its values),
 resources.arsc (drawable/icon → its path at no density), and APK Signature Scheme v2 as source.android.com describes it (the signing block before
 the central directory, the 1 MB chunk digest with the end record's directory offset taken as the block's, the signature by openssl against the
-block's public key, the certificate's key the same). The same inputs give the same bytes. The phone checks what this cannot (android/tests/
+block's public key, the certificate's key the same). The same inputs give the same bytes. With --dex, classes.dex and hasCode true. The phone checks what this cannot (android/tests/
 run_on_phone.sh: it installs, and a damaged copy does not). T_APK_BROKEN=digest (the central directory left out of the digest): 1 fails;
 T_APK_BROKEN=align (no alignment): 2 fail."""
 import hashlib, io, os, struct, subprocess, sys, tempfile, zipfile, zlib
@@ -150,5 +150,9 @@ with tempfile.TemporaryDirectory() as d:
     check('  a byte of the library changed: the digest no longer matches', read_v2(bytes(bad))[0] == 'the digest does not match the contents')
     args['icon'] = None; z2 = zipfile.ZipFile(io.BytesIO(apk.build(**args))); m2 = read_axml(z2.read('AndroidManifest.xml'))
     check('without an icon: no icon attribute, no resources.arsc', attr(find(m2, 'application')[0], 'icon') is None and 'resources.arsc' not in z2.namelist())
+    dex = b'dex\n035\0' + os.urandom(200); open(f'{d}/classes.dex', 'wb').write(dex); args['dex'] = f'{d}/classes.dex'
+    z3 = zipfile.ZipFile(io.BytesIO(apk.build(**args))); m3 = read_axml(z3.read('AndroidManifest.xml'))
+    check('with --dex: classes.dex as given (deflated), hasCode true (the settings panel, plan item 301g)', z3.read('classes.dex') == dex and
+          z3.getinfo('classes.dex').compress_type == 8 and attr(find(m3, 'application')[0], 'hasCode') == (0x12, 0xffffffff), attr(find(m3, 'application')[0], 'hasCode'))
 print(f'== {total} checks, {fails} failed ==')
 sys.exit(fails != 0)
