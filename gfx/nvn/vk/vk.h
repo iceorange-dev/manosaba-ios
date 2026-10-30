@@ -14,6 +14,7 @@
 //   vk_draw.c     draws and dispatches: the pass (dynamic rendering), pipelines, the dynamic state
 //   vk_present.c  the swapchain on the app's window and the present of the game's window texture
 //   vk_shot.c     screenshots of presented frames (DM_NVN_SHOT, the command channel's shot) as PNGs
+//   vk_ptime.c    each pass's GPU time by its targets (DM_VK_PASS_GPU), for the stats line
 #pragma once
 #include <pthread.h>
 #include <stdatomic.h>
@@ -82,6 +83,16 @@ void vk_tex_upload_now(vk_img *im);             // its storage's content copied 
 typedef struct { uint64_t made, made_bytes, live, live_bytes, up_n, up_bytes, reup_n; } vk_tex_counts;   // images made so far and alive now, uploads
 void vk_tex_stats(vk_tex_counts *c);
 void vk_stats_line(void);                       // vk_draw.c: draws, pipelines, uploads so far (every 600 presents)
+// vk_ptime.c: each pass's GPU time (DM_VK_PASS_GPU=1), summed by its targets: a slot's command buffer begun (vk_submit.c), a pass's begin and end
+// (vk_draw.c), the slot's submission done (the completion thread), the sums taken (the stats line's, or a test's)
+enum { VK_NSLOT = 8 };                          // vk_submit.c's ring of command buffers
+int vk_cur_slot(void);                          // vk_submit.c: the slot being recorded
+typedef struct { uint32_t w, h; int32_t cfmt, dfmt; } vk_ptime_key;   // the first colour attachment's size and VkFormat, the depth's (0: none)
+typedef struct { vk_ptime_key k; double ns; uint64_t passes, draws; } vk_ptime_row;
+void vk_ptime_slot(VkCommandBuffer cb, int slot); void vk_ptime_begin(VkCommandBuffer cb);
+void vk_ptime_end(VkCommandBuffer cb, const vk_ptime_key *k, uint32_t draws); void vk_ptime_done(int slot);
+int vk_ptime_take(vk_ptime_row *out, int max, uint64_t *untimed);   // the rows summed since the last take (and the passes untimed), then from 0
+void vk_ptime_line(uint64_t presents);         // the stats line's part (nothing when off)
 
 // vk_ops.c / vk_draw.c: the render pass
 void vk_pass_end_now(void); uint64_t vk_pass_count(void);                     // end the open pass (vk_draw.c) and land the clears still pending

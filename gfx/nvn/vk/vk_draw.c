@@ -22,7 +22,7 @@ int exec_draw_dropped(void);   // core/exec.c: rendering off, no program, empty 
 static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches;
 
 // ---------- The pass ----------
-static struct { int open, n, bar, sw; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;   // bar: a barrier in it; sw: storage written
+static struct { int open, n, bar, sw; uint64_t draws; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;   // bar: a barrier in it; sw: storage written
 int vk_pass_is_open(void) { return P.open; }
 int nvn_be_pass_mode(void) { return P.open ? 0 : -1; }
 int vk_pass_attach_index(const vk_img *im) { if (!P.open) return -1; for (int i = 0; i < P.n; i++) if (P.col[i] == im) return i; return P.ds == im ? -2 : -1; }
@@ -50,8 +50,15 @@ static int pe_cause(void) {
     default: return VK_PE_OTHER;
     }
 }
+static const char *const PE_NAME[VK_PE_N] = {"SetRenderTargets", "SetRenderTargets of the same textures", "a clear", "a copy", "a dispatch", "a barrier",
+                                             "a uniform update", "renamed updates written", "sampling the attachment", "the submission", "other"};
 static void pass_close(void) {   // (the core's continuation mark goes with it, as the Metal backend's rp_end)
-    if (P.open) { VkCommandBuffer cb = vk_cb(); vkCmdEndRendering(cb); vk_barrier_all(cb); P.open = 0; g_pe[pe_cause()]++; }
+    if (P.open) {
+        VkCommandBuffer cb = vk_cb(); vkCmdEndRendering(cb);
+        vk_ptime_key k = {P.col[0] ? P.col[0]->w : P.w, P.col[0] ? P.col[0]->h : P.h, (int32_t)P.cf[0], (int32_t)P.df}; vk_ptime_end(cb, &k, (uint32_t)P.draws);
+        vk_barrier_all(cb); P.open = 0;
+        int why = pe_cause(); g_pe[why]++; PD("E %llu ends: %s, %llu draws", (unsigned long long)g_stat_pass, PE_NAME[why], (unsigned long long)P.draws);
+    }
     g_rt_merged = 0;
 }
 void vk_pass_end_now(void) { pass_close(); vk_land_clears(); }
@@ -146,11 +153,17 @@ static int pass_open(void) {
     if (!P.samples) P.samples = 1;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {w, h}}, .layerCount = 1, .colorAttachmentCount = (uint32_t)n, .pColorAttachments = ca,
         .pDepthAttachment = P.df ? &da : NULL, .pStencilAttachment = P.sf ? &da : NULL};
-    vkCmdBeginRendering(vk_cb(), &ri);
+    vk_ptime_begin(vk_cb()); vkCmdBeginRendering(vk_cb(), &ri);
     int partial_ds = R.clear_d != R.clear_s && P.df && P.sf;
     memset(R.clear_c, 0, sizeof R.clear_c);
     if (!partial_ds) R.clear_d = R.clear_s = 0;
-    P.open = 1; P.w = w; P.h = h; g_passes++;
+    P.open = 1; P.w = w; P.h = h; g_passes++; g_stat_pass++;
+    if (passdump()) {   // DM_NVN_PASSDUMP / the command channel's passdump: the attachments (the Metal backend's P lines, shorter)
+        for (int i = 0; i < n; i++) if (P.col[i]) PD("P %llu c%d ser=%llu fmt=%d %ux%u ms%u %s", (unsigned long long)g_stat_pass, i, (unsigned long long)P.col[i]->serial,
+                                                    (int)P.cf[i], P.col[i]->w, P.col[i]->h, P.samples, ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "clear" : "load");
+        if (P.ds) PD("P %llu d ser=%llu fmt=%d %ux%u %s", (unsigned long long)g_stat_pass, (unsigned long long)P.ds->serial, (int)P.ds->fmt, P.ds->w, P.ds->h,
+                     da.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "clear" : "load");
+    }
     if (partial_ds) {   // the one plane cleared inside the pass
         VkClearAttachment c = {R.clear_d ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_STENCIL_BIT, 0, {.depthStencil = {(float)R.cd, R.cs}}}; VkClearRect r = {{{0, 0}, {w, h}}, 0, 1};
         vkCmdClearAttachments(vk_cb(), 1, &c, 1, &r); R.clear_d = R.clear_s = 0;
@@ -418,7 +431,7 @@ void nvn_be_draw(const p_draw *dw, const p_draw_idx *di) {
         vkCmdBindIndexBuffer(cb, ib, io, it);
         vkCmdDrawIndexed(cb, (uint32_t)di->count, di->instances ? (uint32_t)di->instances : 1, 0, di->base_vertex, (uint32_t)di->base_instance);
     }
-    g_draws++;
+    g_draws++; P.draws++;
     if (g_draws == 1) VLOG("first draw: %d attachments %ux%u, program %016llx / %016llx", P.n, P.w, P.h, (unsigned long long)g->vs->key, (unsigned long long)(g->ps ? g->ps->key : 0));
 }
 
@@ -467,4 +480,5 @@ void vk_stats_line(void) {
          (unsigned long long)e[VK_PE_RT_SAME], (unsigned long long)e[VK_PE_CLEAR], (unsigned long long)e[VK_PE_COPY], (unsigned long long)e[VK_PE_DISPATCH],
          (unsigned long long)e[VK_PE_BARRIER], (unsigned long long)e[VK_PE_UB], (unsigned long long)e[VK_PE_UPD], (unsigned long long)e[VK_PE_SAMPLES],
          (unsigned long long)e[VK_PE_SUBMIT], (unsigned long long)e[VK_PE_OTHER]);
+    vk_ptime_line(600);   // (called every 600 presents: vk_present.c)
 }

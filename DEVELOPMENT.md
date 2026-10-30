@@ -43,8 +43,8 @@ own, shown over the lock screen: HyperOS allows it with its "show on lock screen
 without it is reported as skipped). `android/run.sh` builds, installs and runs the app by hand; `t_vk_be` tests the Vulkan backend there.
 The APK carries the Vulkan shader bundle (`DM_GAME=manosaba gfx/tools/dmsh_vk.py work/shextract work/build/android/manosaba.dmvk`, DM_ROOT the
 workspace; again after a change of the game's shaders or of dmsh_vk.py; `tools/tests/t_dmsh_vk.py` checks the workspace's). To play on the
-phone without touching it, `work/scripts/android_live.sh start [<save dir>]`, `key <name>...`, `shot <png>` (the game's frame, vk_shot.c),
-`screen <png>` (the screen), `stop [<boot.txt>]` drive the app
+phone without touching it, `work/scripts/android_live.sh start [<save dir>]` (DM_LIVE_ENV: more NAME=value words for env.txt), `key
+<name>...`, `cmd <line>` (e.g. `passdump 2`), `shot <png>` (the game's frame, vk_shot.c), `screen <png>` (the screen), `stop [<boot.txt>]` drive the app
 through its command channel (DM_CMD, host/front/cmdchan.c) with a test save of its own (a copy of the given save; HyperOS's pocket mode takes
 touches while the phone's top is covered, the channel's keys are not touches).
 
@@ -365,8 +365,11 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   (10-17 %). In 300 frames the snapshot line counts 192 ranges not copied for a GPU write of an earlier submission still running, and the
   GPU writes noted (`us_gw_note`, the Metal backend's too) include the writes of the renamed updates themselves, whose bytes are known: to
   be checked whether those are the ranges. The trial's GPU time stayed 9-10 ms a frame when its passes halved, so this is not first) and
-  the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth); the NVN
-  fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
+  the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth; each pass's
+  GPU time by its targets since batch 132: in the trial 7.4-7.7 ms a frame in passes, 3.3 of them in about 1.2 passes a frame of 3-4 draws
+  on a 1280 x 720 target with depth, a projection matrix among their uniforms; that pass loads and stores about 15 MB, so the cost is its
+  draws' work, to be looked into next); the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become
+  submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
@@ -984,3 +987,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   3 now). The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 130's (the title, looked at); the headless run 40 s. gfx 153 / 153
   on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines,
   frame 1300 the same scene a moment later (looked at); manosaba's shots as batch 130's.
+- [x] batch 132 · 301e3 part: each pass's GPU time on Vulkan, and the pass records. In the first trial 7.4-7.7 ms a frame are in passes (the
+  frame's submissions 9-10 ms), 3.3 of them on a 1280 x 720 target with depth (about 1.2 passes a frame, 3-4 draws each, a projection
+  matrix among their uniforms: about 15 MB loaded and stored a pass, so the cost is the draws' work), 1.6-2.0 on 1920 x 1080 with depth,
+  0.67 on 2048 x 1152 (one draw), the rest on the portrait-sized targets.
+  - `vk_ptime.c` (DM_VK_PASS_GPU=1): a timestamp before each pass begins and after it ends, 64 passes a submission, summed by the pass's
+    targets at completion; a line beside the stats line every 600 presents (the costliest per present).
+  - The core's pass records (DM_NVN_PASSDUMP, the command channel's passdump) on Vulkan: each pass's attachments (P lines: size, format,
+    loaded or cleared) and its end (E: the cause, its draws). Two frames of the trial dumped: 5 passes each, every attachment loaded, none cleared.
+  - The batch's host tests run `t_sleep` (a timing test that asks for a machine not saturated) alone after the others: this batch's run
+    failed its 5 ms sleeps' mean oversleep among them (0.592 ms against 0.570), alone it passed; the host suite then twice, 182 / 182.
+  Tests: on the phone `t_vk_be` 29 (each pass's GPU time: two passes of one submission on one target, 4 draws, a time:
+  `-DDM_TEST_VK_PTIME_FIRST_ONLY` 1 fails; the continuation control fails 4 now, the barrier control 2). The app 40 s at 60 fps, 4 save
+  commits, its frame 1800 as batch 131's; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182 (as above),
+  sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes
+  (looked at); manosaba's shots as batch 131's.

@@ -10,14 +10,15 @@
 // -DDM_TEST_VK_EVENT_EARLY (event writes and reports landed when recorded): 2 fail; -DDM_TEST_VK_WINDING_SWAPPED (vk_draw.c's winding turned
 // around): 4 fail (the screenshot is of that target); -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first
 // set used again unwritten): 1 fails. 301e3: a pass the core continued (the same targets set again) goes on through a draw sampling another texture
-// and is ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 3 fail, with it the
-// barriers' split and the count of why passes ended). An inline uniform update between two draws keeps the pass open, the draw before it reading the
-// old bytes and the one after the new (a private copy over the core's snapshot), and reaches memory when the submission ends
+// and is ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 4 fail, with it the
+// barriers' split, the count of why passes ended and the passes timed). An inline uniform update between two draws keeps the pass open, the draw
+// before it reading the old bytes and the one after the new (a private copy over the core's snapshot), and reaches memory when the submission ends
 // (-DDM_TEST_VK_UB_NO_SHADOW, no private copies: 1 fails). A screenshot of the presented texture (the command channel's shot, no window here) read
 // back as a PNG (-DDM_TEST_VK_SHOT_FLIPPED, rows bottom first: 1 fails). The GPU time of the frame a submission was committed in (its timestamps;
 // -DDM_TEST_VK_TS_NONE, not handed on: 1 fails). Why passes end: the backend's own reasons over the op the replay is at (-DDM_TEST_VK_PE_OP_ONLY,
 // only the op: 2 fail). Barriers in a pass: it goes on, ended before a draw after one sampling the pass's attachment and at one after storage
-// written (-DDM_TEST_VK_BAR_NO_SPLIT: 1 fails).
+// written (-DDM_TEST_VK_BAR_NO_SPLIT: 2 fail, the passes timed with it). Each pass's GPU time summed by its targets (DM_VK_PASS_GPU;
+// -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
@@ -174,7 +175,7 @@ static void rec_dispatch(void *a) {
 }
 
 int main(void) {
-    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdout, NULL, _IONBF, 0); setenv("DM_VK_PASS_GPU", "1", 1);
     P = mmap(NULL, 4 << 20, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     for (int i = 0; i < (4 << 20); i++) P[i] = (uint8_t)(i * 7 + (i >> 12));
     mtl_pool_add(P, 4 << 20);
@@ -267,11 +268,16 @@ int main(void) {
     // barriers in a pass
     g_rtB = tex2d(P + 0x320000, 64, 64, NVN_FORMAT_RGBA8); mtl_reg_tex(10, &g_rtB, NULL); g_sb4 = P + 0x330000; memset(g_sb4, 0, 256);
     g_prog4 = g_prog; memcpy(g_prog4.key[1], "\x74\x65\x73\x74\x00\x00\x00\x04", 8);
+    vk_ptime_row pr[8]; vk_ptime_take(pr, 8, NULL);   // (from here)
     f = run(rec_bar, NULL); mtl_wait(f, UINT64_MAX);
+    uint64_t un = 0; int npr = vk_ptime_take(pr, 8, &un);
     CHECK(g_bar_passes == 2 && g_bar_pe[VK_PE_SAMPLES] == 1 && g_bar_pe[VK_PE_BARRIER] == 1,
           "barriers in a pass: it goes on through one, ends before a draw after it sampling its attachment (%llu) and at one after storage written (%llu; %llu passes)",
           (unsigned long long)g_bar_pe[VK_PE_SAMPLES], (unsigned long long)g_bar_pe[VK_PE_BARRIER], (unsigned long long)g_bar_passes);
     CHECK(*(uint32_t *)g_sb4 == 1, "a pixel shader's storage slot written: %u", *(uint32_t *)g_sb4);
+    CHECK(npr == 1 && pr[0].k.w == 64 && pr[0].k.h == 64 && pr[0].k.cfmt == VK_FORMAT_R8G8B8A8_UNORM && !pr[0].k.dfmt && pr[0].passes == 2 && pr[0].draws == 4 &&
+          pr[0].ns > 0 && pr[0].ns < 1e9 && !un, "each pass's GPU time (DM_VK_PASS_GPU): %d target(s), 64 x 64: %llu passes, %llu draws, %.3f ms; %llu untimed",
+          npr, (unsigned long long)(npr ? pr[0].passes : 0), (unsigned long long)(npr ? pr[0].draws : 0), npr ? pr[0].ns / 1e6 : 0.0, (unsigned long long)un);
     // a dispatch: storage slot 0 written, a texture through image slot 0 fetched, image slot 1 stored to
     uint8_t *img_mem = P + 0x360000, *tx7_mem = P + 0x361000; g_sb = P + 0x362000; memset(g_sb, 0, 1024);
     g_img = tex2d(img_mem, 8, 1, NVN_FORMAT_RGBA8); g_img.d.flags |= NVN_TEXTURE_FLAGS_IMAGE; g_tx7 = tex2d(tx7_mem, 4, 4, NVN_FORMAT_RGBA8);

@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { NSLOT = 8 };
+enum { NSLOT = VK_NSLOT };
 typedef struct { void (*fn)(void *); void *arg; uint64_t fence; } after_t;
 typedef struct {
     VkCommandPool pool; VkCommandBuffer cb; int begun;
@@ -52,7 +52,7 @@ static void *completion(void *unused) {
             gpu_tag_done(s->gpu_f, (double)(t[0] & g_ts_mask) * g_ts_s, (double)(t[1] & g_ts_mask) * g_ts_s);
         }
 #endif
-        s->timed = 0;
+        s->timed = 0; vk_ptime_done((int)(s - g_slot));
         for (int i = 0; i < s->npost; i++) land(&s->post[i]);
         s->npost = 0;
         pthread_mutex_lock(&g_mu);
@@ -98,10 +98,12 @@ VkCommandBuffer vk_cb(void) {
         VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         VK(vkBeginCommandBuffer(g_cur->cb, &bi)); g_cur->begun = 1;
         if (g_qp) { uint32_t q = 2 * (uint32_t)(g_cur - g_slot); vkCmdResetQueryPool(g_cur->cb, g_qp, q, 2); vkCmdWriteTimestamp2(g_cur->cb, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, g_qp, q); }
+        vk_ptime_slot(g_cur->cb, (int)(g_cur - g_slot));
         vk_barrier_all(g_cur->cb);   // after whatever ran before (uploads of their own, the previous submission)
     }
     return g_cur->cb;
 }
+int vk_cur_slot(void) { return g_cur ? (int)(g_cur - g_slot) : 0; }
 uint64_t vk_cur_fence(void) { pthread_mutex_lock(&g_mu); uint64_t f = g_fence + 1; pthread_mutex_unlock(&g_mu); return f; }
 void vk_post_add(vk_post p) {
     slot_t *s = g_cur; if (!s) VDIE("a completion effect outside a submission");
