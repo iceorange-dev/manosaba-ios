@@ -55,6 +55,7 @@ run: \
 	$(B)/t_guest_mem \
 	$(B)/t_guest_mem_heapold \
 	$(B)/t_guest_mem_physold \
+	$(B)/t_guest_mem_perpage \
 	$(B)/t_guest_mem_getinfoold \
 	$(B)/t_guest_mem_arold \
 	$(B)/t_hid_receipt \
@@ -297,6 +298,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "FAIL a refused address region" $(B)/t_guest_mem_arold.log; then \
 	   cat $(B)/t_guest_mem_arold.log; echo "t_guest_mem_arold: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_guest_mem_arold: a refused address region left unseen, as expected"
+	@status=0; $(B)/t_guest_mem_perpage > $(B)/t_guest_mem_perpage.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '^FAIL' $(B)/t_guest_mem_perpage.log)" -ne 1 ] || ! grep -q "FAIL 4 MB mapped in one system call" $(B)/t_guest_mem_perpage.log; then \
+	   cat $(B)/t_guest_mem_perpage.log; echo "t_guest_mem_perpage: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_guest_mem_perpage: a system call for each host page fails 1, as expected"
 	@status=0; $(B)/t_guest_mem_physold > $(B)/t_guest_mem_physold.log 2>&1 || status=$$?; \
 	 if [ "$$status" -eq 0 ] || ! grep -q "address / size not 4 KB aligned" $(B)/t_guest_mem_physold.log; then \
 	   tail -5 $(B)/t_guest_mem_physold.log; echo "t_guest_mem_physold: unexpected negative-control result ($$status)"; exit 1; \
@@ -887,6 +892,8 @@ $(B)/t_guest_mem_heapold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle
 	clang -O1 -Wno-unused-function -DDM_TEST_HEAP_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_guest_mem_physold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_PHYS_OLD -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem_perpage: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_ALIAS_PER_PAGE -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_guest_mem_arold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_AR_UNLOGGED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_coremask: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

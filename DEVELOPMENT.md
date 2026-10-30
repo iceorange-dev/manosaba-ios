@@ -377,8 +377,9 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet. Measured in the first trial's debate (2026-10-30): the game
   waits for its newest submission every frame (177; 12 ms a frame there), yet frames are held at the 60 Hz present (p50 16.6 ms) and its
   dips are single long frames at the lines of text: the GPU one frame behind (224, as a probe: the waits 12 → 0.1 ms a frame) left the frame
-  times as they were. Those frames were the render thread making and dropping texture pools (batch 135); what is left of them: a pool going
-  (the wait for the GPU to go idle and one copy: 16 MB in about 15 ms), the game's own memory mapping (`svc` → `mmap`), `vkAllocateMemory`.
+  times as they were. Those frames were the render thread making and dropping texture pools (batch 135) and mapping and unmapping their
+  memory (batch 136); what is left of them: a pool going (the wait for the GPU to go idle and one copy: 16 MB in about 15 ms),
+  `vkAllocateMemory`, a few frames of 145-186 ms not looked into yet.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -1065,3 +1066,15 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   written, fails 3, the first pool's check among them). The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 134's; the headless
   run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the
   Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots as batch 134's.
+- [x] batch 136 · 301f part: the alias region's memory mapped and unmapped by runs of host pages. Sampled again on all threads, the first
+  trial's debate still had 24 frames of 40 ms or more; about 40 % of the render thread's time in them was the game's MapPhysicalMemory /
+  UnmapPhysicalMemory (Unity's VammManager, the memory of the texture pools), which `alias_phys` (`host/hle/hle_svc.c`) did with an
+  `mprotect` or `mmap` for each host page: 4096 calls for 16 MB on the phone's 4 KB pages (1024 on Apple's 16 KB ones). Mapping is now one
+  `mprotect` over the host pages the range touches, unmapping one `mmap` for each run of host pages left without a mapped subpage (the rest
+  still have their unmapped subpages cleared). The debate on the phone: frames of 40 ms or more from frame 7000 on 29 → 22 (38 before batch
+  135), their time 2.8 → 2.1 s (3.0); the longest frame of most 300-frame spans 35-65 ms (78-109); the pictures looked at, no red line.
+  Tests: `t_guest_mem` 71 (4 MB mapped in one system call and unmapped in one; the random test against the reference model and the
+  host pages' accessibility as before: `-DDM_TEST_ALIAS_PER_PAGE`, a call for each host page, fails 1 with 256 and 256). The app 40 s at 60
+  fps, 4 save commits, its frame 1800 as batch 135's; the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 183 / 183, sanitizer,
+  texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at;
+  its alias region peaked at 512 MB as before); manosaba's shots as batch 135's.

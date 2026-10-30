@@ -36,6 +36,14 @@ static int alias_bit(size_t i) { return g_alias_bits[i >> 3] >> (i & 7) & 1; }
 // Alias region readout (any thread, no lock: two word reads): MB the game has mapped, and MB of host pages that mapping keeps in use; the difference
 // is what 4 KB mappings scattered over 16 KB host pages cost on top
 void dm_alias_stat(size_t *mapped_mb, size_t *host_mb) { *mapped_mb = g_alias_mapped >> 8; *host_mb = g_alias_hpages * dm_page_size() >> 20; }
+size_t g_alias_calls;   // system calls alias_phys made (t_guest_mem)
+// Host pages [*run, end) (in 4 KB pages) with no mapped subpage left replaced by fresh anonymous PROT_NONE memory in one call (later maps read zero)
+static void alias_fresh(size_t *run, size_t end) {
+    if (*run == SIZE_MAX || end <= *run) { *run = SIZE_MAX; return; }
+    uint8_t *a = g_alias + *run * 0x1000; size_t len = (end - *run) * 0x1000;
+    if (mmap(a, len, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED) die("UnmapPhysicalMemory: replacing %p+%#zx failed, errno=%d", a, len, errno);
+    g_alias_calls++; *run = SIZE_MAX;
+}
 // Returns 1 (and maps nothing) when mapping would take more than limit_pages 4 KB pages in all: the console's kernel reserves the pages not yet mapped
 // from the process's physical memory limit and fails with LimitReached (mesosphere KPageTableBase::MapPhysicalMemory)
 static int alias_phys(uint8_t *a, size_t size, int map, size_t limit_pages) {
@@ -49,16 +57,30 @@ static int alias_phys(uint8_t *a, size_t size, int map, size_t limit_pages) {
     static size_t peak, top, logged;
     for (size_t i = first; i < first + n; i++) { int was = alias_bit(i); if (map && !was) g_alias_mapped++; else if (!map && was) g_alias_mapped--; }
     if (map && first + n > top) top = first + n;
-    for (size_t h = first / sub * sub; h < first + n; h += sub) {   // every host page the range touches
+    // Every host page the range touches. The system calls go over runs of host pages, not one a page (plan item 301f: a 16 MB texture's memory
+    // mapped or unmapped by Unity was 4096 calls on the phone's 4 KB pages, about 40 % of the render thread's time in the first trial's long frames)
+    size_t h0 = first / sub * sub, run = SIZE_MAX;   // run: the first host page of fresh pages still to put in place
+    for (size_t h = h0; h < first + n; h += sub) {
         int before = 0, used = 0; for (size_t k = h; k < h + sub; k++) before |= alias_bit(k);
         for (size_t k = h > first ? h : first; k < h + sub && k < first + n; k++) if (map) g_alias_bits[k >> 3] |= 1 << (k & 7); else g_alias_bits[k >> 3] &= ~(1 << (k & 7));
         for (size_t k = h; k < h + sub; k++) used |= alias_bit(k);
         if (used && !before) g_alias_hpages++; else if (!used && before) g_alias_hpages--;
-        uint8_t *hpage = g_alias + h * 0x1000;
-        if (map) { if (mprotect(hpage, hp, PROT_READ | PROT_WRITE)) die("MapPhysicalMemory mprotect %p errno=%d", hpage, errno); }
-        else if (used) { for (size_t k = h; k < h + sub; k++) if (k >= first && k < first + n) memset(g_alias + k * 0x1000, 0, 0x1000); }
-        else if (mmap(hpage, hp, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED) die("UnmapPhysicalMemory: replacing page %p failed, errno=%d", hpage, errno);
+        if (map) continue;
+        if (used) { alias_fresh(&run, h); for (size_t k = h; k < h + sub; k++) if (k >= first && k < first + n) memset(g_alias + k * 0x1000, 0, 0x1000); }
+        else if (run == SIZE_MAX) run = h;
+#ifdef DM_TEST_ALIAS_PER_PAGE   // negative control of t_guest_mem only: a call for each host page, as before
+        if (!used) alias_fresh(&run, h + sub);
+#endif
     }
+    if (map) {
+        size_t h1 = (first + n + sub - 1) / sub * sub;
+#ifndef DM_TEST_ALIAS_PER_PAGE
+        if (mprotect(g_alias + h0 * 0x1000, (h1 - h0) * 0x1000, PROT_READ | PROT_WRITE)) die("MapPhysicalMemory mprotect %p errno=%d", g_alias + h0 * 0x1000, errno);
+        g_alias_calls++;
+#else
+        for (size_t h = h0; h < h1; h += sub) { if (mprotect(g_alias + h * 0x1000, hp, PROT_READ | PROT_WRITE)) die("MapPhysicalMemory mprotect errno=%d", errno); g_alias_calls++; }
+#endif
+    } else alias_fresh(&run, (first + n + sub - 1) / sub * sub);
     if (g_alias_mapped > peak) { peak = g_alias_mapped; if ((peak >> 15) > logged) { logged = peak >> 15;
         LOG("alias region peak use %zu MB (highest offset %zu MB, region %zu MB; host pages in use now %zu MB)", peak >> 8, top >> 8, g_alias_cap >> 20, g_alias_hpages * hp >> 20); } }
     pthread_mutex_unlock(&g_alias_lock);

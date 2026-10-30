@@ -1,7 +1,8 @@
 // Physical memory in the alias region (hle_svc.c alias_phys, svc MapPhysicalMemory / UnmapPhysicalMemory): 4 KB guest pages on 16 KB host pages.
 //   (1) hand-written cases: a host page opens with its first mapped subpage and stays open while any subpage is mapped; an unmapped subpage reads
 //       zero while its neighbours keep their contents; a host page with no mapped subpage left is replaced, so mapping it again reads zero; mapping a
-//       page twice or unmapping a page that is not mapped changes nothing;
+//       page twice or unmapping a page that is not mapped changes nothing; 4 MB mapped in one system call and unmapped in one (plan item 301f;
+//       -DDM_TEST_ALIAS_PER_PAGE, a call for each host page as before, fails it);
 //   (2) the counters behind dm_alias_stat (mapped 4 KB pages, host pages in use) against a reference model over 20000 random map / unmap calls,
 //       with ranges that start and end inside host pages, plus the accessibility of every host page the model says is in use;
 //   (3) everything unmapped: both counters back to zero.
@@ -148,9 +149,10 @@ int main(void) {
         CHECK(!readable(g_alias + sub * 0x1000) && readable(g_alias + (sub - 1) * 0x1000) && readable(g_alias + 2 * sub * 0x1000), "the middle host page is closed, its neighbours open");
         unmap(0, 3 * sub);
     }
-    size_t mb, hmb; map(0, 1024); dm_alias_stat(&mb, &hmb);
+    size_t mb, hmb, c0 = g_alias_calls; map(0, 1024); size_t c1 = g_alias_calls; dm_alias_stat(&mb, &hmb);
     CHECK(mb == 4 && hmb == 4, "dm_alias_stat after mapping 4 MB: %zu MB mapped in %zu MB of host pages", mb, hmb);
     unmap(0, 1024);
+    CHECK(c1 - c0 == 1 && g_alias_calls - c1 == 1, "4 MB mapped in one system call and unmapped in one (%zu, %zu)", c1 - c0, g_alias_calls - c1);
 
     printf("2 random map / unmap against a reference model\n");
     srand(12345); int bad = 0, closed_bad = 0; verbose = 0;
