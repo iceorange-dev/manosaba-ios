@@ -13,6 +13,55 @@
 #include "uc.h"
 #include <stdatomic.h>
 #include <time.h>
+#include <errno.h>
+#include <fcntl.h>
+
+// ---------- The crash report's first part, signal-safe (plan item 298) ----------
+// A crash can come while the crashing thread holds a lock the report would take: on a OnePlus 13 a guest thread overflowed its stack inside the
+// allocator, the report's thread dump then waited for that allocator's lock for good, and every thread needing memory with it, so the system said
+// "not responding" after 5 s instead of the process ending with a report (jhaizhou-ops/d2r-mobile 3ebb29bd, MIT; written anew here). So the first
+// part (the CRASH line, the registers, the frame-pointer backtrace) is put together in a buffer on the stack and written with write(2): no stdio, no
+// allocation, no dladdr, no lock; guest modules found by module_of (a table), other addresses on Linux through /proc/self/maps (open / read: library
+// and offset), raw elsewhere; frames read with dm_mem_read. The second part (dladdr's names, the IL2CPP classes, DM_CRASH_MEM / DM_CRASH_HEAP, the
+// graphics note, the thread dump) needs stdio and locks: it runs under a 3 s alarm that ends the process (crash_deadman)
+typedef struct { char b[512]; int n; } cw_t;
+static void cw_flush(cw_t *w) {
+    for (int o = 0; o < w->n;) { ssize_t k = write(2, w->b + o, (size_t)(w->n - o)); if (k > 0) o += (int)k; else if (!(k < 0 && errno == EINTR)) break; }
+    w->n = 0;
+}
+static void cw_s(cw_t *w, const char *t) { for (; *t; t++) { if (w->n == (int)sizeof w->b) cw_flush(w); w->b[w->n++] = *t; } }
+static void cw_hex(cw_t *w, uint64_t v) { char t[19]; int i = 18; t[i] = 0; do t[--i] = "0123456789abcdef"[v & 15]; while (v >>= 4); t[--i] = 'x'; t[--i] = '0'; cw_s(w, t + i); }
+static void cw_dec(cw_t *w, unsigned v) { char t[12]; int i = 11; t[i] = 0; do t[--i] = (char)('0' + v % 10); while (v /= 10); cw_s(w, t + i); }
+#ifdef __linux__
+// The mapping holding a in /proc/self/maps, as "library+offset" (the offset in the file, as dladdr's fallback gives it): 0 when none
+static uint64_t cw_hexin(const char **p) { uint64_t v = 0; for (int d; (d = **p >= '0' && **p <= '9' ? **p - '0' : **p >= 'a' && **p <= 'f' ? **p - 'a' + 10 : -1) >= 0; (*p)++) v = v << 4 | (uint64_t)d; return v; }
+static int cw_map(cw_t *w, uint64_t a) {
+    int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC); if (fd < 0) return 0;
+    char buf[4096], line[512]; int ln = 0, found = 0; ssize_t k;
+    while (!found && (k = read(fd, buf, sizeof buf)) > 0)
+        for (ssize_t i = 0; i < k && !found; i++) {
+            if (buf[i] != '\n') { if (ln < (int)sizeof line - 1) line[ln++] = buf[i]; continue; }
+            line[ln] = 0; ln = 0;
+            const char *p = line; uint64_t lo = cw_hexin(&p); if (*p++ != '-') continue;
+            uint64_t hi = cw_hexin(&p); if (a < lo || a >= hi) continue;
+            for (int f = 0; f < 2; f++) { while (*p == ' ') p++; while (*p && *p != ' ') p++; }   // the permissions, then to the file offset
+            while (*p == ' ') p++; uint64_t fo = cw_hexin(&p);
+            const char *path = strchr(line, '/'); if (!path) continue;
+            const char *base = strrchr(path, '/') + 1;
+            cw_s(w, base); cw_s(w, "+"); cw_hex(w, a - lo + fo); found = 1;
+        }
+    close(fd); return found;
+}
+#endif
+static void cw_addr(cw_t *w, const char *tag, uint64_t a) {   // " tag=" and the address: guest module + offset, library + offset (Linux) or the value
+    cw_s(w, " "); if (*tag) { cw_s(w, tag); cw_s(w, "="); }
+    module_t *m = module_of((void *)a);
+    if (m) { cw_s(w, m->name); cw_s(w, "+"); cw_hex(w, a - (uint64_t)m->base); return; }
+#ifdef __linux__
+    if (cw_map(w, a)) return;
+#endif
+    cw_hex(w, a);
+}
 
 static _Atomic uint64_t g_watch_last_ns;
 static _Atomic uint64_t g_watch_count;
@@ -197,6 +246,13 @@ void crash_objs(const uint64_t x[29]) {
     if (!dm_engine_il2cpp()) return;
     for (int i = 0; i < 29; i++) { char c[200]; if (il2cpp_class_of(x[i], crash_rd, c, sizeof c)) fprintf(stderr, "[dm] x%d → an IL2CPP %s\n", i, c); }
 }
+// The second part's limit: it ends the process 3 s in (before Android's 5 s "not responding"), the first part already written
+static volatile sig_atomic_t g_crash_sig;
+static void crash_deadman(int sig) {
+    (void)sig; static const char m[] = "[dm] the crash report's second part did not finish in 3 s (a lock the crashing thread holds?): exiting\n";
+    if (write(2, m, sizeof m - 1) < 0) {}
+    _exit(128 + g_crash_sig);
+}
 static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
@@ -204,6 +260,31 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         int is_write = (int)((uc_esr(uc) >> 6) & 1);   // The WnR bit of ESR
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
+    // The first part (above: signal-safe), written before anything that could wait
+    { cw_t w; w.n = 0;
+      cw_s(&w, "[dm] CRASH sig="); cw_dec(&w, (unsigned)sig);
+      cw_addr(&w, "addr", (uint64_t)si->si_addr); cw_addr(&w, "pc", UC_PC(uc)); cw_addr(&w, "lr", UC_LR(uc)); cw_s(&w, " sp="); cw_hex(&w, UC_SP(uc)); cw_s(&w, "\n");
+      for (int i = 0; i < 29; i++) { cw_s(&w, "x"); cw_dec(&w, (unsigned)i); cw_s(&w, "="); cw_hex(&w, UC_X(uc, i)); cw_s(&w, i % 6 == 5 ? "\n" : " "); }
+      cw_s(&w, "\n[dm] bt:"); cw_flush(&w);   // (out before the frames are read)
+      uint64_t fp = UC_FP(uc); int jumps = 0;
+      for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
+          uint64_t fr[2]; if (!dm_mem_read(fr, fp, sizeof fr)) { cw_s(&w, " (frame "); cw_hex(&w, fp); cw_s(&w, " unreadable)"); break; }
+          cw_addr(&w, "", fr[1]);
+          if (!dm_fp_step_ok(fp, fr[0], &jumps)) break;
+          fp = fr[0];
+      }
+      cw_s(&w, "\n"); cw_flush(&w); }
+    g_crash_sig = sig;
+#ifndef DM_TEST_CRASH_NO_DEADMAN   // negative control of t_crash_stderr only: the second part without a limit, as before
+    { struct sigaction da = {.sa_handler = crash_deadman}; sigemptyset(&da.sa_mask); sigaction(SIGALRM, &da, 0); alarm(3); }
+    // A report for SIGALRM itself (DM_WATCH's limit) runs with SIGALRM blocked, as each handler does its own signal: let the limit's through
+    // (n2ray's f697868f in d2r-mobile's review branch)
+#ifndef DM_TEST_CRASH_ALRM_BLOCKED   // negative control of t_crash_stderr only: left blocked
+    if (sig == SIGALRM) { sigset_t u; sigemptyset(&u); sigaddset(&u, SIGALRM); pthread_sigmask(SIG_UNBLOCK, &u, NULL); }
+#endif
+#else
+    (void)crash_deadman;
+#endif
     // Another thread may hold the stderr lock (stuck, or stopped in the middle of a write): the fprintf below would then hang with it, the
     // process would neither exit nor say why, and the log would end mid-run with nothing. If the lock cannot be taken within 1 s, write a single
     // line with write() (pc / lr as module offsets) and exit. ftrylockfile succeeds when this thread holds the lock itself (file locks are
@@ -216,19 +297,14 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
 #else
         if (tries++ < 100) { usleep(10000); continue; }
 #endif
-        char b[256]; int n = snprintf(b, sizeof b, "[dm] CRASH sig=%d (stderr held by another thread for 1 s: no register dump)", sig);
-        uint64_t at[2] = {UC_PC(uc), UC_LR(uc)};
-        for (int k = 0; k < 2; k++) { module_t *m = module_of((void *)at[k]);
-            n += m ? snprintf(b + n, sizeof b - n, " %s=%s+%#llx", k ? "lr" : "pc", m->name, at[k] - (uint64_t)m->base) : snprintf(b + n, sizeof b - n, " %s=%#llx", k ? "lr" : "pc", at[k]); }
-        n += snprintf(b + n, sizeof b - n, "\n");
-        if (write(2, b, (size_t)n) < 0) {}
+        static const char m[] = "[dm] stderr held by another thread for 1 s: no symbols or thread dump after the registers above\n";
+        if (write(2, m, sizeof m - 1) < 0) {}
         _exit(128 + sig);
     }
     funlockfile(stderr);
-    fprintf(stderr, "[dm] CRASH sig=%d", sig);
+    // The second part: the same addresses with dladdr's names, then what the first part could not say
+    fprintf(stderr, "[dm] CRASH symbols:");
     off("addr", (uint64_t)si->si_addr); off("pc", UC_PC(uc)); off("lr", UC_LR(uc));
-    fprintf(stderr, " sp=%#llx\n", UC_SP(uc));
-    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, UC_X(uc, i), i % 6 == 5 ? "\n" : " ");
     fprintf(stderr, "\n");
     crash_objs((const uint64_t *)UC_XS(uc));
     crash_mem(uc);

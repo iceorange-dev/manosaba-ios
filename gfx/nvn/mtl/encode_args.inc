@@ -192,4 +192,5 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
     return 1;
 }
 static id<MTLBuffer> g_quad_ib; static uint64_t g_quad_gpu;
+static id<MTLBuffer> g_qs_ib;   // quad strips' shared indices (draw.inc)
 static RENC rp_begin(void);

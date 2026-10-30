@@ -1,7 +1,7 @@
 // UTC milliseconds at the start of every stderr line (plan item 106; the idea from lordran-native's dm_log_timestamp.h, MIT, the code is ours).
 // stderr becomes a stream over the same descriptor whose writer puts "[2026-10-20T03:04:05.678Z] " before each line, however the line arrives
 // (LOG's text and its newline come in two calls, a crash dump in many), so the host's LOG, the graphics side's messages and crash.c's dump (written
-// through stderr) all carry it; plain write(2) calls (crash.c's fallback when stderr stays locked) go around it. The descriptor stays open and
+// through stderr) all carry it; plain write(2) calls (the crash report's first part, signal-safe: plan item 298) go around it. The descriptor stays open and
 // owned by the old stream. Lines written before it is installed (a constructor's, the iOS app's env.txt report) have none. On by default in the
 // iOS app (main.m), DM_LOG_TIME=1 on the Mac (main.c); DM_LOG_TIME=0 turns it off.
 // Checked by host/tests/t_logstamp.c

@@ -35,6 +35,8 @@ run: \
 	$(B)/t_crash_bt_unguarded \
 	$(B)/t_crash_stderr \
 	$(B)/t_crash_stderr_counted \
+	$(B)/t_crash_stderr_nodeadman \
+	$(B)/t_crash_stderr_alrm \
 	$(B)/t_il2cpp_obj \
 	$(B)/t_il2cpp_obj_nocheck \
 	$(B)/t_envfile \
@@ -251,6 +253,14 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c ' FAIL$$' $(B)/t_crash_stderr_counted.log)" -ne 1 ] || ! grep -q "six times as long.* FAIL" $(B)/t_crash_stderr_counted.log; then \
 	   cat $(B)/t_crash_stderr_counted.log; echo "t_crash_stderr_counted: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_crash_stderr_counted: 100 sleeps counted take 6 s when each sleeps longer, as expected"
+	@status=0; $(B)/t_crash_stderr_nodeadman > $(B)/t_crash_stderr_nodeadman.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c ' FAIL$$' $(B)/t_crash_stderr_nodeadman.log)" -ne 9 ] || ! grep -q "never returns.* FAIL" $(B)/t_crash_stderr_nodeadman.log; then \
+	   cat $(B)/t_crash_stderr_nodeadman.log; echo "t_crash_stderr_nodeadman: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_crash_stderr_nodeadman: a crash report's second part without a limit hangs on a stuck dump, as expected"
+	@status=0; $(B)/t_crash_stderr_alrm > $(B)/t_crash_stderr_alrm.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c ' FAIL$$' $(B)/t_crash_stderr_alrm.log)" -ne 3 ] || ! grep -q "SIGALRM's report.* FAIL" $(B)/t_crash_stderr_alrm.log; then \
+	   cat $(B)/t_crash_stderr_alrm.log; echo "t_crash_stderr_alrm: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_crash_stderr_alrm: SIGALRM's own report with SIGALRM left blocked hangs, as expected"
 	$(B)/t_il2cpp_obj
 	@status=0; $(B)/t_il2cpp_obj_nocheck > $(B)/t_il2cpp_obj_nocheck.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_il2cpp_obj_nocheck.log)" -ne 2 ]; then \
@@ -794,6 +804,10 @@ $(B)/t_watchdog_nobg: t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../dm.h 
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_WATCH_NO_BG -I.. -o $@ t_watchdog.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
 $(B)/t_crash_stderr: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_crash_stderr_nodeadman: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CRASH_NO_DEADMAN -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
+$(B)/t_crash_stderr_alrm: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CRASH_ALRM_BLOCKED -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
 $(B)/t_crash_stderr_counted: t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CRASH_COUNTED_WAIT -I.. -o $@ t_crash_stderr.c t_altstack_stub.c ../runtime/crash.c ../runtime/plat_apple.c
 $(B)/t_arbiter: t_arbiter.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

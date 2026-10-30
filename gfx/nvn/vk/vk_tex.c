@@ -10,6 +10,7 @@
 #include "../nvn_hmap.h"
 #include "../nvn_tex.h"
 #include "../../tex/nvn_deswizzle.h"
+#include "../core/guard.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -141,6 +142,25 @@ static void level_dims(const vk_img *im, unsigned lv, uint32_t *w, uint32_t *h, 
     *w = im->w >> lv ? im->w >> lv : 1; *h = im->h >> lv ? im->h >> lv : 1; *d = im->d >> lv ? im->d >> lv : 1;
 }
 static uint64_t g_up_bytes, g_up_n, g_reup_n;
+// The storage read into the staging memory, every level and layer, with the copies they call for: under the guard (core/guard.h, plan item 290)
+typedef struct { const vk_img *im; const uint8_t *src; uint8_t *cpu; int bw, bh, bpb, linear; VkBufferImageCopy *rg; int nrg; } fill_t;
+static void fill(void *c_) {
+    fill_t *c = c_; const vk_img *im = c->im; const nvn_texdesc *d = &im->t.d; uint64_t at = 0;
+    nvn_texlayout L; nvn_tex_layout(d, &L);
+    for (unsigned lv = 0; lv < im->levels; lv++) {
+        uint32_t w, h, z; level_dims(im, lv, &w, &h, &z);
+        size_t pitch = (size_t)((w + c->bw - 1) / c->bw) * c->bpb, rows = (h + c->bh - 1) / c->bh, img = pitch * rows * z;
+        for (unsigned ly = 0; ly < im->layers; ly++) {
+            if (c->linear) {   // already row by row: the stride is the texture's
+                const uint8_t *lvp = c->src + nvn_tex_level_offset(d, lv) + (uint64_t)ly * L.layer_size; size_t sp = d->stride ? d->stride : pitch;
+                for (size_t r = 0; r < rows * z; r++) memcpy(c->cpu + at + r * pitch, lvp + r * sp, pitch);
+            } else if (nvn_deswizzle(d, lv, ly, c->src, c->cpu + at, pitch)) { static int said; if (said++ < 4) VLOG("[red] texture format %#x: no deswizzle for level %u", d->format, lv); }
+            c->rg[c->nrg++] = (VkBufferImageCopy){at, 0, 0, {im->aspect & VK_IMAGE_ASPECT_STENCIL_BIT && !(im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_IMAGE_ASPECT_STENCIL_BIT :
+                im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, lv, ly, 1}, {0, 0, 0}, {w, h, z}};
+            at += img;
+        }
+    }
+}
 void vk_tex_ready(vk_img *im, VkCommandBuffer cb) {
     if (!im || im->uploaded || im->gpu_written) return;
     im->uploaded = 1;
@@ -154,24 +174,19 @@ void vk_tex_ready(vk_img *im, VkCommandBuffer cb) {
     for (unsigned lv = 0; lv < im->levels; lv++) { uint32_t w, h, z; level_dims(im, lv, &w, &h, &z);
         total += (uint64_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh) * z * im->layers; }
     uint8_t *cpu; staging *s = staging_new(total, &cpu);
-    VkBufferImageCopy *rg = calloc((size_t)im->levels * im->layers, sizeof *rg); int nrg = 0; uint64_t at = 0;
-    nvn_texlayout L; nvn_tex_layout(d, &L);
-    for (unsigned lv = 0; lv < im->levels; lv++) {
-        uint32_t w, h, z; level_dims(im, lv, &w, &h, &z);
-        size_t pitch = (size_t)((w + bw - 1) / bw) * bpb, rows = (h + bh - 1) / bh, img = pitch * rows * z;
-        for (unsigned ly = 0; ly < im->layers; ly++) {
-            if (linear) {   // already row by row: the stride is the texture's
-                const uint8_t *lvp = src + nvn_tex_level_offset(d, lv) + (uint64_t)ly * L.layer_size; size_t sp = d->stride ? d->stride : pitch;
-                for (size_t r = 0; r < rows * z; r++) memcpy(cpu + at + r * pitch, lvp + r * sp, pitch);
-            } else if (nvn_deswizzle(d, lv, ly, src, cpu + at, pitch)) { static int said; if (said++ < 4) VLOG("[red] texture format %#x: no deswizzle for level %u", d->format, lv); }
-            rg[nrg++] = (VkBufferImageCopy){at, 0, 0, {im->aspect & VK_IMAGE_ASPECT_STENCIL_BIT && !(im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_IMAGE_ASPECT_STENCIL_BIT :
-                im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, lv, ly, 1}, {0, 0, 0}, {w, h, z}};
-            at += img;
-        }
+    fill_t c = {im, src, cpu, bw, bh, bpb, linear, calloc((size_t)im->levels * im->layers + 1, sizeof(VkBufferImageCopy)), 0};
+#ifndef DM_TEST_VK_UPLOAD_UNGUARDED   // negative control of t_vk_be only: read as before (the test's child dies)
+    int ok = guard_run(src, im->t.size, fill, &c);
+#else
+    fill(&c); int ok = 1;
+#endif
+    if (!ok) {   // the storage taken back mid-read (the game unmapped it after the submission): nothing copied, tried again at the next use
+        static int said; if (!said++) VLOG("[red] texture storage %p + %#x unreadable after its submission (the game took the memory back): not uploaded", (const void *)src, im->t.size);
+        free(c.rg); staging_free(s); im->uploaded = 0; return;
     }
-    vkCmdCopyBufferToImage(cb, s->buf, im->img, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)nrg, rg);
+    vkCmdCopyBufferToImage(cb, s->buf, im->img, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)c.nrg, c.rg);
     vk_barrier_all(cb);
-    free(rg); g_up_bytes += total; g_up_n++;
+    free(c.rg); g_up_bytes += total; g_up_n++;
     vk_after(vk_cur_fence(), staging_free, s);
 }
 

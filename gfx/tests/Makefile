@@ -39,6 +39,10 @@ t_core_exec: t_core_exec.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_exec.c $(CORE_C)
 t_core_frame: t_core_frame.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_frame.c $(CORE_C)
+t_core_guard: t_core_guard.c $(CORE_DEP)
+	clang $(CFLAGS) -Werror -o $@ t_core_guard.c $(CORE_C)
+t_core_guard_any: t_core_guard.c $(CORE_DEP)
+	clang $(CFLAGS) -Werror -DDM_TEST_GUARD_ANY_ADDR -o $@ t_core_guard.c $(CORE_C)
 t_core_fuse: t_core_fuse.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_fuse.c $(CORE_C)
 t_core_live: t_core_live.c $(CORE_DEP)
@@ -75,6 +79,10 @@ t_core_usnap_laydone: t_core_usnap.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -DDM_TEST_PEND_LAY_DONE -o $@ t_core_usnap.c $(CORE_C)
 t_hmap: t_hmap.c ../nvn/nvn_hmap.h
 	clang -O1 -Wall -o $@ t_hmap.c
+t_quad_strip: t_quad_strip.c ../nvn/nvn_quad_strip.h
+	clang -O1 -Wall -Werror -o $@ t_quad_strip.c
+t_quad_strip_abc: t_quad_strip.c ../nvn/nvn_quad_strip.h
+	clang -O1 -Wall -Werror -DDM_TEST_QS_ABC -o $@ t_quad_strip.c
 t_cover: t_cover.c ../nvn/nvn_cover.h
 	clang -O1 -Wall -o $@ t_cover.c
 t_pace: t_pace.c ../nvn/nvn_pace.h
@@ -129,6 +137,10 @@ t_ub: t_ub.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ub.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_drvseg: t_drvseg.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_drvseg.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_qstrip: t_qstrip.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_qstrip.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_qstrip_abc: t_qstrip.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_QS_ABC -o $@ t_qstrip.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_restart: t_restart.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_restart.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_live: t_live.m $(CRASH) $(GFX) $(GFX_H)
@@ -159,6 +171,10 @@ t_ppred: t_ppred.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ppred.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_present_res: t_present_res.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_present_res.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_texgone: t_texgone.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_texgone.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_texgone_unguarded: t_texgone.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_UPLOAD_UNGUARDED -o $@ t_texgone.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_bc1astc: t_bc1astc.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_bc1astc.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_clearquad: t_clearquad.m $(CRASH) $(GFX) $(GFX_H)
@@ -291,6 +307,8 @@ run: \
 	t_core_defer \
 	t_core_exec \
 	t_core_frame \
+	t_core_guard \
+	t_core_guard_any \
 	t_core_fuse \
 	t_core_live \
 	t_core_pend \
@@ -335,6 +353,8 @@ run: \
 	t_bindfreeze \
 	t_trace \
 	t_bc1astc \
+	t_texgone \
+	t_texgone_unguarded \
 	t_bcd \
 	t_clearquad \
 	t_nvn64a \
@@ -349,6 +369,8 @@ run: \
 	t_fuse_check \
 	t_gputime \
 	t_hmap \
+	t_quad_strip \
+	t_quad_strip_abc \
 	t_keepalive \
 	t_layer \
 	t_libcopy \
@@ -383,6 +405,8 @@ run: \
 	t_pso_skey \
 	t_refl \
 	t_restart \
+	t_qstrip \
+	t_qstrip_abc \
 	t_retry \
 	t_rstream \
 	t_retire \
@@ -423,11 +447,21 @@ run: \
 	./t_fstep
 	./t_fptrial
 	./t_hmap
+	./t_quad_strip
+	@status=0; ./t_quad_strip_abc > t_quad_strip_abc.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_quad_strip_abc.log)" -ne 6 ]; then \
+	   cat t_quad_strip_abc.log; echo "t_quad_strip_abc: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_quad_strip_abc: a plain quad'"'"'s order in a strip fails 6, as expected'; fi
 	./t_core_capture
 	./t_core_cond
 	./t_core_defer
 	./t_core_exec
 	./t_core_frame
+	./t_core_guard
+	@status=0; ./t_core_guard_any > t_core_guard_any.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_core_guard_any.log)" -ne 1 ]; then \
+	   cat t_core_guard_any.log; echo "t_core_guard_any: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_core_guard_any: a fault anywhere taken fails 1, as expected'; fi
 	./t_core_fuse
 	./t_core_live
 	./t_core_pend
@@ -504,6 +538,11 @@ run: \
 	TMPDIR=. ./t_trace
 	MTL_DEBUG_LAYER=1 ./t_bc1astc
 	./t_bc1astc off   # DM_NVN_BC1_ASTC=0: BC1 decompressed as before (plan item 62c)
+	./t_texgone
+	@status=0; ./t_texgone_unguarded > t_texgone_unguarded.log 2>&1 || status=$$?; \
+	 if [ "$$status" -eq 0 ] || [ "$$status" -eq 1 ] || ! grep -q "CRASH sig=" t_texgone_unguarded.log; then \
+	   cat t_texgone_unguarded.log; echo "t_texgone_unguarded: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_texgone_unguarded: the upload read as before dies of the fault, as expected'; fi
 	MTL_DEBUG_LAYER=1 ./t_bcd
 	MTL_DEBUG_LAYER=1 ./t_clearquad
 	./t_nvn64a
@@ -564,6 +603,11 @@ run: \
 	./t_upbound
 	./t_upwait
 	MTL_DEBUG_LAYER=1 ./t_restart
+	MTL_DEBUG_LAYER=1 ./t_qstrip
+	@status=0; ./t_qstrip_abc > t_qstrip_abc.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_qstrip_abc.log)" -ne 4 ]; then \
+	   cat t_qstrip_abc.log; echo "t_qstrip_abc: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_qstrip_abc: quad strips drawn in a plain quad'"'"'s order fail 4, as expected'; fi
 	MTL_DEBUG_LAYER=1 ./t_drvseg
 	MTL_DEBUG_LAYER=1 ./t_mip_extent
 	MTL_DEBUG_LAYER=1 ./t_mip_extent --stencil-only

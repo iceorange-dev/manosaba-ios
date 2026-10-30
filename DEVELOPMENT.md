@@ -311,10 +311,8 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
   shim headers.
 
-From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 289 done in batch 122, the user's order: 301 next):
-- 290 texture reads of guest memory the game unmapped, guarded (MacNativeGames f3bb714, PR #1232, MIT: SIGBUS in the deswizzle, the Depths):
-  `gfx/nvn/mtl/upload.inc` reads `t->mem` unguarded on the translation thread.
-- 291 quad strips as triangles, plain and indexed (MacNativeGames bff585f, PR #1216: the Hero's Path); ours skips the draw (`mtl/draw.inc`).
+From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 289 done in batch 122, 290, 291 and 298 in batch 141, the
+user's order: 301 next):
 - 292 fade steps that truncate to 0 above about 63.5 fps (MacNativeGames 3e9e7f67 / PR #1112, #1134's rule: a positive step at least 1, zero
   stays zero): main 0x0a7ac4, 0x95dd24, 0x6155e4, 0x615660, met at `DM_PRESENT_HZ` 90 / 120 with realtime.
 - 293 cutscenes at 60 fps (71c; mamcjr/TOTKRecompAndroid da06d5a, facts only): four functions run once a frame only in cutscenes (main 0x45c700,
@@ -328,8 +326,6 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   vertex streams bounded (1c54ea0), a 2D texture in a 3D slot (2bccdcc), three host races (ce99604).
 - 297 the virtual core released while waiting: write-back waits (MacNativeGames 0fd9358e, PR #1141), `nn::fs` and memory-pool setup
   (valentderah/totk-pc-recomp 101f2c8, MIT: loader threads held it up to 20 ms).
-- 298 the crash handler with a time limit (jhaizhou-ops/d2r-mobile 3ebb29bd, n2ray f697868f): ours is also the SIGALRM handler and runs dladdr,
-  fprintf and the dump hook with none.
 - 299 iOS input: Home and Capture kept from the system (nxnative 062cd06), motion from the phone and controllers (659c69d, cca3333), rumble
   through `GCHapticsLocalityHandles` (2e07a88).
 - 300 texture filtering at 1/256 of a texel as the Switch does, for vertex-shader lookups and gathers (TOTKRecompAndroid 8adbc5c, c02a43f, facts
@@ -1157,3 +1153,34 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   its content: `-DDM_TEST_VK_POOL_GONE_COPY` fails 3, `-DDM_TEST_VK_POOL_GONE_DISCARD_PART` 1, `-DDM_TEST_VK_POOL_ALL_UNWRITTEN` now 7);
   `t_guest_mem` 75 (UnmapPhysicalMemory and a heap shrink call the hook with their range, the content still there; MapPhysicalMemory and a
   growth do not: `-DDM_TEST_UNMAP_UNNOTED` fails 2).
+- [x] batch 141 · 298 the crash report with a time limit (jhaizhou-ops/d2r-mobile 3ebb29bd, MIT, written anew; n2ray's f697868f in its review
+  branch): a crash can come while the crashing thread holds a lock the report would take (on a OnePlus 13 the allocator's: the system said "not
+  responding" instead of the process ending). The report's first part (the CRASH line, the registers, the frame-pointer backtrace through
+  dm_mem_read) is now put together on the stack and written with write(2), nothing that allocates or takes a lock: guest modules by module_of,
+  other addresses on Linux through /proc/self/maps (library and offset: "t_crash_stderr+0x1706" on the phone), raw elsewhere. The second part
+  (dladdr's names as "[dm] CRASH symbols:", the IL2CPP classes, DM_CRASH_MEM / DM_CRASH_HEAP, the graphics note, the thread dump) runs under a
+  3 s alarm that ends the process with a line saying so; a report for SIGALRM itself (DM_WATCH) lets that alarm through (a handler runs with its
+  own signal blocked). Our ExitThread already leaves the guest stack before pthread_exit (upstream's other half). The first part's lines carry
+  no time stamp (logstamp.h's stream is stderr's, write(2) goes around it).
+  290 texture reads of guest memory the game took back, guarded (MacNativeGames f3bb714, MIT: SIGBUS in the deswizzle, the Depths; written
+  anew): `gfx/nvn/core/guard.c`'s guard_run runs a read with a fault inside its range caught on that thread (the host's fault hooks; one
+  sigsetjmp with the mask, 213 ns on the M5). The Metal backend's CPU upload (deswizzles, decompressions, transcodes into the staging memory;
+  the copies made after it only if nothing faulted), a small texture's content hash at each submission's check and at its first upload, and
+  the check whether the CPU filled a candidate run under it: a fault keeps the texture it had (or gives one without content) with a red line;
+  the Vulkan backend's upload too (nothing uploaded, tried again at the next use). The GPU's own reads of pools (the GPU deswizzle, no-copy
+  buffers) have no CPU fault to catch.
+  291 quad strips (MacNativeGames bff585f, MIT, written anew: the Hero's Path's route): `gfx/nvn/nvn_quad_strip.h` makes each pair after the
+  first a quad a b d c and its triangles a b d / c a d (the quad's winding, both ending at its last vertex); n vertices are n / 2 - 1 quads, an
+  odd last vertex nothing; indexed, a restart (NVN's: when on, an index never matching one wider than its type) starts a strip of its own pairs.
+  The Metal backend skipped them (a red line); it now draws them from shared indices (non-indexed, in runs of 65,536 quads) or the indices
+  rewritten into the arena (indexed; GPU-written indices earlier in the submission: not drawn, a red line). The Vulkan backend drew them as
+  triangle strips, a triangle more for an odd last vertex; now the same as Metal.
+  Tests: host `t_crash_stderr` 25 (a dump that never returns and a lock the crashing thread holds: out 3 s in with the first part written; a
+  report for SIGALRM the same: `-DDM_TEST_CRASH_NO_DEADMAN` fails 9, `-DDM_TEST_CRASH_ALRM_BLOCKED` 3), also on the phone (25;
+  the no-limit control 9); `t_core_guard` 7 (`-DDM_TEST_GUARD_ANY_ADDR` fails 1); `t_texgone` 5 on Metal (a re-upload, a content hash and a
+  first check over storage taken back: kept, then uploaded once it is back; read as before, `-DDM_TEST_UPLOAD_UNGUARDED`, the process dies);
+  `t_quad_strip` 8 (`-DDM_TEST_QS_ABC` fails 6) and `t_qstrip` 6 on Metal (6 vertices the whole target, 5 its left half only, indexed over a
+  restart: the control fails 4); on the phone `t_vk_be` 43 (a texture over storage taken back: caught, uploaded once back,
+  `-DDM_TEST_VK_UPLOAD_UNGUARDED` fails 1; quad strips with back faces culled, `-DDM_TEST_QS_ABC` fails 3; the winding turned around now 7).
+  gfx 164 / 164 on Metal 4 and Metal 3, host 188 / 188, sanitizer, texture, audit and tool tests, the phone's tests, both IPAs, the app and
+  headless runs 40 s at 60 fps; smoke as batch 140's (looked at).

@@ -5,10 +5,11 @@
 // everything else is dynamic state set at each draw from S: viewport (flipped: the translation keeps NVN's clip space, whose y points up, and
 // Vulkan's framebuffer y points down), scissor, depth bias, blend constants, stencil, cull mode and front face, topology, depth test / write /
 // compare, stencil test and ops, primitive restart, rasterizer discard, and the vertex input (VK_EXT_vertex_input_dynamic_state) from S's
-// attributes and streams. Quads are drawn as two triangles each (shared indices, or an indexed draw's indices rewritten into the arena), quad
-// strips as triangle strips. The resources: vk_bind.c. A dispatch runs outside any pass with a pipeline per compute shader.
+// attributes and streams. Quads and quad strips are drawn as two triangles each (shared indices, or an indexed draw's indices rewritten into the
+// arena; quad strips by gfx/nvn/nvn_quad_strip.h, plan item 291: they were triangle strips, which drew a triangle more for an odd last vertex). The resources: vk_bind.c. A dispatch runs outside any pass with a pipeline per compute shader.
 #include "vk_bind.h"
 #include "../nvn_hmap.h"
+#include "../nvn_quad_strip.h"
 #include "../core/exec.h"
 #include "../core/pass.h"
 #include "../core/state.h"
@@ -205,7 +206,7 @@ static int topology(int prim, VkPrimitiveTopology *t) {
     case NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; return 1; case NVN_DRAW_PRIMITIVE_TRIANGLE_FAN: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; return 1;
     case NVN_DRAW_PRIMITIVE_POLYGON: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; return 1;
     case NVN_DRAW_PRIMITIVE_QUADS: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; return 1;   // drawn through the quad index buffer (nvn_be_draw)
-    case NVN_DRAW_PRIMITIVE_QUAD_STRIP: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; return 1;   // the same triangles (GL: a quad strip's vertices as a triangle strip's)
+    case NVN_DRAW_PRIMITIVE_QUAD_STRIP: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; return 1;   // through quad strip indices (nvn_be_draw)
     case NVN_DRAW_PRIMITIVE_LINES_ADJACENCY: *t = VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY; return 1;
     case NVN_DRAW_PRIMITIVE_LINE_STRIP_ADJACENCY: *t = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY; return 1;
     case NVN_DRAW_PRIMITIVE_TRIANGLES_ADJACENCY: *t = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY; return 1;
@@ -303,13 +304,22 @@ static VkPipeline pipeline(const vk_prog *g, int tclass) {
 }
 
 // ---------- Quads' indices ----------
-static struct { VkBuffer buf; VkDeviceMemory mem; uint8_t *cpu; } g_quad;   // quad q: 4q + {0, 1, 2, 0, 2, 3}
+static struct { VkBuffer buf; VkDeviceMemory mem; uint8_t *cpu; } g_quad, g_qs;   // quad q: 4q + {0, 1, 2, 0, 2, 3}; a quad strip's (nvn_quad_strip.h)
 enum { QUADS_MAX = 65536 };   // quads one draw of them may have (the Metal backend's)
 static void draw_init(void) {
     static int done; if (done) return; done = 1;
     vk_bind_init();
     vk_host_buffer(QUADS_MAX * 24, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, &g_quad.buf, &g_quad.mem, &g_quad.cpu);
     for (uint32_t q = 0; q < QUADS_MAX; q++) { uint32_t b = 4 * q, v[6] = {b, b + 1, b + 2, b, b + 2, b + 3}; memcpy(g_quad.cpu + 24 * q, v, 24); }
+    vk_host_buffer(QUADS_MAX * 24, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, &g_qs.buf, &g_qs.mem, &g_qs.cpu); qs_indices((uint32_t *)(void *)g_qs.cpu, QUADS_MAX);
+}
+// An indexed draw of a quad strip: its indices as triangles' into the arena, 32-bit, restarts as NVN's (nvn_quad_strip.h)
+static int qs_draw_indices(const p_draw_idx *di, VkBuffer *buf, VkDeviceSize *off, uint32_t *n) {
+    unsigned sz = di->itype == NVN_INDEX_TYPE_UNSIGNED_INT ? 4 : di->itype == NVN_INDEX_TYPE_UNSIGNED_SHORT ? 2 : 1;
+    if (di->count < 4 || !mtl_pool_has(di->ibuf, (uint64_t)di->count * sz)) return 0;
+    uint8_t *cpu; uint64_t ao; void *ab; nvn_be_arena((size_t)di->count * 12, &cpu, &ao, &ab);
+    *n = (uint32_t)qs_indexed((uint32_t *)(void *)cpu, (const void *)(uintptr_t)di->ibuf, (uint32_t)di->count, sz, S.restart_set && S.restart_en, S.restart_idx);
+    *buf = (VkBuffer)(uintptr_t)ab; *off = ao; return 1;
 }
 // An indexed draw of quads: its indices as triangles' (0, 1, 2, 0, 2, 3 of each four) into the arena, 32-bit; restart indices not looked for
 static int quad_indices(const p_draw_idx *di, VkBuffer *buf, VkDeviceSize *off, uint32_t *n) {
@@ -417,8 +427,18 @@ void nvn_be_draw(const p_draw *dw, const p_draw_idx *di) {
         uint32_t nq = (uint32_t)dw->count / 4; if (nq > QUADS_MAX) { VRED("a draw of more than %d quads: cut there", QUADS_MAX); nq = QUADS_MAX; }
         vkCmdBindIndexBuffer(cb, g_quad.buf, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cb, 6 * nq, dw->instances ? (uint32_t)dw->instances : 1, 0, dw->first, (uint32_t)dw->base_instance);
+    } else if (dw && prim == NVN_DRAW_PRIMITIVE_QUAD_STRIP) {   // two triangles a pair of vertices, in runs of QUADS_MAX quads
+        uint32_t nq = dw->count > 0 ? qs_quads((uint32_t)dw->count) : 0;
+        vkCmdBindIndexBuffer(cb, g_qs.buf, 0, VK_INDEX_TYPE_UINT32);
+        for (uint32_t at = 0; at < nq;) { uint32_t k = nq - at < QUADS_MAX ? nq - at : QUADS_MAX;
+            vkCmdDrawIndexed(cb, 6 * k, dw->instances ? (uint32_t)dw->instances : 1, 0, dw->first + (int32_t)(2 * at), (uint32_t)dw->base_instance); at += k; }
     } else if (dw) vkCmdDraw(cb, (uint32_t)dw->count, dw->instances ? (uint32_t)dw->instances : 1, (uint32_t)dw->first, (uint32_t)dw->base_instance);
-    else if (prim == NVN_DRAW_PRIMITIVE_QUADS) {   // its indices made triangles'
+    else if (prim == NVN_DRAW_PRIMITIVE_QUAD_STRIP) {   // its indices made triangles'
+        VkBuffer ib; VkDeviceSize io; uint32_t n;
+        if (di->count < 4) return;
+        if (!qs_draw_indices(di, &ib, &io, &n)) { VRED("indexed quad strips whose indices are in no pool: dropped"); g_dropped++; return; }
+        if (n) { vkCmdBindIndexBuffer(cb, ib, io, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(cb, n, di->instances ? (uint32_t)di->instances : 1, 0, di->base_vertex, (uint32_t)di->base_instance); }
+    } else if (prim == NVN_DRAW_PRIMITIVE_QUADS) {   // its indices made triangles'
         VkBuffer ib; VkDeviceSize io; uint32_t n;
         if (!quad_indices(di, &ib, &io, &n)) { VRED("indexed quads whose indices are in no pool: dropped"); g_dropped++; return; }
         vkCmdBindIndexBuffer(cb, ib, io, VK_INDEX_TYPE_UINT32);

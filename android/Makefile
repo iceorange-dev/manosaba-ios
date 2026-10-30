@@ -113,7 +113,7 @@ apk-data: $(B)/$(GAME)-data.apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_vk_be_gcopy t_vk_be_gpart t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_vk_be_gcopy t_vk_be_gpart t_vk_be_unguarded t_vk_be_qsabc t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any t_crash_stderr t_crash_stderr_nodeadman
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -138,6 +138,12 @@ build/tests/t_data_idx: tests/t_data_idx.c data_apk.c data_apk.h | build/tests
 	$(CC) -O1 -Wall -Werror -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ tests/t_data_idx.c data_apk.c -landroid
 build/tests/t_data_idx_any: tests/t_data_idx.c data_apk.c data_apk.h | build/tests
 	$(CC) -O1 -Wall -Werror -Wno-format -D_GNU_SOURCE -DDM_TEST_DATA_IDX_ANY -I$(H) -Icompat -include compat/darwin.h -o $@ tests/t_data_idx.c data_apk.c -landroid
+# the crash report (plan item 298), host/tests' test as it is: its first part signal-safe (/proc/self/maps names libraries here), the second under a 3 s limit
+CRASHT_SRC = ../host/tests/t_crash_stderr.c ../host/tests/t_altstack_stub.c ../host/runtime/crash.c plat_linux.c
+build/tests/t_crash_stderr: $(CRASHT_SRC) | build/tests
+	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $(CRASHT_SRC)
+build/tests/t_crash_stderr_nodeadman: $(CRASHT_SRC) | build/tests
+	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -DDM_TEST_CRASH_NO_DEADMAN -o $@ $(CRASHT_SRC)
 build/tests/t_thermal: tests/t_thermal.c diag_android.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $^ -landroid
 build/tests/t_thermal_raw: tests/t_thermal.c diag_android.c | build/tests
@@ -162,7 +168,7 @@ build/tests/movie1080.mp4: | build/tests
 build/tests/movie.webm: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=red:s=320x240:r=30:d=1 -c:v libvpx-vp9 -g 10 -pix_fmt yuv420p $@
 # the Vulkan backend without a window, with the core modules it calls (plan item 301e1), and its draws' shaders (301e2)
-VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c upd.c frame.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
+VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c upd.c frame.c guard.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
 	../gfx/tex/nvn_deswizzle.c
 VKT_FLAGS = -O1 -g -Wall -Wno-format -D_GNU_SOURCE -I$(H) -I../gfx/nvn/include -I../gfx/nvn/vk -Icompat -include compat/darwin.h
 build/tests/t_vk_be: $(VKT_SRC) | build/tests
@@ -199,6 +205,10 @@ build/tests/t_vk_be_gcopy: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_COPY -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
 build/tests/t_vk_be_gpart: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_DISCARD_PART -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+build/tests/t_vk_be_unguarded: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_UPLOAD_UNGUARDED -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+build/tests/t_vk_be_qsabc: $(VKT_SRC) ../gfx/nvn/nvn_quad_strip.h | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_QS_ABC -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
 build/tests/t_vk.dmvk: tests/mk_vk_bundle.py ../gfx/tools/dmsh_vk.py ../games/manosaba/game.json | build/tests
 	python3 tests/mk_vk_bundle.py $@
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')

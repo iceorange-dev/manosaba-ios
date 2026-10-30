@@ -398,6 +398,48 @@ static uint64_t pkg_hash(const void *p, uint64_t n) {   // four independent lane
     h ^= h >> 33; h *= 0xc4ceb9fe1a85ec53ull; return h ^ (h >> 33);
 }
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse);
+// A small texture's content hash under the guard (core/guard.h, plan item 290): 0 when its storage could not be read (the game took it back)
+typedef struct { const void *p; uint64_t n, h; } pkg_hash_t;
+static void pkg_hash_run(void *c) { pkg_hash_t *x = c; x->h = pkg_hash(x->p, x->n); }
+static int pkg_hash_guarded(const tex_t *t, uint64_t *h) {
+    pkg_hash_t x = {t->mem, t->size, 0};
+    if (!guard_run(t->mem, t->size, pkg_hash_run, &x)) { RED_ONCE(117, "texture storage %p + %#x unreadable after its submission (the game took the memory back): the texture kept as it was", (void *)t->mem, t->size); return 0; }
+    *h = x.h; return 1;
+}
+// The CPU path's reads of the storage, under the guard: the deswizzles (and decompressions / transcodes) into the staging memory, and the copies
+// into the texture they call for, made after it if nothing faulted
+typedef struct { uint32_t w, h, z, y, l; size_t off, row, img; } cpu_blit;
+typedef struct { const tex_t *t; uint8_t *stg; unsigned levels, layers; int bw, bh, bpb, a1, a1rgba, unp, ubpp; uint8_t *cb; cpu_blit *bl; int nbl; } cpu_fill_t;
+static void cpu_fill(void *c_) {
+    cpu_fill_t *c = c_; const tex_t *t = c->t; size_t off = 0;
+    for (unsigned l = 0; l < c->levels; l++) {
+        uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
+        size_t pitch = (size_t)((w + c->bw - 1) / c->bw) * c->bpb, rows = (h + c->bh - 1) / c->bh;
+        for (unsigned y = 0; y < c->layers; y++) {
+            if (c->a1) {   // No BC, BC1: deswizzled into a temporary area, transcoded to ASTC into the staging area (nvn_bc1astc.c)
+                uint32_t bw4 = (w + 3) / 4, bh4 = (h + 3) / 4; size_t ap = (size_t)bw4 * 16; c->cb = malloc(pitch * rows * z);
+                if (!c->cb || nvn_deswizzle(&t->d, l, y, t->mem, c->cb, pitch)) { free(c->cb); c->cb = NULL; RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
+                for (uint32_t zi = 0; zi < z; zi++) nvn_bc1_astc_image(c->cb + zi * pitch * rows, pitch, bw4, bh4, c->stg + off + zi * ap * bh4, c->a1rgba);
+                free(c->cb); c->cb = NULL;
+                c->bl[c->nbl++] = (cpu_blit){w, h, z, y, l, off, ap, ap * bh4};
+                off += ap * bh4 * z;
+                continue;
+            }
+            if (c->unp) {   // No BC: first deswizzle into a temporary area (compressed blocks), then decompress layer by layer into the staging area
+                c->cb = malloc(pitch * rows * z); size_t up = (size_t)w * c->ubpp;
+                if (!c->cb || nvn_deswizzle(&t->d, l, y, t->mem, c->cb, pitch)) { free(c->cb); c->cb = NULL; RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
+                for (uint32_t zi = 0; zi < z; zi++) nvn_bc_decode(t->d.format, c->cb + zi * pitch * rows, pitch, w, h, c->stg + off + zi * up * h, up);
+                free(c->cb); c->cb = NULL;
+                c->bl[c->nbl++] = (cpu_blit){w, h, z, y, l, off, up, up * h};
+                off += up * h * z;
+                continue;
+            }
+            if (nvn_deswizzle(&t->d, l, y, t->mem, c->stg + off, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
+            c->bl[c->nbl++] = (cpu_blit){w, h, z, y, l, off, pitch, pitch * rows};
+            off += pitch * rows * z;
+        }
+    }
+}
 static id<MTLTexture> pkg_upload(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse) {   // reuse: a texture of this tex_t no GPU work reads any more, written instead of a new one
     struct timespec a, b; clock_gettime(CLOCK_MONOTONIC, &a);
     id<MTLTexture> r = pkg_upload_(t, stamp, reuse);
@@ -487,34 +529,19 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     up_bound(total ? total : 16); up_begin();
     id<MTLBuffer> stg = [g_dev newBufferWithLength:total ? total : 16 options:MTLResourceStorageModeShared];
     res_add(stg); [g_up_keep addObject:stg]; g_up_batch_bytes += total ? total : 16;
-    size_t off = 0;
-    for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
-        uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
-        size_t pitch = (size_t)((w + bw - 1) / bw) * bpb, rows = (h + bh - 1) / bh;
-        for (unsigned y = 0; y < layers; y++) {
-            if (a1) {   // No BC, BC1: deswizzled into a temporary area, transcoded to ASTC into the staging area (nvn_bc1astc.c)
-                uint32_t bw4 = (w + 3) / 4, bh4 = (h + 3) / 4; size_t ap = (size_t)bw4 * 16; uint8_t *cb = malloc(pitch * rows * z);
-                if (!cb || nvn_deswizzle(&t->d, l, y, t->mem, cb, pitch)) { free(cb); RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
-                for (uint32_t zi = 0; zi < z; zi++) nvn_bc1_astc_image(cb + zi * pitch * rows, pitch, bw4, bh4, (uint8_t *)stg.contents + off + zi * ap * bh4, a1rgba);
-                free(cb);
-                up_blit_add(stg, off, ap, ap * bh4, MTLSizeMake(w, h, z), mt, y, l);
-                off += ap * bh4 * z;
-                continue;
-            }
-            if (unp) {   // No BC: first deswizzle into a temporary area (compressed blocks), then decompress layer by layer into the staging area
-                uint8_t *cb = malloc(pitch * rows * z); size_t up = (size_t)w * ubpp;
-                if (!cb || nvn_deswizzle(&t->d, l, y, t->mem, cb, pitch)) { free(cb); RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
-                for (uint32_t zi = 0; zi < z; zi++) nvn_bc_decode(t->d.format, cb + zi * pitch * rows, pitch, w, h, (uint8_t *)stg.contents + off + zi * up * h, up);
-                free(cb);
-                up_blit_add(stg, off, up, up * h, MTLSizeMake(w, h, z), mt, y, l);
-                off += up * h * z;
-                continue;
-            }
-            if (nvn_deswizzle(&t->d, l, y, t->mem, (uint8_t *)stg.contents + off, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
-            up_blit_add(stg, off, pitch, pitch * rows, MTLSizeMake(w, h, z), mt, y, l);
-            off += pitch * rows * z;
-        }
+    cpu_fill_t c = {t, stg.contents, (unsigned)d.mipmapLevelCount, layers, bw, bh, bpb, a1, a1rgba, unp, ubpp, NULL, calloc((size_t)d.mipmapLevelCount * layers + 1, sizeof(cpu_blit)), 0};
+#ifndef DM_TEST_UPLOAD_UNGUARDED   // negative control of t_texgone only: read as before (the test's child dies)
+    int ok = guard_run(t->mem, t->size, cpu_fill, &c);
+#else
+    cpu_fill(&c); int ok = 1;
+#endif
+    if (!ok) {   // the storage taken back mid-read: nothing made from it, the texture left as it was (a re-upload keeps the old one)
+        free(c.cb); free(c.bl); if (mt != reuse) res_remove(mt);
+        RED_ONCE(117, "texture storage %p + %#x unreadable after its submission (the game took the memory back): the texture kept as it was", (void *)t->mem, t->size);
+        up_flush(); return nil;
     }
+    for (int i = 0; i < c.nbl; i++) up_blit_add(stg, c.bl[i].off, c.bl[i].row, c.bl[i].img, MTLSizeMake(c.bl[i].w, c.bl[i].h, c.bl[i].z), mt, c.bl[i].y, c.bl[i].l);
+    free(c.bl);
     up_flush();
     return mt;
 }

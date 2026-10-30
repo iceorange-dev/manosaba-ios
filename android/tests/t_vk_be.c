@@ -8,7 +8,7 @@
 // (both triangles of each); a program's own descriptor set in place of pushed descriptors (DM_VK_PUSH=0), a fresh set for each draw; a dispatch
 // (its workgroup counts in c0, a writable storage slot, a texture through an image slot, an image store read back from the texture).
 // -DDM_TEST_VK_EVENT_EARLY (event writes and reports landed when recorded): 2 fail; -DDM_TEST_VK_WINDING_SWAPPED (vk_draw.c's winding turned
-// around): 4 fail (the screenshot is of that target); -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first
+// around): 7 fail (the screenshot is of that target, the quad strips' three among them); -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first
 // set used again unwritten): 1 fails. 301e3: a pass the core continued (the same targets set again) goes on through a draw sampling another texture
 // and is ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 4 fail, with it the
 // barriers' split, the count of why passes ended and the passes timed). An inline uniform update between two draws keeps the pass open, the draw
@@ -26,7 +26,11 @@
 // held (the GPU's copy into it too), placed until the host gives that memory back: given back whole, nothing is copied and it reads zero when
 // mapped again; in part, the rest keeps its content; a new pool over one gone keeps what the game wrote since; past the cap of pools gone the
 // oldest is freed with its content (-DDM_TEST_VK_POOL_GONE_COPY, freed at once with its content as before: 3 fail;
-// -DDM_TEST_VK_POOL_GONE_DISCARD_PART, given back without its content when only part goes: 1 fails).
+// -DDM_TEST_VK_POOL_GONE_DISCARD_PART, given back without its content when only part goes: 1 fails). A texture whose storage the game took back
+// before its upload (plan item 290): the read is caught and nothing uploaded, the process going on, and it is uploaded once the storage is back
+// (-DDM_TEST_VK_UPLOAD_UNGUARDED, read as before: 1 fails, the fault caught by the test itself). Quad strips (plan item 291, nvn_quad_strip.h),
+// pairs of vertices across the target, clockwise its front and back faces culled: 6 vertices cover it all, 5 only its left half (as triangle
+// strips they drew a triangle into the right half); indexed (16-bit) the same over a restart (-DDM_TEST_QS_ABC, a plain quad's order: 3 fail).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
@@ -36,6 +40,10 @@
 #include <android/native_window.h>
 #include "../../tex/nvn_deswizzle.h"
 #include "../nvn_tex.h"
+#include "../../gfx/nvn/core/guard.h"
+#include "../../host/uc.h"
+#include <setjmp.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,7 +56,15 @@ static int n, fail;
 uint64_t guest_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 uint64_t now_ns(void) { return guest_ns(); }   // (hle_os.c's: the pipelines' timing lines)
 ANativeWindow *front_android_window(void) { return NULL; }
-void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) { (void)fn; }   // (the host's crash.c; no guarded copies here)
+// (the host's crash.c: page faults handed to the registered hooks; one none takes ends the test, or jumps back to it where it expects one)
+static int (*g_fh[4])(void *addr, int is_write, void *uc); static int g_nfh;
+void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) { if (g_nfh < 4) g_fh[g_nfh++] = fn; }
+static sigjmp_buf g_fault_jb; static volatile int g_fault_armed;
+static void on_fault(int sig, siginfo_t *si, void *uc) {
+    for (int i = 0; i < g_nfh; i++) if (g_fh[i](si->si_addr, (int)((uc_esr(uc) >> 6) & 1), uc)) return;
+    if (g_fault_armed) { g_fault_armed = 0; siglongjmp(g_fault_jb, 1); }
+    signal(sig, SIG_DFL);
+}
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len)) { (void)fn; }   // (the same: nvn_dirty.c's, no pool is tracked here)
 static void (*g_unmap)(void *addr, size_t len);
 void dm_guest_unmap_register(void (*fn)(void *addr, size_t len)) { g_unmap = fn; }   // (hle_svc.c's: the test plays the host giving memory back)
@@ -102,6 +118,21 @@ static void rec_draw2(void *a) {
     target(&g_rt3); S.prog = &g_prog3; nvn_be_draw(&dw, NULL); nvn_be_pass_end();
     S.ubo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_ubo2, 256};
     target(&g_rt4); nvn_be_draw(&dw, NULL); nvn_be_pass_end();
+}
+// quad strips: 6 vertices into g_rtQ1, 5 into g_rtQ2, indexed 0 1 2 3 R 2 3 4 5 into g_rtQ3
+static tex_t g_rtQ1, g_rtQ2, g_rtQ3; static uint8_t *g_vbQ, *g_ibQ;
+static void rec_qstrip(void *a) {
+    (void)a; st_reset(); memset(&R, 0, sizeof R);
+    S.has_vp = 1; S.vp[0][2] = 64; S.vp[0][3] = 64; S.dr[0] = 0; S.dr[1] = 1; S.poly.cull = NVN_FACE_BACK; S.poly.front = NVN_FRONT_FACE_CW;
+    S.attr[0] = (va_st){NVN_FORMAT_RGBA32F, 0, 0}; S.nattr = 1; S.stream[0] = (vs_st){16, 0}; S.nstream = 1;
+    S.vbuf[0].address = (uint64_t)(uintptr_t)g_vbQ; S.vbuf[0].size = 96;
+    S.ubo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_ubo, 256}; S.tex[1][3] = 5 | (2ull << 20); S.prog = &g_prog;
+    p_draw d6 = {NVN_DRAW_PRIMITIVE_QUAD_STRIP, 0, 6, 1, 0}, d5 = {NVN_DRAW_PRIMITIVE_QUAD_STRIP, 0, 5, 1, 0};
+    target(&g_rtQ1); nvn_be_draw(&d6, NULL); nvn_be_pass_end();
+    target(&g_rtQ2); nvn_be_draw(&d5, NULL); nvn_be_pass_end();
+    S.restart_set = S.restart_en = 1; S.restart_idx = 0xffff;
+    p_draw_idx di = {NVN_DRAW_PRIMITIVE_QUAD_STRIP, NVN_INDEX_TYPE_UNSIGNED_SHORT, 9, 0, 0, 1, (uint64_t)(uintptr_t)g_ibQ};
+    target(&g_rtQ3); nvn_be_draw(NULL, &di); nvn_be_pass_end();
 }
 // a pass the core continues: draws 1 and 2 (another texture sampled) in one pass, draw 3 (its own attachment sampled, no channel written) after it
 static tex_t g_rtA; static uint64_t g_cont_passes, g_cont_pe[VK_PE_N]; static int g_cont_mark;
@@ -202,6 +233,7 @@ static void rec_dispatch(void *a) {
 }
 
 int main(void) {
+    { struct sigaction sa = {.sa_sigaction = on_fault, .sa_flags = SA_SIGINFO}; sigemptyset(&sa.sa_mask); sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL); }
     setvbuf(stdout, NULL, _IONBF, 0); setenv("DM_VK_PASS_GPU", "1", 1);
     P = mmap(NULL, 4 << 20, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     for (int i = 0; i < (4 << 20); i++) P[i] = (uint8_t)(i * 7 + (i >> 12));
@@ -286,6 +318,18 @@ int main(void) {
     const uint8_t *c3 = q3 + (32 * 64 + 32) * 4, *c4 = q4 + (32 * 64 + 32) * 4;
     CHECK(c3[1] == 255 && c3[3] == 255 && c4[1] == 0 && c4[2] == 255 && c4[3] == 255,
           "a program with a set of its own (DM_VK_PUSH=0): each draw its own uniform, (%u, %u, %u) then (%u, %u, %u)", c3[0], c3[1], c3[2], c4[0], c4[1], c4[2]);
+    // quad strips: pairs across the target at x = -1, 0, 1 (the bottom, then the top of each)
+    g_rtQ1 = tex2d(P + 0x280000, 64, 64, NVN_FORMAT_RGBA8); g_rtQ2 = tex2d(P + 0x290000, 64, 64, NVN_FORMAT_RGBA8); g_rtQ3 = tex2d(P + 0x2A0000, 64, 64, NVN_FORMAT_RGBA8);
+    g_vbQ = P + 0x3F0500; g_ibQ = P + 0x3F0600;
+    for (int i = 0; i < 6; i++) { float v[4] = {(float)(i / 2) - 1, (i & 1) ? 1.0f : -1.0f, 0, 1}; memcpy(g_vbQ + 16 * i, v, 16); }
+    const uint16_t iq[9] = {0, 1, 2, 3, 0xffff, 2, 3, 4, 5}; memcpy(g_ibQ, iq, sizeof iq);
+    f = run(rec_qstrip, NULL); mtl_wait(f, UINT64_MAX);
+    static uint8_t qa[64 * 64 * 4], qb[64 * 64 * 4], qc[64 * 64 * 4];
+    mtl_read_texels(&g_rtQ1, 0, 0, &all, qa, 256, 0); mtl_read_texels(&g_rtQ2, 0, 0, &all, qb, 256, 0); mtl_read_texels(&g_rtQ3, 0, 0, &all, qc, 256, 0);
+    int na = 0, nbl = 0, nbr = 0, nc = 0; for (int i = 0; i < 64 * 64; i++) { na += qa[4 * i + 3] == 255; nc += qc[4 * i + 3] == 255; if (qb[4 * i + 3] == 255) { if (i % 64 < 32) nbl++; else nbr++; } }
+    CHECK(na == 64 * 64, "a quad strip of 6 vertices, its quads clockwise and back faces culled: the whole target (%d pixels)", na);
+    CHECK(nbl == 32 * 64 && nbr == 0, "... of 5: the left quad only, nothing in the right half (%d, %d pixels)", nbl, nbr);
+    CHECK(nc == 64 * 64, "... indexed 0 1 2 3 R 2 3 4 5, restart at R: two strips, the whole target (%d pixels)", nc);
     // the same-target continuation
     g_rtA = tex2d(P + 0x370000, 64, 64, NVN_FORMAT_RGBA8); mtl_reg_tex(9, &g_rtA, NULL);
     f = run(rec_cont, NULL); mtl_wait(f, UINT64_MAX);
@@ -381,6 +425,16 @@ int main(void) {
     CHECK(vk_pool_kept() - k1 == 8 * pg4 && I[0] == 0x11 && I[15 * pg4] == 0x11, "past the cap of pools gone, the oldest is freed with its content (%llu bytes copied)",
           (unsigned long long)(vk_pool_kept() - k1));
     vk_pool_gone_cap(256u << 20);
+    // a texture whose storage the game took back before its upload (plan item 290)
+    uint8_t *T = mmap(NULL, 64 * 64 * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); memset(T, 0x2a, 64 * 64 * 4);
+    tex_t tg = tex2d(T, 64, 64, NVN_FORMAT_RGBA8); tg.serial = 9900; vk_img *gi = vk_tex(&tg);
+    vk_tex_counts tc0, tc1, tc2; vk_tex_stats(&tc0); uint64_t gf0 = guard_faults(); int crashed = 0;
+    mprotect(T, 64 * 64 * 4, PROT_NONE);
+    g_fault_armed = 1; if (sigsetjmp(g_fault_jb, 1)) crashed = 1; else vk_tex_upload_now(gi); g_fault_armed = 0;
+    vk_tex_stats(&tc1);
+    CHECK(gi && !crashed && guard_faults() - gf0 == 1 && tc1.up_n == tc0.up_n, "a texture whose storage was taken back: its read caught, nothing uploaded, the process going on (crashed %d)", crashed);
+    if (!crashed) { mprotect(T, 64 * 64 * 4, PROT_READ | PROT_WRITE); vk_tex_upload_now(gi); vk_tex_stats(&tc2);
+        CHECK(tc2.up_n == tc1.up_n + 1, "... uploaded once its storage is back (%llu uploads)", (unsigned long long)(tc2.up_n - tc0.up_n)); }
     VkFormat vf; VkComponentMapping cm;
     CHECK(vk_fmt(0x25, &vf, &cm) == 1 && vf == VK_FORMAT_R8G8B8A8_UNORM && vk_fmt(0x41, &vf, &cm) == 1 && vf == VK_FORMAT_BC1_RGB_UNORM_BLOCK &&
           vk_fmt(0x94, &vf, NULL) == 1 && vf == VK_FORMAT_ASTC_12x12_SRGB_BLOCK && vk_fmt(0x7E, &vf, NULL) == 1 && vf == VK_FORMAT_ASTC_8x5_UNORM_BLOCK &&

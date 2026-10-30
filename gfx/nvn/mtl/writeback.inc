@@ -40,10 +40,15 @@ static int gpu_owned(uint64_t ser) {
     pthread_mutex_lock(&g_cpuf_mu); int r = g_gpu_owned && CFSetContainsValue(g_gpu_owned, (const void *)(uintptr_t)ser); pthread_mutex_unlock(&g_cpuf_mu);
     return r;
 }
-static int storage_filled(const tex_t *t) {
-    const uint64_t *w = (const uint64_t *)(const void *)t->mem; size_t nw = (size_t)t->size / 8;
-    for (size_t i = 0; i < nw; i++) if (w[i]) return 1;
-    return 0;
+typedef struct { const tex_t *t; int r; } filled_t;
+static void filled_run(void *c) {
+    filled_t *x = c; const uint64_t *w = (const uint64_t *)(const void *)x->t->mem; size_t nw = (size_t)x->t->size / 8;
+    for (size_t i = 0; i < nw; i++) if (w[i]) { x->r = 1; return; }
+}
+static int storage_filled(const tex_t *t) {   // its storage read under the guard (core/guard.h, plan item 290): taken back, it counts as not filled
+    filled_t x = {t, 0};
+    if (!guard_run(t->mem, t->size, filled_run, &x)) { RED_ONCE(117, "texture storage %p + %#x unreadable after its submission (the game took the memory back): the texture kept as it was", (void *)t->mem, t->size); return 0; }
+    return x.r;
 }
 static void cpuf_watch(const tex_t *t) {   // submit thread: protect the storage, so a later CPU write shows as dirty pages
     uint64_t st = nvn_dirty_protect_stamp(t->mem, t->size);

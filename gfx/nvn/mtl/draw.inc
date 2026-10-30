@@ -146,7 +146,7 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
     MTLPrimitiveType mp;
     switch (prim) {
         case 0: mp = MTLPrimitiveTypePoint; break; case 1: mp = MTLPrimitiveTypeLine; break; case 3: mp = MTLPrimitiveTypeLineStrip; break;
-        case 4: case 7: mp = MTLPrimitiveTypeTriangle; break; case 5: mp = MTLPrimitiveTypeTriangleStrip; break;
+        case 4: case 7: case 8: mp = MTLPrimitiveTypeTriangle; break; case 5: mp = MTLPrimitiveTypeTriangleStrip; break;   // quads and quad strips as triangles
         default: RED_ONCE(19, "primitive type %d not implemented", prim); return;
     }
     if (g_vis_counting) {   // Occlusion query counting: a new slot for this render pass (also switch to a new slot after a report / reset)
@@ -209,10 +209,31 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
             g_quad_ib = [g_dev newBufferWithBytes:ix length:n * 24 options:MTLResourceStorageModeShared]; g_quad_gpu = g_quad_ib.gpuAddress; res_add(g_quad_ib); free(ix);
         }
         if (dw->count >= 4) enc_r_draw_indexed(en, mp, (dw->count / 4) * 6, MTLIndexTypeUInt32, g_quad_gpu, g_quad_ib.length, dw->instances ? dw->instances : 1, dw->first, dw->base_instance);
+    } else if (dw && prim == NVN_DRAW_PRIMITIVE_QUAD_STRIP) {   // two triangles a pair of vertices (nvn_quad_strip.h), from shared indices in runs of QS_MAX quads
+        enum { QS_MAX = 65536 };
+        if (!g_qs_ib) {
+            uint32_t *ix = malloc((size_t)QS_MAX * 24); qs_indices(ix, QS_MAX);
+            g_qs_ib = [g_dev newBufferWithBytes:ix length:(size_t)QS_MAX * 24 options:MTLResourceStorageModeShared]; res_add(g_qs_ib); free(ix);
+        }
+        uint32_t nq = dw->count > 0 ? qs_quads((uint32_t)dw->count) : 0;
+        for (uint32_t at = 0; at < nq;) { uint32_t k = nq - at < QS_MAX ? nq - at : QS_MAX;
+            enc_r_draw_indexed(en, mp, (NSUInteger)k * 6, MTLIndexTypeUInt32, g_qs_ib.gpuAddress, g_qs_ib.length, dw->instances ? dw->instances : 1, dw->first + (int)(2 * at), dw->base_instance);
+            at += k; }
     } else if (dw) {
         if (dw->count) enc_r_draw_instanced(en, mp, dw->first, dw->count, dw->instances ? dw->instances : 1, dw->base_instance);
     } else {
         if (prim == 7) { RED_ONCE(20, "indexed quads not implemented"); return; }
+        if (prim == NVN_DRAW_PRIMITIVE_QUAD_STRIP) {   // its indices made triangles' in this submission's arena, restarts as NVN's (nvn_quad_strip.h)
+            unsigned width = di->itype == 2 ? 4 : di->itype == 1 ? 2 : 1; void *mb; uint64_t mo;
+            if (di->count < 4) return;
+            if (!mtl_addr(di->ibuf, (uint64_t)di->count * width, &mb, &mo)) { RED_ONCE(22, "index buffer is not in a memory pool"); return; }
+            if (pend_hits(di->ibuf, (uint64_t)di->count * width)) { RED_ONCE(118, "indexed quad strips whose indices the GPU wrote earlier in this submission: not drawn (first case %#llx)", (unsigned long long)di->ibuf); return; }
+            use_rec("buf", di->ibuf, (uint64_t)di->count * width, 0, NULL);
+            ARENA_OUT id<MTLBuffer> ab; size_t ao = arena_alloc((size_t)di->count * 12, &ab);
+            size_t k = qs_indexed((uint32_t *)((uint8_t *)ab.contents + ao), (const void *)(uintptr_t)di->ibuf, (uint32_t)di->count, width, S.restart_set && S.restart_en, S.restart_idx);
+            if (k) enc_r_draw_indexed(en, mp, k, MTLIndexTypeUInt32, g_cur_arena->gpu + ao, (NSUInteger)di->count * 12, di->instances ? di->instances : 1, di->base_vertex, di->base_instance);
+            return;
+        }
         // Primitive restart: NVN restarts any primitive where an index equals the restart index exactly (SDK: an 8-bit index never matches one outside
         // 0..255); Metal restarts only strips, only at the all-ones index of the index type, always. Until the game sets it nothing changes (its default
         // state is not documented). Strips whose restart index is not all-ones get their indices rewritten in this submission's arena; what cannot be

@@ -101,7 +101,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
             if (sub) pk->csub = g_sub_serial;
 #endif
             uint64_t now = nvn_dirty_now(), h = 0; int clean;
-            if (pk->hashed) { h = pkg_hash(t->mem, t->size); clean = h == pk->chash; }
+            if (pk->hashed) clean = !pkg_hash_guarded(t, &h) || h == pk->chash;   // (unreadable: the copy it has is kept)
             else {   // no guest write anywhere since the last check of a tracked texture: clean without looking its range up (a walk of all pools)
                 int st = now == pk->seen && pk->tracked ? 0 : nvn_dirty_state_hint(t->mem, t->size, pk->stamp, &pk->dspan);
                 clean = st == 0; pk->tracked = st != 2; pk->seen = now;
@@ -133,7 +133,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
         // seen: the upload's stamp, not the clock after it (here and at a re-upload above): a write released during the upload moved the clock, and
         // "the clock has not moved since seen" would have skipped its check (seedds/nxnative 5b0c11a, MIT)
         pk->seen = pk->stamp; g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->size);
-        if ((pk->hashed = pkg_hashed(t))) pk->chash = pkg_hash(t->mem, t->size); else pk->tracked = nvn_dirty_tracked(t->mem, t->size);
+        if ((pk->hashed = pkg_hashed(t))) { if (!pkg_hash_guarded(t, &pk->chash)) pk->chash = 0; } else pk->tracked = nvn_dirty_tracked(t->mem, t->size);
         if (on_sub_thread()) pk->csub = g_sub_serial;
         serial_put(t->serial, pk);
         return pk->tex;
