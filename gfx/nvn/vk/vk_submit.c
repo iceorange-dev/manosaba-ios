@@ -4,9 +4,13 @@
 // lands that submission's event writes and counter reports in command order, runs what was asked for after it (vk_after) and moves the done fence;
 // waits (mtl_wait) wait for the done fence. A slot is reused once its last submission is done. Counter reports: the counter half 0 at once and the
 // timestamp half from the guest clock at completion, as the null backend; samples passed a large constant until occlusion queries (301e3; nx2android
-// reports 2^20 the same way). Work outside a submission (uploads before the first, read-backs) has its own command buffers (vk_once_*).
+// reports 2^20 the same way). Work outside a submission (uploads before the first, read-backs) has its own command buffers (vk_once_*). Each
+// submission's command buffer writes a GPU timestamp at its start and its end; at completion the span goes to the core's GPU time of the frame
+// it was committed in (gpu_tag_begin / gpu_tag_done: the fps line's GPU time; the spans are on the GPU's clock, not the CPU's).
 #include "vk.h"
+#include "../core/frame.h"
 #include "../core/upd.h"
+#include "../core/usnap.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +20,7 @@ typedef struct {
     VkCommandPool pool; VkCommandBuffer cb; int begun;
     uint64_t fence;                                  // the submission it last held
     vk_post *post; int npost, postcap;
+    uint64_t gpu_f; int timed;                       // the frame it was committed in, its timestamps written
 } slot_t;
 static slot_t g_slot[NSLOT];
 static slot_t *g_cur;
@@ -24,6 +29,7 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g
 static uint64_t g_fence, g_done;                    // the newest committed and the newest completed (under g_mu)
 static after_t *g_after; static int g_nafter, g_aftercap;
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
+static VkQueryPool g_qp; static double g_ts_s; static uint64_t g_ts_mask;   // two timestamps a slot; seconds a tick
 
 static uint64_t gpu_ticks(void) { return guest_ns() * 12 / 625; }   // the guest's 19.2 MHz counter
 static void land(const vk_post *o) {
@@ -39,6 +45,14 @@ static void *completion(void *unused) {
         VkResult r = vkWaitSemaphores(V.dev, &wi, UINT64_MAX);
         if (r != VK_SUCCESS) VDIE("waiting for submission %llu: %d (device lost?)", (unsigned long long)next, (int)r);
         slot_t *s = &g_slot[next % NSLOT];
+#ifndef DM_TEST_VK_TS_NONE   // negative control of t_vk_be only: no GPU time handed on
+        if (s->timed) {
+            uint64_t t[2] = {0, 0}; uint32_t q = 2 * (uint32_t)(s - g_slot);
+            if (vkGetQueryPoolResults(V.dev, g_qp, q, 2, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) != VK_SUCCESS) t[0] = t[1] = 0;
+            gpu_tag_done(s->gpu_f, (double)(t[0] & g_ts_mask) * g_ts_s, (double)(t[1] & g_ts_mask) * g_ts_s);
+        }
+#endif
+        s->timed = 0;
         for (int i = 0; i < s->npost; i++) land(&s->post[i]);
         s->npost = 0;
         pthread_mutex_lock(&g_mu);
@@ -61,6 +75,11 @@ static void init(void) {
         VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = g_slot[i].pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
         VK(vkAllocateCommandBuffers(V.dev, &ai, &g_slot[i].cb));
     }
+    if (V.ts_bits && V.props.limits.timestampPeriod > 0) {
+        VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = 2 * NSLOT};
+        VK(vkCreateQueryPool(V.dev, &qi, NULL, &g_qp));
+        g_ts_s = V.props.limits.timestampPeriod * 1e-9; g_ts_mask = V.ts_bits >= 64 ? UINT64_MAX : (1ull << V.ts_bits) - 1;
+    } else VLOG("[red] the queue has no timestamps: no GPU time");
     pthread_t th; if (pthread_create(&th, NULL, completion, NULL)) VDIE("cannot start the completion thread"); pthread_detach(th);
 }
 
@@ -78,6 +97,7 @@ VkCommandBuffer vk_cb(void) {
     if (!g_cur->begun) {
         VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         VK(vkBeginCommandBuffer(g_cur->cb, &bi)); g_cur->begun = 1;
+        if (g_qp) { uint32_t q = 2 * (uint32_t)(g_cur - g_slot); vkCmdResetQueryPool(g_cur->cb, g_qp, q, 2); vkCmdWriteTimestamp2(g_cur->cb, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, g_qp, q); }
         vk_barrier_all(g_cur->cb);   // after whatever ran before (uploads of their own, the previous submission)
     }
     return g_cur->cb;
@@ -95,6 +115,10 @@ uint64_t mtl_sub_commit(void) {
     slot_t *s = g_cur; if (!s) VDIE("commit without a submission");
     vk_upd_flush(); upd_sub_end();   // renamed uniform updates reach memory at the end of their submission
     vk_pass_end_now();
+    if (s->begun && g_qp) {   // (an empty submission has no GPU time)
+        vkCmdWriteTimestamp2(s->cb, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, g_qp, 2 * (uint32_t)(s - g_slot) + 1);
+        s->gpu_f = atomic_load(&g_cur_frame); gpu_tag_begin(s->gpu_f); s->timed = 1;
+    }
     if (s->begun) VK(vkEndCommandBuffer(s->cb));
     pthread_mutex_lock(&g_mu); uint64_t f = g_fence + 1; pthread_mutex_unlock(&g_mu);
     VkCommandBufferSubmitInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = s->cb};
@@ -106,6 +130,9 @@ uint64_t mtl_sub_commit(void) {
     pthread_mutex_lock(&g_mu); g_fence = f; pthread_cond_broadcast(&g_cv); pthread_mutex_unlock(&g_mu);
     return f;
 }
+// The interface layer's frame number at each present (the Metal backend's mtl_set_frame): the frame a commit's GPU time counts in, and the core's
+// lines every 300 frames (uniform snapshots, renamed updates)
+void mtl_set_frame(uint64_t f) { atomic_store(&g_cur_frame, f); us_report(f); ren_report(f); }
 uint64_t nvn_be_sub_fence(void) { return vk_cur_fence(); }
 uint64_t mtl_done_fence(void) { pthread_mutex_lock(&g_mu); uint64_t d = g_done; pthread_mutex_unlock(&g_mu); return d; }
 uint64_t mtl_last_fence(void) { pthread_mutex_lock(&g_mu); uint64_t f = g_fence; pthread_mutex_unlock(&g_mu); return f; }

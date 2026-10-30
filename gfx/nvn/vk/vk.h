@@ -13,6 +13,7 @@
 //   vk_bind.c     what a program's shaders bind: uniform, storage and driver banks, textures, images, samplers, pushed or in a set (vk_bind.h)
 //   vk_draw.c     draws and dispatches: the pass (dynamic rendering), pipelines, the dynamic state
 //   vk_present.c  the swapchain on the app's window and the present of the game's window texture
+//   vk_shot.c     screenshots of presented frames (DM_NVN_SHOT, the command channel's shot) as PNGs
 #pragma once
 #include <pthread.h>
 #include <stdatomic.h>
@@ -34,7 +35,7 @@ typedef struct {
     pthread_mutex_t qmu;                                   // the queue is the game's and the present's: one submit at a time
     // what was taken
     int placed, unmap_reserve, push_ds, custom_border, vi_dyn, eds2, depth_clip_ctl, robust2, bc, android_surface, idx8;
-    uint32_t max_push_ds;
+    uint32_t max_push_ds, ts_bits;                       // ts_bits: the queue family's valid timestamp bits (0: none)
     PFN_vkMapMemory2KHR map2; PFN_vkUnmapMemory2KHR unmap2; PFN_vkCmdPushDescriptorSetKHR push;
 } vk_ctx;
 extern vk_ctx V;
@@ -91,3 +92,4 @@ void vk_land_clears(void);                      // vk_ops.c: R's pending clears 
 
 // vk_present.c
 void vk_window_gone(void);                      // the app's window is going: the swapchain dropped first (front_android.c, main thread)
+void vk_shot_present(const tex_t *t, const int crop[4]);   // vk_shot.c: at each present, the screenshots due

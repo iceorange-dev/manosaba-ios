@@ -79,6 +79,7 @@ uint64_t mtl_present(const tex_t *t, double period_s, const int crop[4]) {
     (void)period_s; mtl_init();
     static uint64_t calls; if (!(++calls % 600)) vk_stats_line();
     vk_img *im = vk_tex(t); if (!im) { g_drops++; return 0; }
+    vk_shot_present(t, crop);   // (with a window or without)
     ANativeWindow *w = front_android_window();
     pthread_mutex_lock(&g_mu);
     if (!w) { drop_locked(); pthread_mutex_unlock(&g_mu); g_drops++; return 0; }

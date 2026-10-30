@@ -43,7 +43,8 @@ own, shown over the lock screen: HyperOS allows it with its "show on lock screen
 without it is reported as skipped). `android/run.sh` builds, installs and runs the app by hand; `t_vk_be` tests the Vulkan backend there.
 The APK carries the Vulkan shader bundle (`DM_GAME=manosaba gfx/tools/dmsh_vk.py work/shextract work/build/android/manosaba.dmvk`, DM_ROOT the
 workspace; again after a change of the game's shaders or of dmsh_vk.py; `tools/tests/t_dmsh_vk.py` checks the workspace's). To play on the
-phone without touching it, `work/scripts/android_live.sh start [<save dir>]`, `key <name>...`, `shot <png>`, `stop [<boot.txt>]` drive the app
+phone without touching it, `work/scripts/android_live.sh start [<save dir>]`, `key <name>...`, `shot <png>` (the game's frame, vk_shot.c),
+`screen <png>` (the screen), `stop [<boot.txt>]` drive the app
 through its command channel (DM_CMD, host/front/cmdchan.c) with a test save of its own (a copy of the given save; HyperOS's pocket mode takes
 touches while the phone's top is covered, the channel's keys are not touches).
 
@@ -357,11 +358,11 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   reads that this one does not write (pipeline creation fails), more than about 700 draws in one command buffer (nx2android cuts at 128),
   LRZ across passes, subgroup instructions in called functions (the 750-799 compiler), subgroups (64 lanes, none in vertex shaders on the
   840: the warp32 rewrite), 284's items.
-  301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the other TBDR rewrites (the
-  same-target continuation and renamed uniform updates are on since batch 129: a pass for 2.7 draws in the prologue, 1.5 in the first trial;
-  what still ends the trial's passes to be counted) and the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation,
-  screenshots (the command channel's shot), the readings; the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when
-  presents become submissions of their own.
+  301e3 the rest of the set: samples passed by occlusion queries and the counter reports' timestamps from the GPU (each submission's GPU span
+  is measured since batch 130, for the fps line), layered passes, the other TBDR rewrites (the same-target continuation and renamed uniform
+  updates are on since batch 129: a pass for 2.7 draws in the prologue, 1.5 in the first trial; what still ends the trial's passes to be
+  counted) and the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth);
+  the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
@@ -952,3 +953,15 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   app 40 s at 60 fps, 4 save commits; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182 (after the fix, twice),
   sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, its shots near batch 128's; manosaba's as
   batch 128's.
+- [x] batch 130 · 301e3 part: screenshots and GPU time on Vulkan.
+  - `vk_shot.c`: DM_NVN_SHOT and the command channel's shot as on Metal: at that present the window texture's crop read back and written as
+    an RGB PNG (zlib), window or not (the game's picture, not the screen's: `android_live.sh shot`; `screen` keeps adb's screencap). The app
+    smoke writes frame 1800 (s1800.png), compared with the previous batch's from the next batch on (the title, looked at).
+  - `vk_submit.c`: a timestamp at each submission's start and end (a query pool of two a slot), the span handed to the core's GPU time of
+    the frame it was committed in; `mtl_set_frame` sets that frame (it was a stub: every span had counted for frame 0, the fps line said
+    "GPU –") and gives the core's 300-frame lines (uniform snapshots, renamed updates). The prologue: 60 fps · GPU 3.4 ms on the K100.
+  Tests: on the phone `t_vk_be` 25 (a shot of the presented target read back from its PNG: `-DDM_TEST_VK_SHOT_FLIPPED` 1 fails; a frame's GPU
+  time: `-DDM_TEST_VK_TS_NONE` 1 fails; the winding control fails 4 now, the shot being of its target: the batch's run expected 3, the one
+  failure of this batch, run again after). The app 40 s at 60 fps, 4 save commits; the headless run 40 s. gfx 153 / 153 on Metal 4 and
+  Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frame 1300 the
+  same scene a moment later (looked at); manosaba's shots as batch 129's.

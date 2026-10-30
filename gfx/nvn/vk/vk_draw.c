@@ -19,7 +19,7 @@
 #include <string.h>
 
 int exec_draw_dropped(void);   // core/exec.c: rendering off, no program, empty depth bounds
-static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches, g_lines;
+static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches;
 
 // ---------- The pass ----------
 static struct { int open, n; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;
@@ -424,5 +424,4 @@ void vk_stats_line(void) {
          (unsigned long long)g_draws, (unsigned long long)g_dispatches, (unsigned long long)g_dropped, (unsigned long long)g_passes, (unsigned long long)g_pipes,
          (unsigned long long)vk_bind_zeros(), (unsigned long long)c.live, c.live_bytes / 1e6, (unsigned long long)c.made, (unsigned long long)c.up_n, c.up_bytes / 1e6,
          (unsigned long long)c.reup_n);
-    ren_report(300 * (++g_lines));   // the core's renamed uniform update line (core/upd.c), since the last
 }

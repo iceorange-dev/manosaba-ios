@@ -34,6 +34,7 @@ static void init(void) {
     VkQueueFamilyProperties *qfp = calloc(nqf, sizeof *qfp); vkGetPhysicalDeviceQueueFamilyProperties(V.pd, &nqf, qfp);
     V.qf = UINT32_MAX;
     for (uint32_t i = 0; i < nqf && V.qf == UINT32_MAX; i++) if ((qfp[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) V.qf = i;
+    if (V.qf != UINT32_MAX) V.ts_bits = qfp[V.qf].timestampValidBits;
     free(qfp); if (V.qf == UINT32_MAX) VDIE("no queue family draws and computes");
     uint32_t nde = 0; vkEnumerateDeviceExtensionProperties(V.pd, NULL, &nde, NULL);
     VkExtensionProperties *de = calloc(nde ? nde : 1, sizeof *de); vkEnumerateDeviceExtensionProperties(V.pd, NULL, &nde, de);

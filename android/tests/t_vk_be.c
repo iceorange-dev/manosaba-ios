@@ -8,15 +8,18 @@
 // (both triangles of each); a program's own descriptor set in place of pushed descriptors (DM_VK_PUSH=0), a fresh set for each draw; a dispatch
 // (its workgroup counts in c0, a writable storage slot, a texture through an image slot, an image store read back from the texture).
 // -DDM_TEST_VK_EVENT_EARLY (event writes and reports landed when recorded): 2 fail; -DDM_TEST_VK_WINDING_SWAPPED (vk_draw.c's winding
-// turned around): 3 fail; -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first set used again
+// turned around): 4 fail (the screenshot is of that target); -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first set used again
 // unwritten): 1 fails. 301e3: a pass the core continued (the same targets set again) goes on through a draw sampling another texture and is
 // ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 1 fails). An inline
 // uniform update between two draws keeps the pass open, the draw before it reading the old bytes and the one after the new (a private copy over
-// the core's snapshot), and reaches memory when the submission ends (-DDM_TEST_VK_UB_NO_SHADOW, no private copies: 1 fails).
+// the core's snapshot), and reaches memory when the submission ends (-DDM_TEST_VK_UB_NO_SHADOW, no private copies: 1 fails). A screenshot of
+// the presented texture (the command channel's shot, no window here) read back as a PNG (-DDM_TEST_VK_SHOT_FLIPPED, rows bottom first: 1 fails).
+// The GPU time of the frame a submission was committed in (its timestamps; -DDM_TEST_VK_TS_NONE, not handed on: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
 #include "../../gfx/nvn/core/usnap.h"
+#include "../../gfx/nvn/core/frame.h"
 #include <android/native_window.h>
 #include "../../tex/nvn_deswizzle.h"
 #include "../nvn_tex.h"
@@ -24,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <zlib.h>
 static int n, fail;
 #define CHECK(c, ...) do { n++; if (c) printf("  ✓ "); else { fail++; printf("  ✗ "); } printf(__VA_ARGS__); printf("\n"); } while (0)
 
@@ -46,8 +50,8 @@ static volatile uint32_t g_ev = 5; static uint64_t g_ts[2];
 static void rec_event(void *a) {
     (void)a; nvn_be_signal_event(&g_ev, 0, 7); uint64_t rep[2] = {NVN_COUNTER_TYPE_TIMESTAMP, (uint64_t)(uintptr_t)g_ts}; nvn_be_report_counter(NULL, rep);
 }
-static uint8_t g_ub[256];
-static void rec_ub(void *a) { (void)a; nvn_be_update_ub(g_ub, (uint64_t)(uintptr_t)(P + (2 << 20)), sizeof g_ub); }
+static uint8_t g_ubytes[256];
+static void rec_ub(void *a) { (void)a; nvn_be_update_ub(g_ubytes, (uint64_t)(uintptr_t)(P + (2 << 20)), sizeof g_ubytes); }
 static tex_t g_t, g_t2; static p_copy_b2t g_c;
 static void rec_b2t(void *a) { (void)a; nvn_be_copy_b2t(&g_c); }
 static void rec_t2b(void *a) { (void)a; nvn_be_copy_t2b(&g_c); }
@@ -99,6 +103,23 @@ static void rec_cont(void *a) {
     nvn_be_draw(&dw, NULL);
     g_cont_passes = vk_pass_count() - p0; nvn_be_pass_end(); g_cont_mark = g_rt_merged;
 }
+// an 8-bit RGB PNG of filter 0 rows (vk_shot.c's) read back
+static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+static int png_read(const char *path, uint32_t *w, uint32_t *h, uint8_t **rgb) {
+    FILE *f = fopen(path, "rb"); if (!f) return 0;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); uint8_t *b = malloc((size_t)n); int ok = fread(b, 1, (size_t)n, f) == (size_t)n; fclose(f);
+    if (!ok || n < 33 || memcmp(b, "\x89PNG\r\n\x1a\n", 8)) { free(b); return 0; }
+    uint8_t *idat = NULL; size_t ni = 0; *w = *h = 0;
+    for (long o = 8; o + 12 <= n; o += 12 + (long)be32(b + o)) {
+        uint32_t len = be32(b + o); const uint8_t *t = b + o + 4;
+        if (!memcmp(t, "IHDR", 4)) { *w = be32(b + o + 8); *h = be32(b + o + 12); if (b[o + 16] != 8 || b[o + 17] != 2) { free(b); return 0; } }
+        else if (!memcmp(t, "IDAT", 4)) { idat = realloc(idat, ni + len); memcpy(idat + ni, b + o + 8, len); ni += len; }
+    }
+    uLongf rn = (uLongf)(*w * 3 + 1) * *h; uint8_t *raw = malloc(rn ? rn : 1); ok = *w && *h && uncompress(raw, &rn, idat, ni) == Z_OK;
+    *rgb = malloc((size_t)*w * 3 * *h);
+    for (uint32_t y = 0; ok && y < *h; y++) { ok = raw[(size_t)y * (*w * 3 + 1)] == 0; memcpy(*rgb + (size_t)y * *w * 3, raw + (size_t)y * (*w * 3 + 1) + 1, (size_t)*w * 3); }
+    free(raw); free(idat); free(b); return ok;
+}
 // two draws of one pass with an inline uniform update between them; the range has a snapshot, as the core makes at the submission's start
 static tex_t g_rtU; static uint8_t *g_ubo3, *g_vb3; static uint64_t g_upd_passes;
 static void rec_upd(void *a) {
@@ -140,8 +161,8 @@ int main(void) {
     CHECK(g_ts[0] == 0 && g_ts[1] == UINT64_MAX, "a timestamp report: its counter half 0 at once, its time not yet");
     f = mtl_sub_commit(); mtl_wait(f, UINT64_MAX);
     CHECK(g_ev == 7 && g_ts[1] != UINT64_MAX && mtl_done_fence() >= f, "both land at completion (event %u, done fence %llu)", g_ev, (unsigned long long)mtl_done_fence());
-    for (int i = 0; i < 256; i++) g_ub[i] = (uint8_t)(255 - i);
-    f = run(rec_ub, NULL); memset(g_ub, 0, sizeof g_ub); mtl_wait(f, UINT64_MAX);   // (the game may reuse its bytes once recorded)
+    for (int i = 0; i < 256; i++) g_ubytes[i] = (uint8_t)(255 - i);
+    f = run(rec_ub, NULL); memset(g_ubytes, 0, sizeof g_ubytes); mtl_wait(f, UINT64_MAX);   // (the game may reuse its bytes once recorded)
     int ok = 1; for (int i = 0; i < 256; i++) ok &= P[(2 << 20) + i] == (uint8_t)(255 - i);
     CHECK(ok, "an inline uniform update lands its bytes as they were when recorded");
     // a 64x64 RGBA8 texture: buffer → texture → buffer
@@ -175,7 +196,8 @@ int main(void) {
                                                 NVN_WRAP_MODE_CLAMP_TO_EDGE, 0, 0, 0, 0, 1000, 0, 1, {0, 0, 0, 0}}; mtl_reg_samp(2, &sp);
     memset(&g_prog, 0, sizeof g_prog); g_prog.nstage = 2; g_prog.kstage[0] = 0; g_prog.kstage[1] = 1;
     memcpy(g_prog.key[0], "\x74\x65\x73\x74\x00\x00\x00\x01", 8); memcpy(g_prog.key[1], "\x74\x65\x73\x74\x00\x00\x00\x02", 8);
-    f = run(rec_draw, NULL); mtl_wait(f, UINT64_MAX);
+    atomic_store(&g_cur_frame, 7); f = run(rec_draw, NULL); mtl_wait(f, UINT64_MAX); double gms = mtl_gpu_ms(7); atomic_store(&g_cur_frame, 0);
+    CHECK(gms > 0 && gms < 100, "the GPU time of the frame the draw's submission was committed in, from its timestamps: %.3f ms", gms);
     uint8_t px[64 * 64 * 4]; memset(px, 0x55, sizeof px); NVNcopyRegion all = {0, 0, 0, 64, 64, 1}; mtl_read_texels(&g_rt, 0, 0, &all, px, 256, 0);
     const uint8_t *top = px + (16 * 64 + 32) * 4, *bot = px + (48 * 64 + 32) * 4;
     CHECK(top[3] == 255, "a quad of NVN's counter-clockwise winding is drawn with back faces culled (alpha %u)", top[3]);
@@ -183,6 +205,14 @@ int main(void) {
           bot[0], bot[1], bot[2], bot[3]);
     CHECK(top[0] == 0 && top[1] == 255 && (top[2] == 127 || top[2] == 128) && top[3] == 255,
           "the pixel shader's uniform slot 0 and texture slot 3 (pool ID 5, sampler ID 2) are found through its moved bindings: (%u, %u, %u, %u)", top[0], top[1], top[2], top[3]);
+    // a screenshot of the presented target, as a PNG
+    unlink("t_shot.png"); dm_gfx_shot_at(0, "t_shot.png"); const int crop[4] = {0, 0, 64, 64}; mtl_present(&g_rt, 1.0 / 60, crop);
+    uint32_t sw = 0, shh = 0; uint8_t *sp_rgb = NULL; int got = png_read("t_shot.png", &sw, &shh, &sp_rgb);
+    const uint8_t *st_ = got ? sp_rgb + (16 * 64 + 32) * 3 : NULL, *sb_ = got ? sp_rgb + (48 * 64 + 32) * 3 : NULL;
+    CHECK(got && sw == 64 && shh == 64 && st_[0] == 0 && st_[1] == 255 && (st_[2] == 127 || st_[2] == 128) && !sb_[0] && !sb_[1] && !sb_[2],
+          "a screenshot of the presented texture (no window): a 64 x 64 PNG, the drawn upper half and the cleared lower half as drawn (%u %u %u / %u %u %u)",
+          got ? st_[0] : 0, got ? st_[1] : 0, got ? st_[2] : 0, got ? sb_[0] : 0, got ? sb_[1] : 0, got ? sb_[2] : 0);
+    free(sp_rgb); unlink("t_shot.png");
     // indexed quads over the whole target; the second program with a set of its own, a fresh one at each draw
     uint8_t *rt2_mem = P + 0x3C0000, *rt3_mem = P + 0x3D0000, *rt4_mem = P + 0x3E0000; g_vb2 = P + 0x3F0000; g_ib = P + 0x3F0100; g_ubo2 = P + 0x3F0200;
     g_rt2 = tex2d(rt2_mem, 64, 64, NVN_FORMAT_RGBA8); g_rt3 = tex2d(rt3_mem, 64, 64, NVN_FORMAT_RGBA8); g_rt4 = tex2d(rt4_mem, 64, 64, NVN_FORMAT_RGBA8);
