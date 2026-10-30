@@ -1,7 +1,8 @@
 // Unit tests for the compatible texture views of tex_fit (nvn_tex_fit.h): which pairs get a view and how many slices, worked out by hand; then on
 // the GPU, a kernel that declares the shader's type reads the view and must see the right slice: 2D array (3 layers) as 2D reads layer 0, 2D as
 // a 2D array reads it, 2D array (8 layers) as a cube reads face 3 = layer 3, 2D array (13 layers) as a cube array reads cube 1 face 2 = layer 8,
-// and a 2D array view with a swizzle (as tex_by_id builds them) keeps the swizzle through the compatible view. Run with MTL_DEBUG_LAYER=1.
+// and a 2D array view with a swizzle (as tex_by_id builds them) keeps the swizzle through the compatible view; a view of a view is made from the
+// texture under it, at its slice (-DDM_TEST_FIT_FROM_VIEW, from the view as before: 1 fails). Run with MTL_DEBUG_LAYER=1.
 #import "../nvn/nvn_tex_fit.h"
 #include <stdio.h>
 
@@ -61,6 +62,11 @@ int main(void) { @autoreleasepool {
                                                  swizzle:MTLTextureSwizzleChannelsMake(MTLTextureSwizzleBlue, MTLTextureSwizzleGreen, MTLTextureSwizzleRed, MTLTextureSwizzleAlpha)];
     id<MTLTexture> v5 = nvn_tex_fit_view(sw, MTLTextureType2D, 1);
     run(@"k2d", v5, v); t("GPU: a swizzled 2D array as 2D keeps the swizzle (r = 200, b = 10)", v5 && v[0] == 200 && v[2] == 10);
+    // A view of slices 1-2, then the compatible 2D view of it: made from the texture under it at slice 1 (plan item 296)
+    id<MTLTexture> sub = [a3 newTextureViewWithPixelFormat:a3.pixelFormat textureType:MTLTextureType2DArray levels:NSMakeRange(0, 1) slices:NSMakeRange(1, 2)];
+    id<MTLTexture> v6 = nvn_tex_fit_view(sub, MTLTextureType2D, 1);
+    run(@"k2d", v6, v); t("GPU: a view of slices 1-2 as 2D reads slice 1 (30)", v6 && v[0] == 30);
+    t("... the view made from the texture under it, at slice 1 (not a view of a view)", v6.parentTexture == a3 && v6.parentRelativeSlice == 1);
     printf("== %d checks, %d failed ==\n", total, fail);
     return fail != 0;
 } }

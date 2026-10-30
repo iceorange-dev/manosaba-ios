@@ -5,6 +5,11 @@ NVN(nvnMemoryPoolBuilderSetDevice, void, NVNmemoryPoolBuilder *b, NVNdevice *d) 
 NVN(nvnMemoryPoolBuilderSetStorage, void, NVNmemoryPoolBuilder *b, void *m, size_t n) { ((pool_builder_t *)b)->mem = m; ((pool_builder_t *)b)->size = n; }
 NVN(nvnMemoryPoolBuilderSetFlags, void, NVNmemoryPoolBuilder *b, int f) { ((pool_builder_t *)b)->flags = f; }
 NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBuilder *b) {
+    // The backend's setup (a Metal buffer over the memory, or on Vulkan device memory made and filled; the dirty tracking's protection) gives the
+    // core up: the game's loader threads held one through it (valentderah/totk-pc-recomp 101f2c8, MIT: up to 20 ms; plan item 297)
+#ifndef DM_TEST_POOL_KEEPS_CORE   // negative control of t_pools only: the core kept, as before
+    NVN_BLOCKING();
+#endif
     const pool_builder_t *s = (const pool_builder_t *)b; pool_t *o = (pool_t *)p;
     o->magic = MAGIC('P', 'O', 'O', 'L'); o->flags = s->flags; o->mem = s->mem; o->size = s->size;
     if (o->mem) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }

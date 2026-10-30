@@ -212,11 +212,6 @@ static void read_texels(const tex_t *o, const view_t *v, const NVNcopyRegion *r,
 // ModuleSystemWorker threads while the Presentation Thread submits (a crash inside a copy encoder at a scene load had been seen on the Mac with the
 // earlier check-only version), so these entries take one recursive lock. The first wait is logged once, naming both threads.
 __attribute__((weak)) int thr_name_of(pthread_t pt, char *out, size_t n) { (void)pt; (void)out; (void)n; return 0; }   // host hle_thread.c (guest thread names); the graphics unit tests have none
-// A guest thread waiting here (GPU, display, replay, shader loading) gives its virtual core back meanwhile (host hle_thread.c, game.json virtual_cores; as
-// MacNativeGames' NVN_BLOCKING). Weak defaults for the graphics unit tests, which have no guest threads
-__attribute__((weak)) int dm_core_away(void) { return 0; }
-__attribute__((weak)) void dm_core_back(int *away) { (void)away; }
-#define NVN_BLOCKING() __attribute__((cleanup(dm_core_back))) int nvn_core_away_ = dm_core_away()
 static pthread_mutex_t g_gfx_mu; static pthread_once_t g_gfx_mu_once = PTHREAD_ONCE_INIT;
 static uint64_t g_gfx_tid; static const char *g_gfx_what; static char g_gfx_name[96];   // the holder (written under the lock)
 static void gfx_mu_init(void) { pthread_mutexattr_t a; pthread_mutexattr_init(&a); pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE); pthread_mutex_init(&g_gfx_mu, &a); pthread_mutexattr_destroy(&a); }

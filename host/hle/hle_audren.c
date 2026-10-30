@@ -120,17 +120,31 @@ HLE_FORCE_OPT("_ZN2nn5audio18CloseAudioRendererENS0_19AudioRendererHandleE", "cl
 // DeviceSink input mix buffers → int16 stereo. The command ID is 0x13 in SDK 16 and 0x14 in SDK 20 (written at sdk+0x233f44); SDK 8 has 0x10. The
 // layout is the same: 0x148 bytes, +0x20 device name ("MainAudioOut"), +0x128 upsample buffer, +0x130 input count, +0x134 input indices. When the
 // first full command list has no command with the expected ID, its only 0x148-byte command with 1 to 6 inputs is taken as the sink.
+// The list's n bytes are read field by field without typed loads (a command of an odd size leaves the next one unaligned) and each command must lie
+// within them: one running past the end ends the walk (seedds/nxnative ce99604, MIT; plan item 296)
 static int g_sink_id = 0x13;
-static int capture(const uint8_t *cl, int16_t *dst) {
-    uint32_t ncmd = *(const uint32_t *)(cl + 4), samples = *(const uint32_t *)(cl + 0x14), rate = *(const uint32_t *)(cl + 0x18);
-    const int32_t *mix = *(const int32_t *const *)(cl + 8);
+static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static int16_t rd16(const uint8_t *p) { int16_t v; memcpy(&v, p, 2); return v; }
+static int cmd_fits(const uint8_t *c, const uint8_t *end) {   // a command header there and its size within the list
+#ifndef DM_TEST_AUDREN_UNBOUNDED   // negative control of t_audren only: the extent not checked, as before
+    if (c > end || (size_t)(end - c) < 8) return 0;
+    int16_t sz = rd16(c + 6); return rd32(c) == 0xcafebabeu && sz >= 8 && (size_t)sz <= (size_t)(end - c);
+#else
+    (void)end; return rd32(c) == 0xcafebabeu && rd16(c + 6) > 0;
+#endif
+}
+static int capture(const uint8_t *cl, size_t n, int16_t *dst) {
+    if (n < 0x20) return 0;
+    const uint8_t *end = cl + n;
+    uint32_t ncmd = rd32(cl + 4), samples = rd32(cl + 0x14), rate = rd32(cl + 0x18);
+    const int32_t *mix; memcpy(&mix, cl + 8, sizeof mix);
     static int logged, hist_logged;
     if (!hist_logged && ncmd > 4) {   // first full command list: command ID histogram, and the sink ID check
         hist_logged = 1;
         int hist[64] = {0}, cand = -1, ncand = 0; const uint8_t *q = cl + 0x20; char line[512]; size_t o = 0;
-        for (uint32_t i = 0; i < ncmd && *(const uint32_t *)q == 0xcafebabeu && *(const int16_t *)(q + 6) > 0; i++) {
-            int16_t sz = *(const int16_t *)(q + 6); hist[q[5] & 63]++;
-            if (sz == 0x148 && *(const uint32_t *)(q + 0x130) - 1 < 6) { cand = q[5]; ncand++; }
+        for (uint32_t i = 0; i < ncmd && cmd_fits(q, end); i++) {
+            int16_t sz = rd16(q + 6); hist[q[5] & 63]++;
+            if (sz == 0x148 && rd32(q + 0x130) - 1 < 6) { cand = q[5]; ncand++; }
             q += sz;
         }
         for (int k = 0; k < 64; k++) if (hist[k]) o += snprintf(line + o, sizeof line - o, " %d×%d", k, hist[k]);
@@ -140,11 +154,12 @@ static int capture(const uint8_t *cl, int16_t *dst) {
     }
     const uint8_t *c = cl + 0x20;
     for (uint32_t i = 0; i < ncmd; i++) {
-        uint32_t magic = *(const uint32_t *)c; int16_t size = *(const int16_t *)(c + 6);
-        if (magic != 0xcafebabeu || size <= 0) { if (!logged++) LOG("[red] audren: command %u malformed (magic %#x size %d)", i, magic, size); return 0; }
+        if (!cmd_fits(c, end)) { if (!logged++) LOG("[red] audren: command %u malformed or past the list's end (offset %#zx of %#zx)", i, (size_t)(c - cl), n); return 0; }
+        int16_t size = rd16(c + 6);
         if (c[5] == g_sink_id && c[4]) {
-            uint32_t nin = *(const uint32_t *)(c + 0x130); const int16_t *in = (const int16_t *)(c + 0x134);
-            const int32_t *up = *(const int32_t *const *)(c + 0x128);
+            if (size < 0x134 + 12) { if (!logged++) LOG("[red] audren: DeviceSink command %u of %d bytes, too short", i, size); return 0; }
+            uint32_t nin = rd32(c + 0x130); int16_t in[6]; for (int j = 0; j < 6; j++) in[j] = rd16(c + 0x134 + 2 * j);
+            const int32_t *up; memcpy(&up, c + 0x128, sizeof up);
             if (!logged++) LOG("audren: DeviceSink %u inputs (%d %d ...) rate %u frame %u mix buffers %p upsample buffer %p", nin, nin ? in[0] : -1, nin > 1 ? in[1] : -1, rate, samples, (void *)mix, (void *)up);
             if (!nin || samples > FRAME_MAX) return 0;
             // Inputs: the mix buffers at 48 kHz; when rendering at 32 kHz DeviceSink reads the upsampled buffer (inputs in order)
@@ -209,7 +224,7 @@ static Result render_once(uint8_t *sys, int16_t *dst, int *nout) {
     atomic_fetch_add(&g_renders, 1);
     uint64_t proc[16] __attribute__((aligned(16))) = {0};   // CommandListProcessor (0x58 bytes)
     tmax(proc, 0xffffffffu); setup(proc, cl, n); process(proc);
-    if (dst) *nout = capture(cl, dst);
+    if (dst) *nout = capture(cl, n, dst);
     // render time per frame (budget 5 ms): mean / max every 2000 frames; and the gaps between frame starts (the renderer event's pacing: the real
     // renderer makes one every 5 ms; SkyRecomp 0620de9 found a sound card callback handing back several buffers at once, 53 of 79 gaps under 1 ms)
     static uint64_t sum, mx, cnt, last, gaps[5]; uint64_t d = now_ns() - t0; sum += d; if (d > mx) mx = d;

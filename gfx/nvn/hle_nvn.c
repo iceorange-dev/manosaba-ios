@@ -35,6 +35,14 @@
 #include <assert.h>
 #include <stdatomic.h>
 
+// A guest thread waiting in an NVN call (GPU, display, replay, shader loading, pool setup) gives its virtual core back meanwhile (host hle_thread.c, game.json virtual_cores; as
+// MacNativeGames' NVN_BLOCKING). Weak defaults for the graphics unit tests, which have no guest threads
+#ifndef DM_CORE_AWAY_WEAK   // (once in a unit that includes both the backend and hle_nvn.c: the tests)
+#define DM_CORE_AWAY_WEAK
+__attribute__((weak)) int dm_core_away(void) { return 0; }
+__attribute__((weak)) void dm_core_back(int *away) { (void)away; }
+#endif
+#define NVN_BLOCKING() __attribute__((cleanup(dm_core_back))) int nvn_core_away_ = dm_core_away()
 // The translation thread (plan item 61, with nvnQueueSubmitCommands below)
 static int xlat_on(void); static void x_drain(void); static uint64_t x_token(void);
 static int x_token_fence(uint64_t k, uint64_t timeout_ns, uint64_t *fence);

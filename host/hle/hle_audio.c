@@ -33,7 +33,7 @@ enum { BK_NONE, BK_AU, BK_NULL };   // what consumes an output's queue right now
 typedef struct { void *ptr; uint64_t cap, size; } gbuf;     // The first 24 bytes written into the guest AudioOutBuffer
 #define QMAX 64
 #define RELMAX QMAX                    // Released max = number of in-flight buffers (the game must take a buffer back before it can append again), same limit as pending
-typedef struct {
+typedef struct aout {
     pthread_mutex_t m;
     void *event;                       // Guest SystemEvent: signaled whenever a buffer is released
     int ch;
@@ -47,6 +47,7 @@ typedef struct {
     pthread_t null_th; _Atomic int null_run;
     int backend;                       // BK_*: the running consumer; Start, Stop and the background suspend change it only under g_aos_lock and act on it
     _Atomic int sinks;                 // silent sinks running on this output (more than one, or one beside the AudioUnit, is the race g_aos_lock prevents)
+    int built;                         // its sound card output made (or the silent sink chosen): before it is in g_aos
     dm_sem notify_sem;
     dm_sem rel_sem;      // signaled with every release batch: what dm_pcmout_wait blocks on (the audio renderer used to poll every millisecond)
     pthread_t notify_th; _Atomic int notify_run, notify_pending, notify_armed;
@@ -65,6 +66,8 @@ typedef struct {
 #define AOMAX 8
 static aout *g_aos[AOMAX];
 static pthread_mutex_t g_aos_lock = PTHREAD_MUTEX_INITIALIZER;
+struct aout;
+static void (*g_test_ao_registered)(struct aout *a);   // t_audio_extras: an output just put in g_aos (under g_aos_lock)
 static int g_suspended;
 static _Atomic unsigned g_consumer_dupes;   // a second consumer on one output's queues (two silent sinks, or a sink beside the AudioUnit): reported red at the next backend stop
 static aout *ao(const void *g) { aout *a = objmap_get(g); if (!a) die("AudioOut %p was not created by the host", g); return a; }
@@ -357,14 +360,24 @@ HLE_FORCE("_ZN2nn5audio12OpenAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventEPKcRKN
       pthread_create(&a->notify_th, &at, event_notify, a); pthread_attr_destroy(&at); }
     if (ev) hle_bind_system_event(ev, 1);   // Buffer release event: bind a kernel event on the guest thread (auto-clear), afterwards signaled by the audio thread
     objmap_put(g, a);
+    if (g_audio_mute < 0) { const char *e = getenv("DM_AUDIO_MUTE"); g_audio_mute = e && atoi(e); if (g_audio_mute) LOG("audio: DM_AUDIO_MUTE=1: the sound card is fed, silence goes out"); }
+    LOG("audio::OpenAudioOut %s, %d channels, %s", name ? name : "(default)", ch, real_audio() ? "real output" : "silent sink");
+    // The sound card's output is made before the output is in g_aos, whose readers (the lifecycle's suspend / resume, the watchdog) read a->au under
+    // g_aos_lock: it was put there first and made after without the lock (seedds/nxnative ce99604, MIT; plan item 296)
+#ifndef DM_TEST_AUDIO_PUBLISH_EARLY   // negative control of t_audio_extras only: in g_aos first, as before
+    if (real_audio()) au_open(a);   // if it cannot be opened, a->au is null, and playback goes to the silent sink when it starts
+    a->built = 1;
+#endif
     pthread_mutex_lock(&g_aos_lock);
     int slot = -1; for (int i = 0; i < AOMAX; i++) if (!g_aos[i]) { slot = i; break; }
     if (slot < 0) die("more than %d AudioOuts open at once", AOMAX);
     g_aos[slot] = a;
+    if (g_test_ao_registered) g_test_ao_registered(a);
     pthread_mutex_unlock(&g_aos_lock);
-    if (g_audio_mute < 0) { const char *e = getenv("DM_AUDIO_MUTE"); g_audio_mute = e && atoi(e); if (g_audio_mute) LOG("audio: DM_AUDIO_MUTE=1: the sound card is fed, silence goes out"); }
-    LOG("audio::OpenAudioOut %s, %d channels, %s", name ? name : "(default)", ch, real_audio() ? "real output" : "silent sink");
-    if (real_audio()) au_open(a);   // if it cannot be opened, a->au is null, and playback goes to the silent sink when it starts
+#ifdef DM_TEST_AUDIO_PUBLISH_EARLY
+    if (real_audio()) au_open(a);
+    a->built = 1;
+#endif
     { static pthread_once_t wd = PTHREAD_ONCE_INIT; pthread_once(&wd, au_watchdog_start); }   // the AudioUnit watchdog and the underrun lines
     return RES_OK;
 }

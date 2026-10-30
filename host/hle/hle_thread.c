@@ -101,6 +101,14 @@ typedef struct thr {
 static thr_t *g_all;
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
+#ifdef DM_TEST_HOOKS   // t_thrpub: a new thread just in the registry; a priority just set (inside the svc)
+void (*dm_test_thread_linked)(void), (*dm_test_prio_set)(void);
+#define THR_TEST_LINKED() { if (dm_test_thread_linked) dm_test_thread_linked(); }
+#define THR_TEST_PRIO_SET() { if (dm_test_prio_set) dm_test_prio_set(); }
+#else
+#define THR_TEST_LINKED()
+#define THR_TEST_PRIO_SET()
+#endif
 #define MAX_H 4096
 static struct { int type; void *obj; } g_h[MAX_H];
 static pthread_key_t g_keythr;
@@ -640,6 +648,8 @@ static void thr_bt(thr_t *t) {
 }
 #ifdef DM_TEST_HOOKS
 void dm_test_thr_bt_all(void) { for (thr_t *t = g_all; t; t = t->all) thr_bt(t); }   // t_threaddump: the backtraces alone, without the header lines
+int dm_test_newest_has_pt(void) { pthread_mutex_lock(&G); int r = g_all && g_all->pt != (pthread_t)0; pthread_mutex_unlock(&G); return r; }   // t_thrpub
+int dm_test_g_held(void) { if (pthread_mutex_trylock(&G)) return 1; pthread_mutex_unlock(&G); return 0; }   // t_thrpub: G held by someone (this thread in an svc)
 #endif
 void svc_thread_dump(void) {
     static const char *kinds[] = {"running / not waiting", "lock", "condition variable", "address", "sync object"};
@@ -826,11 +836,25 @@ int svc_thread(int num, uint64_t *regs) {
         t->prio = (int)regs[4]; t->core = t->act = c; t->mask = 1ull << c; t->cur_core = -1;   // a new thread may run only on its ideal core (KThread::Initialize)
         { thr_t *me = pthread_getspecific(g_keythr); if (me && me->next_host) { me->next_host = 0; t->host_work = 1; } }
         t->born_ns = now_ns();
-        pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
+        pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++;
+#ifdef DM_TEST_THREAD_LINK_EARLY   // negative control of t_thrpub only: in the registry before pthread_create writes t->pt, as before
+        t->all = g_all; g_all = t; pthread_mutex_unlock(&G); THR_TEST_LINKED(); pthread_mutex_lock(&G);
+#endif
+        pthread_mutex_unlock(&G);
         pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 1 << 20);
         pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);   // Host resources are reclaimed on exit (the guest waits through the handle, no join)
-        if (pthread_create(&t->pt, &a, thread_main, t)) die("pthread_create");
+        // pthread_create writes its output without G, while the registry's readers (thr_name_of, the samplers) read t->pt under G: that value and the
+        // registry link are published together under it (seedds/nxnative ce99604, MIT; plan item 296)
+        pthread_t pt; if (pthread_create(&pt, &a, thread_main, t)) die("pthread_create");
         pthread_attr_destroy(&a);
+        pthread_mutex_lock(&G); t->pt = pt;
+#ifndef DM_TEST_THREAD_LINK_EARLY
+        t->all = g_all; g_all = t;
+#endif
+        pthread_mutex_unlock(&G);
+#ifndef DM_TEST_THREAD_LINK_EARLY
+        THR_TEST_LINKED();
+#endif
         if (g_flag.thr) LOG("CreateThread h=%#x entry=%#llx arg=%#llx sp=%#llx prio=%d core=%d", t->handle, t->entry, t->arg, t->stack_top, t->prio, t->core);
         regs[0] = 0; regs[1] = t->handle; return 1;
     }
@@ -872,8 +896,16 @@ int svc_thread(int num, uint64_t *regs) {
         if (g_flag.bootprof) { uint64_t d = now_ns() - t0; dm_prof_add(PROF_SLEEP, d, 0); thr_t *me = pthread_getspecific(g_keythr); if (me && me->handle == 0x1001) dm_prof_add(PROF_MAIN_WAIT, d, 0); }
         return 1;
     }
-    case 0x0C: { thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)t->prio : 0; return 1; }
-    case 0x0D: { thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; regs[0] = t ? 0 : R_BAD_HANDLE; return 1; }
+    // A thread's priority is the scheduler's (it compares them under G): read and set under G as well (seedds/nxnative ce99604; plan item 296)
+#ifndef DM_TEST_PRIO_UNLOCKED   // negative control of t_thrpub only: without G, as before
+#define PRIO_LOCK() pthread_mutex_lock(&G)
+#define PRIO_UNLOCK() pthread_mutex_unlock(&G)
+#else
+#define PRIO_LOCK() do { } while (0)
+#define PRIO_UNLOCK() do { } while (0)
+#endif
+    case 0x0C: { PRIO_LOCK(); thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)t->prio : 0; PRIO_UNLOCK(); return 1; }
+    case 0x0D: { PRIO_LOCK(); thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; THR_TEST_PRIO_SET(); regs[0] = t ? 0 : R_BAD_HANDLE; PRIO_UNLOCK(); return 1; }
     case 0x0E: { thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
                  regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; return 1; }
     case 0x0F: {  // SetThreadCoreMask(w0, w1 ideal core, x2 mask): -1 = don't care, -2 = the process's ideal core (mask = just it), -3 = keep the ideal core

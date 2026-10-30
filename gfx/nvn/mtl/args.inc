@@ -45,12 +45,18 @@ static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy
 // useResource is idempotent for the same (resource, usage, stage) within one encoder: remember what this render encoder has already declared and skip repeats (a compute encoder is created anew for each dispatch, no dedup)
 static uint8_t g_args_dirty[6] = {1, 1, 1, 1, 1, 1};
 // Conditional rendering (g_render_off, the counts, the samples-passed destinations: occ_note / occ_pending): gfx/nvn/core/cond.c (plan item 264)
-static uint64_t g_args_reg_seen, g_args_dirty_seen;
+static uint64_t g_args_reg_seen, g_args_dirty_seen;   // (and g_args_ser_seen below)
 static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_dirty); }
+// A block reused holds resource IDs: stale after a registration change, a guest write, or a serial's Metal object replaced with the same program and
+// bindings (g_ser_gen: a texture upgraded for format views or uploaded again; seedds/nxnative 971d336 after MacNativeGames e49aa55, MIT; plan item 296)
+static uint64_t g_args_ser_seen;
 static inline void args_sync_dirty(void) {
-    uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
-    if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
-        g_args_reg_seen = reg; g_args_dirty_seen = dirty; args_dirty_all();
+    uint64_t reg = g_reg_gen, dirty = nvn_dirty_now(), ser = atomic_load_explicit(&g_ser_gen, memory_order_acquire);
+#ifdef DM_TEST_ARGS_SER_IGNORED   // negative control of t_argbind only: the serial table's changes not followed, as before
+    ser = g_args_ser_seen;
+#endif
+    if (reg != g_args_reg_seen || dirty != g_args_dirty_seen || ser != g_args_ser_seen) {
+        g_args_reg_seen = reg; g_args_dirty_seen = dirty; g_args_ser_seen = ser; args_dirty_all();
     }
 }
 static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {

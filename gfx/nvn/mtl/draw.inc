@@ -81,7 +81,36 @@ static id<MTLRenderCommandEncoder> draw_pass(__unsafe_unretained NvProg *pr, con
     if (skip_d) { g_stat_ds_omit++; if (mode == 3) g_stat_s_only++; else if (mode == 4) g_stat_d_only++; }
     return en;
 }
-static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
+// The bytes of a vertex attribute of NVN format f (the formats vfmt maps; 0 for the others)
+static int attr_bytes(int f) {
+    if (f >= 0x01 && f <= 0x30) { int k = (f - 1) % 12; return ((f - 1) / 12 + 1) * (k < 4 ? 1 : k < 9 ? 2 : 4); }   // 1-4 components of 8 / 16 / 32 bits
+    if (f >= 0x51 && f <= 0x66) { int k = (f - 0x51) % 6; return ((f - 0x51) / 6 + 1) * (k < 2 ? 1 : k < 4 ? 2 : 4); }   // the *_UI2F / *_I2F kinds
+    return f == 0x3D || f == 0x69 || f == 0x3F || f == 0x9A ? 4 : 0;
+}
+// A direct draw whose vertex shader reads past a stream's bound size (plan item 296): Maxwell's vertex fetch reads zeros there, Metal reads on into
+// what follows in the pool (Super Mario Odyssey drew 9 vertices from a 36-byte stream: hard-edged slabs; seedds/nxnative 1c54ea0, MIT, binds a
+// copy padded with zeros). Counted and reported once here, so a game that does it shows: the last element a stream gives (the last vertex, the
+// last instance of a per-instance stream, element 0 of a stride-0 one) against its bound size, for the attributes the shader reads
+static uint64_t g_vb_past;
+static void vb_past_note(__unsafe_unretained NvShader *vs, const p_draw *dw) {
+    for (int i = 0; i < vs->rf.nv && i < NVN_REFL_MAXV; i++) {
+        int a = vs->rf.v[i].nvn; if (a >= S.nattr || a >= 16) continue;
+        int s_ = S.attr[a].stream; if (s_ >= 16 || !S.vbuf[s_].address || !S.vbuf[s_].size) continue;
+        uint64_t st = S.stream[s_].stride, inst = dw->instances > 1 ? (uint64_t)dw->instances : 1;
+        uint64_t el = !st ? 0 : S.stream[s_].divisor ? (uint64_t)dw->base_instance + (inst - 1) / S.stream[s_].divisor : (uint64_t)dw->first + (uint64_t)dw->count - 1;
+#ifdef DM_TEST_VB_PAST_FIRST   // negative control of t_argbind only: the first vertex taken for the last
+        if (!S.stream[s_].divisor) el = (uint64_t)dw->first;
+#endif
+        uint64_t end = el * st + S.attr[a].offset + (uint64_t)attr_bytes(S.attr[a].fmt);
+        if (end > S.vbuf[s_].size) {
+            if (!g_vb_past++) MLOG("[red] a draw reads past vertex stream %d's bound size: attribute %d to byte %llu of %llu (stride %llu, %d vertices; Maxwell reads zeros there, "
+                                   "here what follows; first case)", s_, a, (unsigned long long)end, (unsigned long long)S.vbuf[s_].size, (unsigned long long)st, dw->count);
+            return;
+        }
+    }
+}
+// 0 when binding the draw's arguments ended its render pass (nothing encoded: the caller begins it again), 1 otherwise
+static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     // The pipeline depends only on (program, render pass targets, blend / color / write mask / multisample state, vertex layout): if these did not change, reuse the previous one
     static id<MTLRenderPipelineState> cur_ps; static NvProg *cur_pr; static uint64_t cur_ps_pass;
     if (g_fz.active && !g_defer_replaying) { g_pso_lmap = g_fz.phase == 1 ? g_fz.lmap1 : g_fz.lmap2; g_pso_fsfn = g_fz.phase == 1 ? nil : g_draw_fz_fn; g_pso_fz = g_fz.phase == 1 ? (pso_fz_desc){0} : g_fz_desc; g_pso_dirty = 1; }
@@ -89,7 +118,7 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
     if (g_pso_dirty || pr != cur_pr || cur_ps_pass != g_pass.serial) { cur_ps = pso_get(pr, nil); cur_pr = pr; cur_ps_pass = g_pass.serial; g_pso_dirty = !cur_ps; }
     if (g_pso_lmap) { g_pso_lmap = NULL; g_pso_fsfn = nil; memset(&g_pso_fz, 0, sizeof g_pso_fz); g_pso_dirty = 1; }   // The next draw fetches again according to its own situation
     __unsafe_unretained id<MTLRenderPipelineState> ps = cur_ps;
-    if (!ps) return;
+    if (!ps) return 1;
     if (ps != g_enc_pso) { enc_r_pso(en, ps); g_enc_pso = ps; }
     static id<MTLDepthStencilState> cur_ds; static uint64_t cur_ds_pass;
     if (g_dss_dirty || cur_ds_pass != g_pass.serial) { cur_ds = dss_get(g_pass.hd, g_pass.hs); cur_ds_pass = g_pass.serial; g_dss_dirty = 0; }
@@ -104,12 +133,12 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
     if (R.has_sc) {
         long x0 = R.sc.x < 0 ? 0 : R.sc.x, y0 = R.sc.y <= 0 ? 0 : R.sc.y, x1 = (long)R.sc.x + R.sc.w, y1 = (long)R.sc.y + R.sc.h;
         if (x1 > (long)tw) x1 = tw; if (y1 > (long)th) y1 = th;
-        if (x1 <= x0 || y1 <= y0) return;
+        if (x1 <= x0 || y1 <= y0) return 1;
         sc = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
     }
     enc_r_scissor(en, sc);
     if (g_cnt_on > 0) { if (S.has_vp) cnt_extent(sc, S.vp[0][0], S.vp[0][1], S.vp[0][0] + S.vp[0][2], S.vp[0][1] + S.vp[0][3]); else cnt_extent(sc, 0, 0, tw, th); }
-    if (S.poly.cull == NVN_FACE_FRONT_AND_BACK && nvn_prim_has_face(dw ? dw->prim : di->prim)) return;
+    if (S.poly.cull == NVN_FACE_FRONT_AND_BACK && nvn_prim_has_face(dw ? dw->prim : di->prim)) return 1;
     { static int nocull = -1; if (nocull < 0) { nocull = getenv("DM_NVN_NOCULL") != NULL; if (nocull) MLOG("DM_NVN_NOCULL: face culling off (diagnostic, rendering is wrong)"); }   // diagnostic: does a missing draw come back without culling?
       enc_r_cull(en, nocull ? MTLCullModeNone : S.poly.cull == NVN_FACE_FRONT ? MTLCullModeFront : S.poly.cull == NVN_FACE_BACK ? MTLCullModeBack : MTLCullModeNone); }
     enc_r_winding(en, S.poly.front == NVN_FRONT_FACE_CCW ? MTLWindingCounterClockwise : MTLWindingClockwise);
@@ -135,19 +164,26 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
             g_es.vb[s_] = s_ == 14 ? 0 : S.vbuf[s_].address; if (s_ == 14) g_es.vb_zero = 0;   // (index 30: set again for every draw, then the zero buffer over it)
             gw_note(&(p_bind_buf){-1, s_, S.vbuf[s_].address, S.vbuf[s_].size}, 0); }
     }
+    if (dw && dw->count > 0 && pr->sh[0]) vb_past_note(pr->sh[0], dw);
     if (di) gw_note(&(p_bind_buf){-2, 0, di->ibuf, (uint64_t)di->count * (di->itype == 0 ? 1 : di->itype == 1 ? 2 : 4)}, 0);
     static id<MTLBuffer> zero; if (!zero) { zero = [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]; res_add(zero); }
     static uint64_t zero_gpu; if (!zero_gpu) zero_gpu = zero.gpuAddress;
     if (!g_es.vb_zero) { enc_r_vbuf(en, 30, zero_gpu); g_es.vb_zero = 1; }
-    if (pr->sh[0]) encode_args(en, pr->sh[0], 0, 1);
-    if (pr->sh[1]) encode_args(en, pr->sh[1], 1, 0);
+    if (pr->sh[0] && !encode_args(en, pr->sh[0], 0, 1)) return 0;
+    if (pr->sh[1] && !encode_args(en, pr->sh[1], 1, 0)) return 0;
+    // Binding them can end the pass: a texture bound through a view of another format is made again with format views allowed and copied there on
+    // a blit encoder (tex_upgrade_pfv), which ends the render pass first. Encoded on that ended encoder, the draw crashed in the driver (seedds/nxnative
+    // 81ccacf, MIT: Need for Speed: Hot Pursuit Remastered); it is begun again in a new pass, where the texture is the upgraded one (plan item 296)
+#ifndef DM_TEST_DRAW_ON_ENDED   // negative control of t_argbind only: encoded on as before
+    if ((__bridge void *)g_enc != (__bridge void *)en) return 0;
+#endif
     // Parameter binding captures the actual resources under the registry lock; if the version changed between the eligibility check and the binding, split and retry before any GPU draw.
     int prim = dw ? dw->prim : di->prim;
     MTLPrimitiveType mp;
     switch (prim) {
         case 0: mp = MTLPrimitiveTypePoint; break; case 1: mp = MTLPrimitiveTypeLine; break; case 3: mp = MTLPrimitiveTypeLineStrip; break;
         case 4: case 7: case 8: mp = MTLPrimitiveTypeTriangle; break; case 5: mp = MTLPrimitiveTypeTriangleStrip; break;   // quads and quad strips as triangles
-        default: RED_ONCE(19, "primitive type %d not implemented", prim); return;
+        default: RED_ONCE(19, "primitive type %d not implemented", prim); return 1;
     }
     if (g_vis_counting) {   // Occlusion query counting: a new slot for this render pass (also switch to a new slot after a report / reset)
         if (!g_enc_has_vis) RED_ONCE(34, "the pass in which occlusion query counting started has no visibility buffer attached (the first reset happened mid-pass), samples of that pass are not counted");
@@ -222,17 +258,17 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
     } else if (dw) {
         if (dw->count) enc_r_draw_instanced(en, mp, dw->first, dw->count, dw->instances ? dw->instances : 1, dw->base_instance);
     } else {
-        if (prim == 7) { RED_ONCE(20, "indexed quads not implemented"); return; }
+        if (prim == 7) { RED_ONCE(20, "indexed quads not implemented"); return 1; }
         if (prim == NVN_DRAW_PRIMITIVE_QUAD_STRIP) {   // its indices made triangles' in this submission's arena, restarts as NVN's (nvn_quad_strip.h)
             unsigned width = di->itype == 2 ? 4 : di->itype == 1 ? 2 : 1; void *mb; uint64_t mo;
-            if (di->count < 4) return;
-            if (!mtl_addr(di->ibuf, (uint64_t)di->count * width, &mb, &mo)) { RED_ONCE(22, "index buffer is not in a memory pool"); return; }
-            if (pend_hits(di->ibuf, (uint64_t)di->count * width)) { RED_ONCE(118, "indexed quad strips whose indices the GPU wrote earlier in this submission: not drawn (first case %#llx)", (unsigned long long)di->ibuf); return; }
+            if (di->count < 4) return 1;
+            if (!mtl_addr(di->ibuf, (uint64_t)di->count * width, &mb, &mo)) { RED_ONCE(22, "index buffer is not in a memory pool"); return 1; }
+            if (pend_hits(di->ibuf, (uint64_t)di->count * width)) { RED_ONCE(118, "indexed quad strips whose indices the GPU wrote earlier in this submission: not drawn (first case %#llx)", (unsigned long long)di->ibuf); return 1; }
             use_rec("buf", di->ibuf, (uint64_t)di->count * width, 0, NULL);
             ARENA_OUT id<MTLBuffer> ab; size_t ao = arena_alloc((size_t)di->count * 12, &ab);
             size_t k = qs_indexed((uint32_t *)((uint8_t *)ab.contents + ao), (const void *)(uintptr_t)di->ibuf, (uint32_t)di->count, width, S.restart_set && S.restart_en, S.restart_idx);
             if (k) enc_r_draw_indexed(en, mp, k, MTLIndexTypeUInt32, g_cur_arena->gpu + ao, (NSUInteger)di->count * 12, di->instances ? di->instances : 1, di->base_vertex, di->base_instance);
-            return;
+            return 1;
         }
         // Primitive restart: NVN restarts any primitive where an index equals the restart index exactly (SDK: an 8-bit index never matches one outside
         // 0..255); Metal restarts only strips, only at the all-ones index of the index type, always. Until the game sets it nothing changes (its default
@@ -240,14 +276,14 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
         // expressed (a list with a restart, a strip with restart off holding all-ones) is reported (t_restart)
         int strip = mp == MTLPrimitiveTypeLineStrip || mp == MTLPrimitiveTypeTriangleStrip, rs = S.restart_set && S.restart_en;
         if (di->itype == 0) {   // 8-bit indices (Tears of the Kingdom draws most quads with them): Metal has only 16 / 32-bit index buffers, so they are widened into this submission's arena
-            if (!di->count) return;
+            if (!di->count) return 1;
             const uint8_t *src8 = (const uint8_t *)(uintptr_t)di->ibuf; void *mb; uint64_t mo;
-            if (!mtl_addr(di->ibuf, (uint64_t)di->count, &mb, &mo)) { RED_ONCE(21, "8-bit index buffer is not in a memory pool"); return; }
+            if (!mtl_addr(di->ibuf, (uint64_t)di->count, &mb, &mo)) { RED_ONCE(21, "8-bit index buffer is not in a memory pool"); return 1; }
             if (g_wide_gpu) {   // widened on the GPU before the pass (wide_u8_gpu)
                 use_rec("buf", di->ibuf, (uint64_t)di->count, 0, NULL);
                 enc_r_draw_indexed(en, mp, di->count, MTLIndexTypeUInt16, g_wide_gpu, (NSUInteger)di->count * 2, di->instances ? di->instances : 1, di->base_vertex, di->base_instance);
                 g_wide_gpu = 0;
-                return;
+                return 1;
             }
             if (pend_hits(di->ibuf, (uint64_t)di->count)) RED_ONCE(83, "8-bit indices written by the GPU earlier in this submission are widened from memory (first case %#llx)", (unsigned long long)di->ibuf);
             use_rec("buf", di->ibuf, (uint64_t)di->count, 0, NULL);
@@ -259,7 +295,7 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
         } else {
             void *mb; uint64_t mo;
             uint64_t gpu;
-            if (!mtl_gpu_addr(di->ibuf, 1, &mb, &mo, &gpu)) { RED_ONCE(22, "index buffer is not in a memory pool"); return; }
+            if (!mtl_gpu_addr(di->ibuf, 1, &mb, &mo, &gpu)) { RED_ONCE(22, "index buffer is not in a memory pool"); return 1; }
             int w = di->itype == 1 ? 2 : 4; uint32_t ones = w == 2 ? 0xffffu : 0xffffffffu;
             use_rec("buf", di->ibuf, (uint64_t)di->count * (uint64_t)w, 0, NULL);
             NSUInteger len = ((__bridge id<MTLBuffer>)mb).length - mo;
@@ -279,11 +315,17 @@ static void draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPr
             if (di->count) enc_r_draw_indexed(en, mp, di->count, w == 2 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32, gpu, len,
                     di->instances ? di->instances : 1, di->base_vertex, di->base_instance);
         }
-    }}
+    }
+    return 1; }
+static uint64_t g_draw_rebegun;   // draws begun again in a new pass after their argument binding ended the first (t_argbind)
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     __unsafe_unretained NvProg *pr = nil; if (!draw_admit(dw, di, &pr)) return;
-    id<MTLRenderCommandEncoder> en = draw_pass(pr, dw, di); if (!en) return;
-    draw_encode(en, pr, dw, di);
+    for (int again = 0;; again++) {
+        id<MTLRenderCommandEncoder> en = draw_pass(pr, dw, di); if (!en) return;
+        if (draw_encode(en, pr, dw, di)) return;
+        if (again) { RED_ONCE(119, "a draw's argument binding ended its render pass again: the draw skipped"); return; }
+        g_draw_rebegun++;
+    }
 }
 static nvn_hmap g_cps = {.klen = sizeof(void *)};
 static void warm_claim(void) {

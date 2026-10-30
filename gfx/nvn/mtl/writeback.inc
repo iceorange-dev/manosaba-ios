@@ -347,6 +347,15 @@ static void wb_write_list(wb_ent **list, int nl, const char *why, uint64_t t0, u
         (unsigned long long)se[i]->t.serial, se[i]->t.d.width, se[i]->t.d.height, se[i]->t.d.format, (unsigned long long)d); wb_free(se[i]); }
     free(se); free(wt); free(wm); free(we); free(wok);
 }
+// The wait for the GPU gives the guest thread's virtual core up meanwhile (game.json virtual_cores; MacNativeGames 0fd9358e, MIT, written anew; plan
+// item 297): the game's other workers could not use the core it slept on. Only that wait: the write-back after it writes the pages, and a worker
+// faulting on them must not hold the core the writer needs back. Weak defaults (hle_nvn.c has the same): the graphics tests have no guest threads
+#ifndef DM_CORE_AWAY_WEAK   // (once in a unit that includes both the backend and hle_nvn.c: the tests)
+#define DM_CORE_AWAY_WEAK
+__attribute__((weak)) int dm_core_away(void) { return 0; }
+__attribute__((weak)) void dm_core_back(int *away) { (void)away; }
+#endif
+static uint64_t g_wb_core_away;   // write-back waits that gave a core up (t_wb)
 void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { @autoreleasepool {   // hle_nvn.c nvnMemoryPoolInvalidateMappedRange (game thread)
     if (!p || !p->mem || !n) return;
     const uint8_t *a = p->mem + off, *z = a + n;
@@ -358,7 +367,13 @@ void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { @autorelea
             uint64_t k = e->t.serial; nvn_hm_del(&g_wb, &k); list[nl++] = e; again = 1; break; } }
     pthread_mutex_unlock(&g_wb_mu);
     if (!nl) return;
-    uint64_t t0 = bp_now(); mtl_finish_gpu(); uint64_t t1 = bp_now();
+    uint64_t t0 = bp_now();
+#ifndef DM_TEST_WB_KEEPS_CORE   // negative control of t_wb only: the core kept, as before
+    { int away = dm_core_away(); g_wb_core_away += (uint64_t)away; mtl_finish_gpu(); dm_core_back(&away); }
+#else
+    mtl_finish_gpu();
+#endif
+    uint64_t t1 = bp_now();
     wb_write_list(list, nl, "on invalidate", t0, t1, 0);
 } }
 // After the game's own fence waits (plan item 278; MacNativeGames 1bffa28, MIT, written anew): on the console the GPU's bytes are in the pool once

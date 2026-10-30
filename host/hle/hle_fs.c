@@ -341,8 +341,19 @@ static Result err_res(const char *op, const char *path) {
 #define RW_CREATE() if (ro) { if (!access(hp, F_OK)) return RES_PATH_EXISTS; LOG("fs write to a read-only mount: %s", hp); return RES_FAIL; }
 
 // ---------- Mount ----------
-HLE_FORCE("_ZN2nn2fs22QueryMountRomCacheSizeEPm", "fsp-srv; rom reads the host directory directly, minimal cache", Result, h_fs_QueryRomCache, size_t *out) { *out = 0x1000; return RES_OK; }
-HLE_FORCE("_ZN2nn2fs8MountRomEPKcPvm", "fsp-srv; rom → host RomFS directory", Result, h_fs_MountRom, const char *name, void *cache, size_t sz) {
+// Every nn::fs call the host takes over gives the thread's virtual core up while it runs (game.json virtual_cores; a no-op without): on the Switch
+// it is an IPC request that blocks its thread, and here it waits for the disk (a save's commit, a file closed, a cache storage made). The game's
+// loader threads held a core through CloseFile and CreateCacheStorage while job workers waited 2-6 ms for it (valentderah/totk-pc-recomp 101f2c8,
+// MIT; plan item 297). Weak defaults for the unit tests that link this file without hle_thread.c
+__attribute__((weak)) int dm_core_away(void) { return 0; }
+__attribute__((weak)) void dm_core_back(int *away) { (void)away; }
+#ifndef DM_TEST_FS_KEEPS_CORE   // negative control of t_fs_core only: the core kept, as before
+#define FS_BLOCKING() __attribute__((cleanup(dm_core_back))) int fs_core_away_ = dm_core_away()
+#else
+#define FS_BLOCKING() do { } while (0)
+#endif
+HLE_FORCE("_ZN2nn2fs22QueryMountRomCacheSizeEPm", "fsp-srv; rom reads the host directory directly, minimal cache", Result, h_fs_QueryRomCache, size_t *out) { FS_BLOCKING(); *out = 0x1000; return RES_OK; }
+HLE_FORCE("_ZN2nn2fs8MountRomEPKcPvm", "fsp-srv; rom → host RomFS directory", Result, h_fs_MountRom, const char *name, void *cache, size_t sz) { FS_BLOCKING();
     (void)cache; (void)sz;
     const char *rom = getenv("DM_ROMFS"); if (!rom) die("DM_ROMFS is not set and the game profile has no workspace.romfs");
     Result r = mount(name, rom, 1);
@@ -356,7 +367,7 @@ HLE_FORCE("_ZN2nn2fs8MountRomEPKcPvm", "fsp-srv; rom → host RomFS directory", 
     }
     return r;
 }
-HLE_FORCE("_ZN2nn2fs21MountTemporaryStorageEPKc", "fsp-srv; temporary storage → host directory", Result, h_fs_MountTemp, const char *name) {
+HLE_FORCE("_ZN2nn2fs21MountTemporaryStorageEPKc", "fsp-srv; temporary storage → host directory", Result, h_fs_MountTemp, const char *name) { FS_BLOCKING();
     char b[1024]; return mount(name, envdir("DM_TEMP", "run/platform/temp", b, sizeof b), 0);
 }
 // The save exists once its committed directory ($DM_SAVE) does (plan item 64k): the console answers IsSaveDataExisting false until the save data is
@@ -367,7 +378,7 @@ static int save_exists(void) {
 #endif
     const char *d = getenv("DM_SAVE"); struct stat st; return d && !stat(d, &st) && S_ISDIR(st.st_mode);
 }
-HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv; the save directory made if it is not there", Result, h_fs_EnsureSave, const void *uid) {
+HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv; the save directory made if it is not there", Result, h_fs_EnsureSave, const void *uid) { FS_BLOCKING();
     (void)uid; const char *d = getenv("DM_SAVE"); if (d && mkdir(d, 0755) && errno != EEXIST) LOG("[red] EnsureSaveData: %s not made, errno %d", d, errno);
     return RES_OK;
 }
@@ -375,7 +386,7 @@ HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv; the save dir
 const char *dm_save_workdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i].commit[0]) return g_mnt[i].dir; return NULL; }
 // The committed directory of the transactional save (the copy on disk, the version from the last Commit). Returns NULL when no save is mounted
 const char *dm_save_commitdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i].commit[0]) return g_mnt[i].commit; return NULL; }
-HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv; save data → host directory (single user)", Result, h_fs_MountSave, const char *name, const void *uid) {
+HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv; save data → host directory (single user)", Result, h_fs_MountSave, const char *name, const void *uid) { FS_BLOCKING();
     (void)uid;
     // No default directory: silently using some other save directory makes a run start from the wrong state. Test runs use a fresh copy of a reference save
     const char *d = getenv("DM_SAVE");
@@ -387,7 +398,7 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv; save data 
 void (*g_dm_save_commit_hook)(const char *commit_dir);   // called after a save commit succeeds (committed directory); the iOS iCloud sync sets it, NULL on the host
 static _Atomic uint64_t g_save_commits;   // number of successful commits (used by the front end when going to background to wait for "the game's current save has been committed")
 uint64_t dm_fs_commit_count(void) { return atomic_load(&g_save_commits); }
-HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv; transactional save: the working tree is cloned and swapped with the committed one atomically (renamex_np RENAME_SWAP)", Result, h_fs_Commit, const char *name) {
+HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv; transactional save: the working tree is cloned and swapped with the committed one atomically (renamex_np RENAME_SWAP)", Result, h_fs_Commit, const char *name) { FS_BLOCKING();
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
     int i = 0; while (i < g_nmnt && strcmp(g_mnt[i].name, name)) i++;
     if (i == g_nmnt || !g_mnt[i].commit[0]) { pthread_mutex_unlock(&g_lock); return RES_OK; }   // non-transactional mount: nothing to commit
@@ -440,10 +451,10 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv; transactional save: the working tree
     pthread_mutex_unlock(&g_lock);
     return r;
 }
-HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; mounts stay, unmount is a no-op", void, h_fs_Unmount, const char *name) { (void)name; }
+HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; mounts stay, unmount is a no-op", void, h_fs_Unmount, const char *name) { FS_BLOCKING(); (void)name; }
 
 // ---------- Files ----------
-HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) {
+HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) { FS_BLOCKING();
     HP(path);
     if (mode & (MODE_WRITE | MODE_APPEND)) RW();
     int fd = open(hp, (mode & (MODE_WRITE | MODE_APPEND)) ? ((mode & MODE_READ) ? O_RDWR : O_WRONLY) : O_RDONLY);
@@ -459,7 +470,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     if (g_flag.fs) LOG("fs open [%.2fs] %s (%s) mode=%d → fd %d", (now_ns() - g_t0_ns) / 1e9, path, hp, mode, fd);
     return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) {
+HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) { FS_BLOCKING();
     if (!h) { *out = 0; return RES_FAIL; }   // a file handle is an fd; 0 is stdin and never a file the game opened: the null handle it keeps using after a failed open
     size_t got = 0; uint64_t t0 = g_flag.bootprof ? now_ns() : 0; int reprep = 0;
     dm_guest_write_prepare(buf, sz);   // The destination may be a texture pool page write-protected by the graphics layer: a kernel write to a read-only page returns EFAULT instead of page-faulting, so unprotect and mark dirty first
@@ -494,7 +505,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
     }
     return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) {
+HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) { FS_BLOCKING();
     if (!h) return RES_FAIL;
     (void)opt; size_t put = 0;
     if (g_fsave[(int)h & 0xffff]) {                                     // Save write injection point (for deterministic regression; only writes on the save mount are counted)
@@ -516,24 +527,24 @@ HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp
     }
     return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", "fsp-srv → fstat(2)", Result, h_fs_GetFileSize, int64_t *out, uint64_t h) {
+HLE_FORCE("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", "fsp-srv → fstat(2)", Result, h_fs_GetFileSize, int64_t *out, uint64_t h) { FS_BLOCKING();
     if (!h) return RES_FAIL;
     struct stat st; if (fstat((int)h, &st)) return err_res("fstat", "fd");
     *out = st.st_size; return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)", Result, h_fs_SetFileSize, uint64_t h, int64_t sz) {
+HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)", Result, h_fs_SetFileSize, uint64_t h, int64_t sz) { FS_BLOCKING();
     if (!h) return RES_FAIL;
     if (!ftruncate((int)h, sz)) return RES_OK;
     if (g_fsave[(int)h & 0xffff]) save_poison(errno);
     return err_res("ftruncate", "fd");
 }
-HLE_FORCE("_ZN2nn2fs9FlushFileENS0_10FileHandleE", "fsp-srv; host writes are in the page cache already, flush is a no-op", Result, h_fs_FlushFile, uint64_t h) { (void)h; return RES_OK; }
-HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) { if (!h) return; g_fmode[(int)h & 0xffff] = 0; g_fsave[(int)h & 0xffff] = 0;
+HLE_FORCE("_ZN2nn2fs9FlushFileENS0_10FileHandleE", "fsp-srv; host writes are in the page cache already, flush is a no-op", Result, h_fs_FlushFile, uint64_t h) { FS_BLOCKING(); (void)h; return RES_OK; }
+HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) { FS_BLOCKING(); if (!h) return; g_fmode[(int)h & 0xffff] = 0; g_fsave[(int)h & 0xffff] = 0;
     close((int)h); }
-HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv; the open mode is kept by the host", int, h_fs_GetFileOpenMode, uint64_t h) { return g_fmode[(int)h & 0xffff]; }
+HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv; the open mode is kept by the host", int, h_fs_GetFileOpenMode, uint64_t h) { FS_BLOCKING(); return g_fmode[(int)h & 0xffff]; }
 
 // ---------- Path operations ----------
-HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftruncate", Result, h_fs_CreateFile, const char *path, int64_t sz) {
+HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftruncate", Result, h_fs_CreateFile, const char *path, int64_t sz) { FS_BLOCKING();
     HP_EX(path, 1); RW_CREATE();
     int fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) return err_res("create", hp);
@@ -542,8 +553,8 @@ HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftrunc
     if (rc) unlink(hp);
     errno = e; return rc ? err_res("create", hp) : RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP(path); RW(); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
-HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW_CREATE();
+HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { FS_BLOCKING(); HP(path); RW(); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
+HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { FS_BLOCKING(); HP_EX(path, 1); RW_CREATE();
     if (mkdir(hp, 0755)) return err_res("mkdir", hp);
     if (set_guest_name(hp, path)) { int e = errno; rmdir(hp); errno = e; return err_res("mkdir name", hp); }
     return RES_OK; }
@@ -558,10 +569,10 @@ static int rm_tree(const char *p) {
     closedir(d);
     return rc | rmdir(p);
 }
-HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → recursive delete (writable mounts only)", Result, h_fs_DeleteDirRec, const char *path) {
+HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → recursive delete (writable mounts only)", Result, h_fs_DeleteDirRec, const char *path) { FS_BLOCKING();
     HP(path); RW(); return rm_tree(hp) ? err_res("rmtree", hp) : RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_RenameFile, const char *from, const char *to) {
+HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_RenameFile, const char *from, const char *to) { FS_BLOCKING();
     HP(from); RW(); char hp2[1024];
     if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return err_res("rename path", to);
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
@@ -572,7 +583,7 @@ HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_
         errno = e; return err_res("rename name", hp2); }
     return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", "fsp-srv → stat(2)", Result, h_fs_GetEntryType, int32_t *out, const char *path) {
+HLE_FORCE("_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", "fsp-srv → stat(2)", Result, h_fs_GetEntryType, int32_t *out, const char *path) { FS_BLOCKING();
     HP(path); struct stat st;
     if (stat(hp, &st)) return err_res("stat", hp);
     *out = S_ISDIR(st.st_mode) ? ENT_DIR : ENT_FILE; return RES_OK;
@@ -628,7 +639,7 @@ static void dir_snapshot(dirh_t *h, const mount_t *m, const char *rest) {
     h->snap = ent; h->snames = buf; h->nsnap = nn;
     free(set); free(resolved); free(rel); free(guest); free(parent); free(all); free(roots);
 }
-HLE_FORCE("_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", "fsp-srv → opendir(3)", Result, h_fs_OpenDirectory, uint64_t *out, const char *path, int mode) {
+HLE_FORCE("_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", "fsp-srv → opendir(3)", Result, h_fs_OpenDirectory, uint64_t *out, const char *path, int mode) { FS_BLOCKING();
     HP(path); DIR *d = opendir(hp);
     if (!d) return err_res("opendir", hp);
     dirh_t *h = calloc(1, sizeof *h); h->d = d; strlcpy(h->path, hp, sizeof h->path); h->mode = mode;
@@ -638,7 +649,7 @@ HLE_FORCE("_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", "fsp-srv → o
     }
     *out = (uint64_t)h; return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl", "fsp-srv → readdir(3)", Result, h_fs_ReadDirectory, int64_t *count, DirectoryEntry *ents, uint64_t hh, int64_t max) {
+HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl", "fsp-srv → readdir(3)", Result, h_fs_ReadDirectory, int64_t *count, DirectoryEntry *ents, uint64_t hh, int64_t max) { FS_BLOCKING();
     if (!hh) { *count = 0; return RES_FAIL; }
     PATH_LOCK(); dirh_t *h = (dirh_t *)hh; int64_t n = 0; struct dirent *e;
     if (h->snap) { while (n < max && h->psnap < h->nsnap) { const dsnap_t *src = &h->snap[h->psnap++]; if (!(h->mode & (src->type == ENT_DIR ? DIRMODE_DIR : DIRMODE_FILE))) continue;
@@ -658,24 +669,24 @@ HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandl
     }
     *count = n; return RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE", "fsp-srv → closedir(3)", void, h_fs_CloseDirectory, uint64_t hh) {
+HLE_FORCE("_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE", "fsp-srv → closedir(3)", void, h_fs_CloseDirectory, uint64_t hh) { FS_BLOCKING();
     if (!hh) return;   // the game also closes after a failed open (handle 0)
     dirh_t *h = (dirh_t *)hh; closedir(h->d); if (h->od) closedir(h->od); free(h->snap); free(h->snames); free(h);
 }
 
 // ---------- APIs other games use (Unity: RAM disk, read-without-count, directory counts, add-on content probing ...) ----------
 // Same mount table and host paths as above; optional takeovers (HLE_FORCE_OPT), since not every game imports them
-HLE_FORCE_OPT("_ZN2nn2fs12SetAllocatorEPFPvmEPFvS1_mE", "fs library allocator: the host allocates nothing on the guest heap, ignored (the original asks fsp-srv about the access log first)", void, h_fs_SetAllocator, void *a, void *f) { (void)a; (void)f; }
-HLE_FORCE_OPT("_ZN2nn2fs25EnableGlobalFileDataCacheEPvm", "global file data cache: host reads use the page cache, ignored", void, h_fs_GlobalCache, void *buf, size_t sz) { (void)buf; (void)sz; }
-HLE_FORCE_OPT("_ZN2nn2fs20GetRamDiskBufferSizeEm", "RAM disk: contents in a host temporary directory, minimal guest buffer", size_t, h_fs_RamDiskBufSize, size_t sz) { (void)sz; return 0x1000; }
-HLE_FORCE_OPT("_ZN2nn2fs12MountRamDiskEPKcPvm", "RAM disk → a subdirectory of the host temporary directory (emptied at every mount, like power loss on the console)", Result, h_fs_MountRamDisk, const char *name, void *buf, size_t sz) {
+HLE_FORCE_OPT("_ZN2nn2fs12SetAllocatorEPFPvmEPFvS1_mE", "fs library allocator: the host allocates nothing on the guest heap, ignored (the original asks fsp-srv about the access log first)", void, h_fs_SetAllocator, void *a, void *f) { FS_BLOCKING(); (void)a; (void)f; }
+HLE_FORCE_OPT("_ZN2nn2fs25EnableGlobalFileDataCacheEPvm", "global file data cache: host reads use the page cache, ignored", void, h_fs_GlobalCache, void *buf, size_t sz) { FS_BLOCKING(); (void)buf; (void)sz; }
+HLE_FORCE_OPT("_ZN2nn2fs20GetRamDiskBufferSizeEm", "RAM disk: contents in a host temporary directory, minimal guest buffer", size_t, h_fs_RamDiskBufSize, size_t sz) { FS_BLOCKING(); (void)sz; return 0x1000; }
+HLE_FORCE_OPT("_ZN2nn2fs12MountRamDiskEPKcPvm", "RAM disk → a subdirectory of the host temporary directory (emptied at every mount, like power loss on the console)", Result, h_fs_MountRamDisk, const char *name, void *buf, size_t sz) { FS_BLOCKING();
     (void)buf; (void)sz; char b[1024], d[1100];
     snprintf(d, sizeof d, "%s/ramdisk_%s", envdir("DM_TEMP", "run/platform/temp", b, sizeof b), name);
     if (!access(d, F_OK) && rm_tree(d)) LOG("[red] RAM disk: cannot remove the previous contents: %s", d);
     mkdir(envdir("DM_TEMP", "run/platform/temp", b, sizeof b), 0755);
     return mount(name, d, 0);
 }
-HLE_FORCE_OPT("_ZN2nn2fs9IsMountedEPKc", "mount table query (returns bool)", unsigned, h_fs_IsMounted, const char *name) {
+HLE_FORCE_OPT("_ZN2nn2fs9IsMountedEPKc", "mount table query (returns bool)", unsigned, h_fs_IsMounted, const char *name) { FS_BLOCKING();
     pthread_mutex_lock(&g_lock); int hit = 0;
     for (int i = 0; i < g_nmnt; i++) if (!strcmp(g_mnt[i].name, name)) hit = 1;
     pthread_mutex_unlock(&g_lock); return hit;
@@ -697,26 +708,26 @@ static int path_mounted(const char *path) {
     pthread_mutex_unlock(&g_lock); return hit;
 }
 #define LIMIT_MOUNTED(path) if (!path_mounted(path)) { LOG("[red] fs path limit query: %s is not mounted", path ? path : "(null)"); return RES_FAIL; }
-HLE_FORCE_OPT("_ZN2nn2fs13IsPathMountedEPKc", "is the path's mount there (returns bool)", unsigned, h_fs_IsPathMounted, const char *path) { return path_mounted(path); }
-HLE_FORCE_OPT("_ZN2nn2fs16GetPathLengthMaxEPmPKc", "path length limit (the SDK default when the file system gives none)", Result, h_fs_PathLenMax, size_t *out, const char *path) { LIMIT_MOUNTED(path); *out = 0x300; return RES_OK; }
-HLE_FORCE_OPT("_ZN2nn2fs21GetEntryNameLengthMaxEPmPKc", "entry name length limit (as above)", Result, h_fs_NameLenMax, size_t *out, const char *path) { LIMIT_MOUNTED(path); *out = 0x300; return RES_OK; }
-HLE_FORCE_OPT("_ZN2nn2fs21GetUtf16PathLengthMaxEPbPmPKc", "UTF-16 path length limit (as above: none)", Result, h_fs_U16PathLenMax, uint8_t *has, size_t *out, const char *path) { LIMIT_MOUNTED(path); *has = 0; *out = 0; return RES_OK; }
-HLE_FORCE_OPT("_ZN2nn2fs26GetUtf16EntryNameLengthMaxEPbPmPKc", "UTF-16 entry name length limit (as above: none)", Result, h_fs_U16NameLenMax, uint8_t *has, size_t *out, const char *path) { LIMIT_MOUNTED(path); *has = 0; *out = 0; return RES_OK; }
-HLE_FORCE_OPT("_ZN2nn2fs31QueryMountAddOnContentCacheSizeEPmi", "add-on content: minimal cache", Result, h_fs_QueryAocCache, size_t *out, int idx) { (void)idx; *out = 0x1000; return RES_OK; }
-HLE_FORCE_OPT("_ZN2nn2fs17MountAddOnContentEPKciPvm", "add-on content: nothing to mount", Result, h_fs_MountAoc, const char *name, int idx, void *buf, size_t sz) {
+HLE_FORCE_OPT("_ZN2nn2fs13IsPathMountedEPKc", "is the path's mount there (returns bool)", unsigned, h_fs_IsPathMounted, const char *path) { FS_BLOCKING(); return path_mounted(path); }
+HLE_FORCE_OPT("_ZN2nn2fs16GetPathLengthMaxEPmPKc", "path length limit (the SDK default when the file system gives none)", Result, h_fs_PathLenMax, size_t *out, const char *path) { FS_BLOCKING(); LIMIT_MOUNTED(path); *out = 0x300; return RES_OK; }
+HLE_FORCE_OPT("_ZN2nn2fs21GetEntryNameLengthMaxEPmPKc", "entry name length limit (as above)", Result, h_fs_NameLenMax, size_t *out, const char *path) { FS_BLOCKING(); LIMIT_MOUNTED(path); *out = 0x300; return RES_OK; }
+HLE_FORCE_OPT("_ZN2nn2fs21GetUtf16PathLengthMaxEPbPmPKc", "UTF-16 path length limit (as above: none)", Result, h_fs_U16PathLenMax, uint8_t *has, size_t *out, const char *path) { FS_BLOCKING(); LIMIT_MOUNTED(path); *has = 0; *out = 0; return RES_OK; }
+HLE_FORCE_OPT("_ZN2nn2fs26GetUtf16EntryNameLengthMaxEPbPmPKc", "UTF-16 entry name length limit (as above: none)", Result, h_fs_U16NameLenMax, uint8_t *has, size_t *out, const char *path) { FS_BLOCKING(); LIMIT_MOUNTED(path); *has = 0; *out = 0; return RES_OK; }
+HLE_FORCE_OPT("_ZN2nn2fs31QueryMountAddOnContentCacheSizeEPmi", "add-on content: minimal cache", Result, h_fs_QueryAocCache, size_t *out, int idx) { FS_BLOCKING(); (void)idx; *out = 0x1000; return RES_OK; }
+HLE_FORCE_OPT("_ZN2nn2fs17MountAddOnContentEPKciPvm", "add-on content: nothing to mount", Result, h_fs_MountAoc, const char *name, int idx, void *buf, size_t sz) { FS_BLOCKING();
     (void)buf; (void)sz; LOG("fs MountAddOnContent %s #%d: the host has no add-on content data", name, idx); return RES_PATH_NOT_FOUND;
 }
 // bool results: Switch callers read only w0's low byte
-HLE_FORCE_OPT("_ZN2nn2fs18IsSaveDataExistingERKNS_7account3UidE", "does the save exist: its directory is there", unsigned, h_fs_SaveExists, const void *uid) { (void)uid; return save_exists(); }
+HLE_FORCE_OPT("_ZN2nn2fs18IsSaveDataExistingERKNS_7account3UidE", "does the save exist: its directory is there", unsigned, h_fs_SaveExists, const void *uid) { FS_BLOCKING(); (void)uid; return save_exists(); }
 // Another application's save (TotK looks for The Legend of Zelda: Breath of the Wild's, 0x01007ef00011e000): the host has only this game's save
-HLE_FORCE_OPT("_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE", "does the save exist (given application): only this game's", unsigned, h_fs_SaveExistsApp, uint64_t app, const void *uid) {
+HLE_FORCE_OPT("_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE", "does the save exist (given application): only this game's", unsigned, h_fs_SaveExistsApp, uint64_t app, const void *uid) { FS_BLOCKING();
     (void)uid; return app == dm_game.program_id && save_exists();
 }
 // Access log switch and read priority (TotK calls SetPriorityOnCurrentThread on its threads): on the console both ask fsp-srv; the host has no access log,
 // and priority does not change its reads. From nxnative's hle_fs.c (seedds, MIT)
-HLE_FORCE_OPT("_ZN2nn2fs26SetPriorityOnCurrentThreadENS0_8PriorityE", "file read priority: ignored", void, h_fs_SetPrio, int prio) { (void)prio; }
-HLE_FORCE_OPT("_ZN2nn2fs6detail18IsEnabledAccessLogEj", "access log: off (bool)", unsigned, h_fs_AccessLogMask, unsigned mask) { (void)mask; return 0; }
-HLE_FORCE_OPT("_ZN2nn2fs6detail18IsEnabledAccessLogEv", "access log: off (bool)", unsigned, h_fs_AccessLog, void) { return 0; }
+HLE_FORCE_OPT("_ZN2nn2fs26SetPriorityOnCurrentThreadENS0_8PriorityE", "file read priority: ignored", void, h_fs_SetPrio, int prio) { FS_BLOCKING(); (void)prio; }
+HLE_FORCE_OPT("_ZN2nn2fs6detail18IsEnabledAccessLogEj", "access log: off (bool)", unsigned, h_fs_AccessLogMask, unsigned mask) { FS_BLOCKING(); (void)mask; return 0; }
+HLE_FORCE_OPT("_ZN2nn2fs6detail18IsEnabledAccessLogEv", "access log: off (bool)", unsigned, h_fs_AccessLog, void) { FS_BLOCKING(); return 0; }
 
 // Indexed cache storage (TotK): one host directory per index under $DM_CACHE. Semantics from the SDK API reference (fs_CacheStorageWithIndex.h,
 // fs_CacheStorage.h): MountCacheStorage(name, index) gives ResultTargetNotFound when that index does not exist; ReadCacheStorageList lists the existing
@@ -726,19 +737,19 @@ HLE_FORCE_OPT("_ZN2nn2fs6detail18IsEnabledAccessLogEv", "access log: off (bool)"
 static const char *cache_dir(int index, char *out, size_t n) {
     char b[1024]; snprintf(out, n, "%s/%d", envdir("DM_CACHE", "run/platform/cache", b, sizeof b), index); return out;
 }
-HLE_FORCE_OPT("_ZN2nn2fs17MountCacheStorageEPKci", "cache storage <index> → host directory; ResultTargetNotFound when it was not created", Result, h_fs_MountCache, const char *name, int index) {
+HLE_FORCE_OPT("_ZN2nn2fs17MountCacheStorageEPKci", "cache storage <index> → host directory; ResultTargetNotFound when it was not created", Result, h_fs_MountCache, const char *name, int index) { FS_BLOCKING();
     char d[1100]; struct stat st;
     if (stat(cache_dir(index, d, sizeof d), &st) || !S_ISDIR(st.st_mode)) return RES_TARGET_NOT_FOUND;
     return mount(name, d, 0);
 }
-HLE_FORCE_OPT("_ZN2nn2fs18CreateCacheStorageEill", "create cache storage <index>: a host directory (sizes not reserved)", Result, h_fs_CreateCache, int index, int64_t size, int64_t journal) {
+HLE_FORCE_OPT("_ZN2nn2fs18CreateCacheStorageEill", "create cache storage <index>: a host directory (sizes not reserved)", Result, h_fs_CreateCache, int index, int64_t size, int64_t journal) { FS_BLOCKING();
     char b[1024], d[1100]; mkdir(envdir("DM_CACHE", "run/platform/cache", b, sizeof b), 0755);
     if (mkdir(cache_dir(index, d, sizeof d), 0755) && errno != EEXIST) {   // at most 3 lines: a game may ask again and again
         static _Atomic int nf; if (atomic_fetch_add(&nf, 1) < 3) LOG("[red] CreateCacheStorage %d: %s errno=%d", index, d, errno); return RES_FAIL; }
     LOG("fs cache storage %d created → %s (data %lld, journal %lld bytes)", index, d, (long long)size, (long long)journal);
     return RES_OK;
 }
-HLE_FORCE_OPT("_ZN2nn2fs18DeleteCacheStorageEi", "delete cache storage <index>: its host directory", Result, h_fs_DeleteCache, int index) {
+HLE_FORCE_OPT("_ZN2nn2fs18DeleteCacheStorageEi", "delete cache storage <index>: its host directory", Result, h_fs_DeleteCache, int index) { FS_BLOCKING();
     char d[1100]; cache_dir(index, d, sizeof d);
     if (access(d, F_OK)) return RES_TARGET_NOT_FOUND;
     int r; { PATH_LOCK(); r = rm_tree(d); }
@@ -746,7 +757,7 @@ HLE_FORCE_OPT("_ZN2nn2fs18DeleteCacheStorageEi", "delete cache storage <index>: 
     return r ? RES_FAIL : RES_OK;
 }
 typedef struct { int n, cur, idx[64]; } cache_list;
-HLE_FORCE_OPT("_ZN2nn2fs20OpenCacheStorageListEPNS0_22CacheStorageListHandleE", "cache storage list: the numeric directories under $DM_CACHE", Result, h_fs_OpenCacheList, cache_list **out) {
+HLE_FORCE_OPT("_ZN2nn2fs20OpenCacheStorageListEPNS0_22CacheStorageListHandleE", "cache storage list: the numeric directories under $DM_CACHE", Result, h_fs_OpenCacheList, cache_list **out) { FS_BLOCKING();
     cache_list *l = calloc(1, sizeof *l); char b[1024];
     DIR *dir = opendir(envdir("DM_CACHE", "run/platform/cache", b, sizeof b)); struct dirent *e;
     while (dir && (e = readdir(dir)) && l->n < 64) {
@@ -758,19 +769,19 @@ HLE_FORCE_OPT("_ZN2nn2fs20OpenCacheStorageListEPNS0_22CacheStorageListHandleE", 
     *out = l; return RES_OK;
 }
 HLE_FORCE_OPT("_ZN2nn2fs20ReadCacheStorageListEPiPNS0_16CacheStorageInfoENS0_22CacheStorageListHandleEi", "cache storage list: next entries",
-              Result, h_fs_ReadCacheList, int *n, uint8_t *info, cache_list *l, int count) {
+              Result, h_fs_ReadCacheList, int *n, uint8_t *info, cache_list *l, int count) { FS_BLOCKING();
     int k = 0;
     while (k < count && l && l->cur < l->n) { memset(info + 0x20 * k, 0, 0x20); memcpy(info + 0x20 * k, &l->idx[l->cur++], 4); k++; }
     *n = k; return RES_OK;
 }
-HLE_FORCE_OPT("_ZN2nn2fs21CloseCacheStorageListENS0_22CacheStorageListHandleE", "cache storage list: closed", void, h_fs_CloseCacheList, cache_list *l) { free(l); }
-HLE_FORCE_OPT("_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE", "read-only mount of this application's save → the same host save directory (committed copy, read-only)", Result, h_fs_MountSaveRo, const char *name, uint64_t app, const void *uid) {
+HLE_FORCE_OPT("_ZN2nn2fs21CloseCacheStorageListENS0_22CacheStorageListHandleE", "cache storage list: closed", void, h_fs_CloseCacheList, cache_list *l) { FS_BLOCKING(); free(l); }
+HLE_FORCE_OPT("_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE", "read-only mount of this application's save → the same host save directory (committed copy, read-only)", Result, h_fs_MountSaveRo, const char *name, uint64_t app, const void *uid) { FS_BLOCKING();
     (void)uid; const char *d = getenv("DM_SAVE"); if (!d) die("DM_SAVE is not set: point it at a writable save directory");
     LOG("fs MountSaveDataReadOnly %s, application %#llx%s", name, (unsigned long long)app, app == dm_game.program_id ? "" : ": not this game, no such save");
     if (app != dm_game.program_id) return RES_TARGET_NOT_FOUND;   // the save does not exist (the SDK reference makes its existence a precondition)
     return mount(name, d, 1);
 }
-HLE_FORCE_OPT("_ZN2nn2fs6CommitEPKPKci", "commit several mounts: one Commit each (each atomic)", Result, h_fs_CommitN, const char *const *names, int n) {
+HLE_FORCE_OPT("_ZN2nn2fs6CommitEPKPKci", "commit several mounts: one Commit each (each atomic)", Result, h_fs_CommitN, const char *const *names, int n) { FS_BLOCKING();
     Result r = RES_OK;
     for (int i = 0; i < n; i++) { Result ri = h_fs_Commit(names[i]); if (ri && !r) r = ri; }
     return r;
@@ -780,11 +791,11 @@ static Result read_exact(uint64_t h, int64_t off, void *buf, size_t sz) {
     if (r == RES_OK && got != sz) { LOG("[red] fs ReadFile (no size out) read %zu / %zu bytes: fd %d offset %#llx goes past the end of the file", got, sz, (int)h, (long long)off); return RES_FAIL; }
     return r;
 }
-HLE_FORCE_OPT("_ZN2nn2fs8ReadFileENS0_10FileHandleElPvm", "fsp-srv → pread(2); the overload without a size out must read everything", Result, h_fs_ReadFileN, uint64_t h, int64_t off, void *buf, size_t sz) { return read_exact(h, off, buf, sz); }
-HLE_FORCE_OPT("_ZN2nn2fs8ReadFileENS0_10FileHandleElPvmRKNS0_10ReadOptionE", "fsp-srv → pread(2); the overload without a size out must read everything", Result, h_fs_ReadFileNO, uint64_t h, int64_t off, void *buf, size_t sz, const void *opt) { (void)opt; return read_exact(h, off, buf, sz); }
-HLE_FORCE_OPT("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvmRKNS0_10ReadOptionE", "fsp-srv → pread(2); size out, with read options (the SDK's libc read uses it)", Result, h_fs_ReadFileO, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz, const void *opt) { (void)opt; return h_fs_ReadFile(out, h, off, buf, sz); }
-HLE_FORCE_OPT("_ZN2nn2fs15DeleteDirectoryEPKc", "fsp-srv → rmdir(2)", Result, h_fs_DeleteDir, const char *path) { HP(path); RW(); return rmdir(hp) ? err_res("rmdir", hp) : RES_OK; }
-HLE_FORCE_OPT("_ZN2nn2fs25CleanDirectoryRecursivelyEPKc", "fsp-srv → empty the directory, keep the directory", Result, h_fs_CleanDir, const char *path) {
+HLE_FORCE_OPT("_ZN2nn2fs8ReadFileENS0_10FileHandleElPvm", "fsp-srv → pread(2); the overload without a size out must read everything", Result, h_fs_ReadFileN, uint64_t h, int64_t off, void *buf, size_t sz) { FS_BLOCKING(); return read_exact(h, off, buf, sz); }
+HLE_FORCE_OPT("_ZN2nn2fs8ReadFileENS0_10FileHandleElPvmRKNS0_10ReadOptionE", "fsp-srv → pread(2); the overload without a size out must read everything", Result, h_fs_ReadFileNO, uint64_t h, int64_t off, void *buf, size_t sz, const void *opt) { FS_BLOCKING(); (void)opt; return read_exact(h, off, buf, sz); }
+HLE_FORCE_OPT("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvmRKNS0_10ReadOptionE", "fsp-srv → pread(2); size out, with read options (the SDK's libc read uses it)", Result, h_fs_ReadFileO, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz, const void *opt) { FS_BLOCKING(); (void)opt; return h_fs_ReadFile(out, h, off, buf, sz); }
+HLE_FORCE_OPT("_ZN2nn2fs15DeleteDirectoryEPKc", "fsp-srv → rmdir(2)", Result, h_fs_DeleteDir, const char *path) { FS_BLOCKING(); HP(path); RW(); return rmdir(hp) ? err_res("rmdir", hp) : RES_OK; }
+HLE_FORCE_OPT("_ZN2nn2fs25CleanDirectoryRecursivelyEPKc", "fsp-srv → empty the directory, keep the directory", Result, h_fs_CleanDir, const char *path) { FS_BLOCKING();
     HP(path); RW(); DIR *d = opendir(hp); if (!d) return err_res("opendir", hp);
     struct dirent *e; char c[1280]; int rc = 0;
     while ((e = readdir(d))) {
@@ -795,7 +806,7 @@ HLE_FORCE_OPT("_ZN2nn2fs25CleanDirectoryRecursivelyEPKc", "fsp-srv → empty the
     closedir(d);
     return rc ? err_res("clean", hp) : RES_OK;
 }
-HLE_FORCE_OPT("_ZN2nn2fs15RenameDirectoryEPKcS2_", "fsp-srv → rename(2) (directory)", Result, h_fs_RenameDir, const char *from, const char *to) {
+HLE_FORCE_OPT("_ZN2nn2fs15RenameDirectoryEPKcS2_", "fsp-srv → rename(2) (directory)", Result, h_fs_RenameDir, const char *from, const char *to) { FS_BLOCKING();
     HP(from); RW(); char hp2[1024];
     if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return err_res("rename path", to);
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
@@ -806,11 +817,11 @@ HLE_FORCE_OPT("_ZN2nn2fs15RenameDirectoryEPKcS2_", "fsp-srv → rename(2) (direc
         errno = e; return err_res("rename name", hp2); }
     return RES_OK;
 }
-HLE_FORCE_OPT("_ZN2nn2fs16GetFreeSpaceSizeEPlPKc", "fsp-srv → statvfs(3): free space of the host volume", Result, h_fs_FreeSpace, int64_t *out, const char *path) {
+HLE_FORCE_OPT("_ZN2nn2fs16GetFreeSpaceSizeEPlPKc", "fsp-srv → statvfs(3): free space of the host volume", Result, h_fs_FreeSpace, int64_t *out, const char *path) { FS_BLOCKING();
     HP(path); struct statvfs st; if (statvfs(hp, &st)) return err_res("statvfs", hp);
     *out = (int64_t)st.f_bavail * (int64_t)st.f_frsize; return RES_OK;
 }
-HLE_FORCE_OPT("_ZN2nn2fs22GetDirectoryEntryCountEPlNS0_15DirectoryHandleE", "fsp-srv: directory entries counted by the open mode (as ReadDirectory counts them)", Result, h_fs_DirCount, int64_t *out, uint64_t hh) {
+HLE_FORCE_OPT("_ZN2nn2fs22GetDirectoryEntryCountEPlNS0_15DirectoryHandleE", "fsp-srv: directory entries counted by the open mode (as ReadDirectory counts them)", Result, h_fs_DirCount, int64_t *out, uint64_t hh) { FS_BLOCKING();
     PATH_LOCK(); dirh_t *h = (dirh_t *)hh; int64_t n = 0;
     if (h->snap) { for (int64_t i = 0; i < h->nsnap; i++) if (h->mode & (h->snap[i].type == ENT_DIR ? DIRMODE_DIR : DIRMODE_FILE)) n++; *out = n; return RES_OK; }
     DIR *d = opendir(h->path); if (!d) return err_res("opendir", h->path);

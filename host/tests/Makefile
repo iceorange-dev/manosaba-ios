@@ -9,10 +9,12 @@ run: \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
 	$(B)/t_audio_extras \
+	$(B)/t_audio_extras_early \
 	$(B)/t_audio_extras_vol \
 	$(B)/t_audio_extras_kept \
 	$(B)/t_audren \
 	$(B)/t_audren_void \
+	$(B)/t_audren_unbounded \
 	$(B)/t_audren_pace \
 	$(B)/t_audren_pace_out \
 	$(B)/t_audren_pace_sink \
@@ -29,6 +31,9 @@ run: \
 	$(B)/t_waitsync \
 	$(B)/t_coremask \
 	$(B)/t_coremask_noproc \
+	$(B)/t_thrpub \
+	$(B)/t_thrpub_early \
+	$(B)/t_thrpub_prio \
 	$(B)/t_mainqos \
 	$(B)/t_mainqos_ignored \
 	$(B)/t_crash_bt \
@@ -50,6 +55,8 @@ run: \
 	$(B)/t_fs_saveyes \
 	$(B)/t_fs_strict \
 	$(B)/t_fs_case \
+	$(B)/t_fs_core \
+	$(B)/t_fs_core_kept \
 	$(B)/t_fs_index \
 	$(B)/t_fs_kill \
 	$(B)/t_fs_kill_inplace \
@@ -196,6 +203,10 @@ run: \
 	$(B)/t_audio
 	$(B)/t_audio_spsc
 	$(B)/t_audio_extras
+	@status=0; $(B)/t_audio_extras_early > $(B)/t_audio_extras_early.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_early.log)" -ne 1 ]; then \
+	   cat $(B)/t_audio_extras_early.log; echo "t_audio_extras_early: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_audio_extras_early: an output in the registry before it is made fails 1, as expected"
 	@for v in vol:3 kept:1; do t=$${v%%:*}; want=$${v##*:}; status=0; $(B)/t_audio_extras_$$t > $(B)/t_audio_extras_$$t.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_$$t.log)" -ne "$$want" ]; then \
 	   cat $(B)/t_audio_extras_$$t.log; echo "t_audio_extras_$$t: unexpected negative-control result ($$status)"; exit 1; \
@@ -205,6 +216,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ AcquireAudioDeviceNotificationForOutput: success" $(B)/t_audren_void.log; then \
 	   cat $(B)/t_audren_void.log; echo "t_audren_void: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audren_void: a void notification leaves the event's address as the result, as expected"
+	@status=0; $(B)/t_audren_unbounded > $(B)/t_audren_unbounded.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audren_unbounded.log)" -ne 1 ] || ! grep -q "✗ a command whose size runs past" $(B)/t_audren_unbounded.log; then \
+	   cat $(B)/t_audren_unbounded.log; echo "t_audren_unbounded: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_audren_unbounded: a command list walked without its extent reads past its end, as expected"
 	$(B)/t_audren_pace
 	@status=0; $(B)/t_audren_pace_out > $(B)/t_audren_pace_out.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "no two frames under 1 ms apart *✗" $(B)/t_audren_pace_out.log; then \
@@ -237,6 +252,11 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ mask 8, outside the process's cores" $(B)/t_coremask_noproc.log; then \
 	   cat $(B)/t_coremask_noproc.log; echo "t_coremask_noproc: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_coremask_noproc: a core mask outside the process's cores let through moves the thread to core 3, as expected"
+	$(B)/t_thrpub 2>/dev/null
+	@for v in early prio; do status=0; $(B)/t_thrpub_$$v > $(B)/t_thrpub_$$v.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_thrpub_$$v.log)" -ne 1 ]; then \
+	   cat $(B)/t_thrpub_$$v.log; echo "t_thrpub_$$v: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_thrpub_$$v: fails 1, as expected"; done
 	$(B)/t_mainqos
 	$(B)/t_mainqos --ui
 	@status=0; $(B)/t_mainqos_ignored --ui > $(B)/t_mainqos_ignored.log 2>/dev/null || status=$$?; \
@@ -295,6 +315,11 @@ run: \
 	   cat $(B)/t_fs_strict.log; echo "t_fs_strict: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_fs_strict: \"/rom:/\" and backslashes refused, as expected"
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_case 2>/dev/null
+	$(B)/t_fs_core 2>/dev/null
+	@status=0; $(B)/t_fs_core_kept > $(B)/t_fs_core_kept.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '^FAIL' $(B)/t_fs_core_kept.log)" -ne 2 ]; then \
+	   cat $(B)/t_fs_core_kept.log; echo "t_fs_core_kept: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_fs_core_kept: nn::fs calls keeping the core fail 2, as expected"
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_index 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_kill
 	@status=0; TMPDIR="$(abspath $(B))" $(B)/t_fs_kill_inplace > $(B)/t_fs_kill_inplace.log 2>&1 || status=$$?; \
@@ -734,10 +759,14 @@ $(B)/t_audren_pace_sink: t_audren_pace.c ../audren_pace.h | $(B)
 	clang -O1 -Wall -DDM_TEST_SINK_NO_RESYNC -I.. -o $@ t_audren_pace.c
 $(B)/t_audren: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audren.c
+$(B)/t_audren_unbounded: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_AUDREN_UNBOUNDED -I.. -o $@ t_audren.c
 $(B)/t_audren_void: t_audren.c ../hle/hle_audren.c ../audren_pace.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_ADNOTIFY_VOID -I.. -o $@ t_audren.c
 $(B)/t_audio_extras: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_extras_early: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_AUDIO_PUBLISH_EARLY -I.. -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_vol: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_VOLUME_IGNORED -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_kept: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
@@ -912,6 +941,10 @@ $(B)/t_fs_kill_inplace: t_fs_kill.c t_fs_stub.c ../hle/hle_fs.c ../hle.h ../dm.h
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_FS_COMMIT_INPLACE -I.. -o $@ t_fs_kill.c t_fs_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_fs_index: t_fs_index.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_index.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_core: t_fs_core.c t_fs_core_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_core.c t_fs_core_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_fs_core_kept: t_fs_core.c t_fs_core_stub.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_FS_KEEPS_CORE -I.. -o $@ t_fs_core.c t_fs_core_stub.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_fs_case: t_fs_case.c ../hle/hle_fs.c ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_case.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_guest_mem: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
@@ -928,6 +961,12 @@ $(B)/t_guest_mem_arold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h
 	clang -O1 -Wno-unused-function -DDM_TEST_AR_UNLOGGED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_guest_mem_unnoted: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_UNMAP_UNNOTED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_thrpub: t_thrpub.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_thrpub.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_thrpub_early: t_thrpub.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_THREAD_LINK_EARLY -I.. -o $@ t_thrpub.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_thrpub_prio: t_thrpub.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_PRIO_UNLOCKED -I.. -o $@ t_thrpub.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_coremask: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_coremask_noproc: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

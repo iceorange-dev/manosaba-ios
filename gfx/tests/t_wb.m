@@ -6,7 +6,9 @@
 // storage without an invalidate; when the CPU then writes the storage, the next submission hands the texture back (not GPU-owned, watched from
 // before the write), and its next fetch is an upload of the CPU's bytes.
 // Plan item 278: a target up to 64 KiB is written back after the game's fence waits once its rendering completed, with no invalidate. 286: from the copy
-// its own submission made at its end, with no command buffer of the write-back's (-DDM_TEST_WB_STAGE_OFF: 2 fail).
+// its own submission made at its end, with no command buffer of the write-back's (-DDM_TEST_WB_STAGE_OFF: 2 fail). Plan item 297: the invalidate's wait
+// for the GPU gives the guest thread's core up and takes it back before anything is written back (core_away_stub.c counts; -DDM_TEST_WB_KEEPS_CORE,
+// the core kept: 1 fails).
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -14,6 +16,10 @@ module_t g_mod[MAX_MOD]; int g_nmod;
 void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int fail, count;
+extern int g_core_aways, g_core_backs; extern void (*g_core_on_back)(void);
+static const tex_t *g_wb_t; static uint32_t g_texel_at_back;
+static uint32_t texel(const tex_t *t, unsigned x, unsigned y);
+static void at_back(void) { g_texel_at_back = texel(g_wb_t, 3, 5); }
 #define EXPECT(name, want, got) do { long long w=(want), g=(got); count++; printf("%-74s expected %-10llx → got %-10llx %s\n", name, (unsigned long long)w, (unsigned long long)g, w==g?"✓":"✗"); fail += w != g; } while (0)
 typedef struct { uint8_t *p; size_t n; } chain;
 static void emit(chain *c, unsigned op, const void *a, size_t n) { size_t z=(8+n+7)&~7ull; op_hdr h={op,(uint32_t)z}; memcpy(c->p+c->n,&h,8); if(n) memcpy(c->p+c->n+8,a,n); c->n+=z; }
@@ -59,8 +65,12 @@ int main(int argc, char **argv) { @autoreleasepool {
         printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
     }
     EXPECT("after the GPU rendered green: memory still holds what the CPU wrote", 0x11223344, texel(&t, 3, 5));
+    g_wb_t = &t; g_core_on_back = at_back; int aw0 = g_core_aways, bk0 = g_core_backs;
     mtl_pool_invalidate(&pl, 0, t.size);
+    g_core_on_back = NULL;
     EXPECT("after an invalidate over it: green written back (texel 3,5)", 0xff00ff00, texel(&t, 3, 5));
+    EXPECT("... its wait for the GPU gave the core up once and took it back before the write-back (memory as the CPU left it then)", 1,
+           g_core_aways - aw0 == 1 && g_core_backs - bk0 == 1 && g_texel_at_back == 0x11223344);
     EXPECT("... and texel 7,7", 0xff00ff00, texel(&t, 7, 7));
     render_clear(&t, 0, 0, 1);
     mtl_pool_invalidate(&pl, 0x40000, 0x1000);   // a range elsewhere in the pool

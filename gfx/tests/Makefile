@@ -117,6 +117,8 @@ t_sync_order: t_sync_order.c ../nvn/nvn_obj.h
 	clang -O1 -Wall -Werror -I../nvn/include -o $@ t_sync_order.c
 t_tex_fit: t_tex_fit.m ../nvn/nvn_tex_fit.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_tex_fit.m -framework Metal -framework Foundation
+t_tex_fit_view: t_tex_fit.m ../nvn/nvn_tex_fit.h
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_FIT_FROM_VIEW -o $@ t_tex_fit.m -framework Metal -framework Foundation
 t_fuse_check: t_fuse_check.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_fuse_check.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_srgb_view: t_rt_srgb_view.m $(CRASH) $(GFX) $(GFX_H)
@@ -137,6 +139,18 @@ t_ub: t_ub.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ub.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_drvseg: t_drvseg.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_drvseg.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_argbind: t_argbind.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_argbind.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_argbind_ended: t_argbind.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_DRAW_ON_ENDED -o $@ t_argbind.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_argbind_ser: t_argbind.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_ARGS_SER_IGNORED -o $@ t_argbind.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_argbind_3d: t_argbind.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_3D_SLOT_AS_IS -o $@ t_argbind.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_argbind_size0: t_argbind.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_SBUF_SIZE0_ONE -o $@ t_argbind.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_argbind_vbfirst: t_argbind.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_VB_PAST_FIRST -o $@ t_argbind.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_qstrip: t_qstrip.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_qstrip.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_qstrip_abc: t_qstrip.m $(CRASH) $(GFX) $(GFX_H)
@@ -145,8 +159,10 @@ t_restart: t_restart.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_restart.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_live: t_live.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_live.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
-t_wb: t_wb.m $(CRASH) $(GFX) $(GFX_H)
-	clang $(CFLAGS) -fobjc-arc -o $@ t_wb.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_wb: t_wb.m core_away_stub.c $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_wb.m core_away_stub.c $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_wb_kept: t_wb.m core_away_stub.c $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_WB_KEEPS_CORE -o $@ t_wb.m core_away_stub.c $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pend: t_pend.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pend.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_keepalive: t_keepalive.m $(CRASH) $(GFX) $(GFX_H)
@@ -207,8 +223,10 @@ t_dbounds: t_dbounds.m ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_dbounds.m $(CRASH) $(HSTACK) $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_nvn64d: t_nvn64d.m ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_nvn64d.m $(CRASH) $(HSTACK) $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
-t_pools: t_pools.m ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
-	clang $(CFLAGS) -fobjc-arc -o $@ t_pools.m $(CRASH) $(HSTACK) $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
+t_pools: t_pools.m core_away_stub.c ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_pools.m core_away_stub.c $(CRASH) $(HSTACK) $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
+t_pools_kept: t_pools.m core_away_stub.c ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -DDM_TEST_POOL_KEEPS_CORE -o $@ t_pools.m core_away_stub.c $(CRASH) $(HSTACK) $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_blkunp: t_blkunp.m ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_blkunp.m $(CRASH) $(HSTACK) $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_fxp: t_fxp.m ../nvn/hle_nvn.c $(CRASH) $(HSTACK) $(GFX) $(GFX_H)
@@ -362,6 +380,7 @@ run: \
 	t_dbounds \
 	t_nvn64d \
 	t_pools \
+	t_pools_kept \
 	t_blkunp \
 	t_fxp \
 	t_xlat \
@@ -406,6 +425,12 @@ run: \
 	t_refl \
 	t_restart \
 	t_qstrip \
+	t_argbind \
+	t_argbind_ended \
+	t_argbind_ser \
+	t_argbind_3d \
+	t_argbind_size0 \
+	t_argbind_vbfirst \
 	t_qstrip_abc \
 	t_retry \
 	t_rstream \
@@ -419,6 +444,7 @@ run: \
 	t_sync_order \
 	t_tex_auto \
 	t_tex_fit \
+	t_tex_fit_view \
 	t_texcheck \
 	t_ub \
 	t_ubren \
@@ -432,6 +458,7 @@ run: \
 	t_visibility \
 	t_warm_list \
 	t_wb \
+	t_wb_kept \
 	t_writetexels \
 	t_flushtexels \
 	t_xv \
@@ -550,6 +577,10 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_dbounds
 	MTL_DEBUG_LAYER=1 ./t_nvn64d
 	./t_pools
+	@status=0; ./t_pools_kept > t_pools_kept.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_pools_kept.log)" -ne 1 ]; then \
+	   cat t_pools_kept.log; echo "t_pools_kept: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_pools_kept: pool setup keeping the core fails 1, as expected'; fi
 	MTL_DEBUG_LAYER=1 ./t_xlat
 	MTL_DEBUG_LAYER=1 ./t_blkunp
 	MTL_DEBUG_LAYER=1 ./t_fxp
@@ -587,6 +618,10 @@ run: \
 	./t_live
 	./t_wb
 	DM_NVN_WB_IDLE=1 ./t_wb --idle
+	@status=0; ./t_wb_kept > t_wb_kept.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_wb_kept.log)" -ne 1 ]; then \
+	   cat t_wb_kept.log; echo "t_wb_kept: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_wb_kept: a write-back wait keeping the core fails 1, as expected'; fi
 	./t_pend
 	./t_ppred
 	MTL_DEBUG_LAYER=1 ./t_present_res
@@ -604,6 +639,27 @@ run: \
 	./t_upwait
 	MTL_DEBUG_LAYER=1 ./t_restart
 	MTL_DEBUG_LAYER=1 ./t_qstrip
+	MTL_DEBUG_LAYER=1 ./t_argbind
+	@status=0; MTL_DEBUG_LAYER=1 ./t_argbind_ended > t_argbind_ended.log 2>&1 || status=$$?; \
+	 if [ "$$status" -eq 0 ] || [ "$$status" -eq 1 ] || ! grep -qE "CRASH sig=|failed assertion" t_argbind_ended.log; then \
+	   tail -5 t_argbind_ended.log; echo "t_argbind_ended: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_argbind_ended: a draw encoded on the pass its binding ended stops the process, as expected'; fi
+	@status=0; MTL_DEBUG_LAYER=1 ./t_argbind_ser > t_argbind_ser.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_argbind_ser.log)" -ne 1 ]; then \
+	   cat t_argbind_ser.log; echo "t_argbind_ser: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_argbind_ser: argument blocks reused over a changed serial fail 1, as expected'; fi
+	@status=0; MTL_DEBUG_LAYER=1 ./t_argbind_3d > t_argbind_3d.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_argbind_3d.log)" -ne 1 ]; then \
+	   cat t_argbind_3d.log; echo "t_argbind_3d: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_argbind_3d: a 2D texture bound as it is in a 3D slot fails 1, as expected'; fi
+	@status=0; MTL_DEBUG_LAYER=1 ./t_argbind_size0 > t_argbind_size0.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_argbind_size0.log)" -ne 1 ]; then \
+	   cat t_argbind_size0.log; echo "t_argbind_size0: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_argbind_size0: a size-0 storage binding taken as one byte fails 1, as expected'; fi
+	@status=0; MTL_DEBUG_LAYER=1 ./t_argbind_vbfirst > t_argbind_vbfirst.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_argbind_vbfirst.log)" -ne 4 ]; then \
+	   cat t_argbind_vbfirst.log; echo "t_argbind_vbfirst: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_argbind_vbfirst: a stream read checked at its first vertex fails 4, as expected'; fi
 	@status=0; ./t_qstrip_abc > t_qstrip_abc.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_qstrip_abc.log)" -ne 4 ]; then \
 	   cat t_qstrip_abc.log; echo "t_qstrip_abc: unexpected negative-control result ($$status)"; exit 1; \
@@ -629,6 +685,10 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	MTL_DEBUG_LAYER=1 ./t_tex_fit
+	@status=0; MTL_DEBUG_LAYER=1 ./t_tex_fit_view > t_tex_fit_view.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_tex_fit_view.log)" -ne 1 ]; then \
+	   cat t_tex_fit_view.log; echo "t_tex_fit_view: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_tex_fit_view: a view of a view made from the view fails 1, as expected'; fi
 .PHONY: run
 # The older-API build (DM_NVN_M3=1, macOS 15.0): the same tests built and run in a sibling tests_m3 directory
 run-m3:

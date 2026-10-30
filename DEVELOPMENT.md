@@ -311,8 +311,8 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   rewrites, subgroup helpers inlined, BC4 / BC5 as 8-bit where R16G16 does not filter (upstream 2461649, 758f5d4, 17b4baa); nx2apk's Darwin
   shim headers.
 
-From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 289 done in batch 122, 290, 291 and 298 in batch 141, the
-user's order: 301 next):
+From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 289 done in batch 122, 290, 291 and 298 in batch 141, 296
+and 297 in batch 142, the user's order: 301 next):
 - 292 fade steps that truncate to 0 above about 63.5 fps (MacNativeGames 3e9e7f67 / PR #1112, #1134's rule: a positive step at least 1, zero
   stays zero): main 0x0a7ac4, 0x95dd24, 0x6155e4, 0x615660, met at `DM_PRESENT_HZ` 90 / 120 with realtime.
 - 293 cutscenes at 60 fps (71c; mamcjr/TOTKRecompAndroid da06d5a, facts only): four functions run once a frame only in cutscenes (main 0x45c700,
@@ -321,11 +321,6 @@ user's order: 301 next):
 - 295 the translator's BRX chained form (nx2android 02e336f, MIT): 86 of Tears of the Kingdom's 28,652 shaders and 5 of manosaba's 2,740 have a
   BRX; translate them both ways and compare. The other two nx2android translator fixes are not needed with our `XLATE_DEBUG=1` (plan item 200),
   which the Android chain keeps.
-- 296 smaller correctness from nxnative: argument blocks re-encoded when the serial generation changes (971d336), a draw after its pass ended
-  (81ccacf, #600), a `tex_fit` view built from the root texture (d9c2d5e), a storage buffer of size 0 as the rest of the buffer (f293a70),
-  vertex streams bounded (1c54ea0), a 2D texture in a 3D slot (2bccdcc), three host races (ce99604).
-- 297 the virtual core released while waiting: write-back waits (MacNativeGames 0fd9358e, PR #1141), `nn::fs` and memory-pool setup
-  (valentderah/totk-pc-recomp 101f2c8, MIT: loader threads held it up to 20 ms).
 - 299 iOS input: Home and Capture kept from the system (nxnative 062cd06), motion from the phone and controllers (659c69d, cca3333), rumble
   through `GCHapticsLocalityHandles` (2e07a88).
 - 300 texture filtering at 1/256 of a texel as the Switch does, for vertex-shader lookups and gathers (TOTKRecompAndroid 8adbc5c, c02a43f, facts
@@ -1184,3 +1179,30 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   `-DDM_TEST_VK_UPLOAD_UNGUARDED` fails 1; quad strips with back faces culled, `-DDM_TEST_QS_ABC` fails 3; the winding turned around now 7).
   gfx 164 / 164 on Metal 4 and Metal 3, host 188 / 188, sanitizer, texture, audit and tool tests, the phone's tests, both IPAs, the app and
   headless runs 40 s at 60 fps; smoke as batch 140's (looked at).
+- [x] batch 142 · 296 smaller correctness after seedds/nxnative (MIT, written anew), the Metal backend unless said:
+  a draw whose argument binding ended its render pass (81ccacf: a texture bound through a view of another format is made again with format views
+  allowed and copied on a blit encoder, tex_upgrade_pfv, which ends the pass) is begun again in a new pass; argument encoding stops at once on the
+  ended encoder (on Metal 3 its next useResource crashed in the driver; Metal 4 drew on it, an assertion under API validation). Argument blocks
+  reused follow the serial table's steps too (971d336 after MacNativeGames e49aa55): a serial's Metal object replaced under the same program and
+  bindings. A compatible view (tex_fit) of a view is made from the texture under it, at its level and slice (d9c2d5e: a view of a view read as
+  not resident under shader validation). A texture of another type in a 3D slot binds the zero 3D texture (2bccdcc: Metal makes no 3D view of a
+  2D texture; Tears of the Kingdom's prologue meets it with the BC4-style encoders of item 168, texture ID 258 a 4x4 RGBA8, its red line now
+  this one; the M5 read zero through the mismatched slot as well, t_argbind, and the frames stay as they were). A writable storage binding of
+  size 0 drops the uniform snapshots over the rest of its pool (f293a70; it dropped one byte). A
+  direct draw whose vertex shader reads past a stream's bound size is reported (1c54ea0: Maxwell reads zeros there; nxnative binds a copy
+  padded with zeros, to do when one of our games shows the line). The host (ce99604): the audio renderer's command list walked without typed
+  loads and each command within the list's length (it walked on past a bad size); an audio output in the registry the lifecycle and the watchdog
+  read only once made; a new guest thread in the thread registry only with its pthread handle written (pthread_create wrote it without G); Get /
+  SetThreadPriority under G.
+  297 the virtual core given up while waiting (game.json virtual_cores, Tears of the Kingdom; a no-op without): every nn::fs call the host takes
+  over (valentderah/totk-pc-recomp 101f2c8, MIT: the loader threads held a core through CloseFile and CreateCacheStorage; on the Switch an IPC
+  request), nvnMemoryPoolInitialize (the same: up to 20 ms there), and the GPU wait of a write-back on invalidate (MacNativeGames 0fd9358e, MIT:
+  the wait only, not the writing of the pages after it). NVN_BLOCKING now lives in hle_nvn.c's preamble (pools.inc comes before textures.inc).
+  Tests: `t_argbind` 13 on Metal 4 and Metal 3 (the draw begun again once, its pixels drawn, the texture upgraded once:
+  `-DDM_TEST_DRAW_ON_ENDED` stops the process; `-DDM_TEST_ARGS_SER_IGNORED` fails 1; `-DDM_TEST_3D_SLOT_AS_IS` 1; `-DDM_TEST_SBUF_SIZE0_ONE` 1;
+  `-DDM_TEST_VB_PAST_FIRST` 4); `t_tex_fit` 14 (`-DDM_TEST_FIT_FROM_VIEW` 1); `t_wb` 22 (`-DDM_TEST_WB_KEEPS_CORE` 1); `t_pools` 6
+  (`-DDM_TEST_POOL_KEEPS_CORE` 1); host `t_audren` 7 (`-DDM_TEST_AUDREN_UNBOUNDED` 1: the child reads past the list into an inaccessible page),
+  `t_audio_extras` 9 (`-DDM_TEST_AUDIO_PUBLISH_EARLY` 1), `t_thrpub` 3 (`-DDM_TEST_THREAD_LINK_EARLY` 1, `-DDM_TEST_PRIO_UNLOCKED` 1),
+  `t_fs_core` 2 (`-DDM_TEST_FS_KEEPS_CORE` 2). gfx 173 / 173 on Metal 4 and Metal 3, host 194 / 194, sanitizer, texture, audit and tool
+  tests, the phone's tests, both IPAs, the app and headless runs 40 s at 60 fps; smoke as batch 141's (looked at), no draw reading past a
+  stream's bound size in the three runs.

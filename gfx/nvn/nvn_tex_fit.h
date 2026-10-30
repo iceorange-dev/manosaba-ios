@@ -12,7 +12,13 @@ static inline NSUInteger nvn_tex_fit_slices(MTLTextureType want, MTLTextureType 
     if (want == MTLTextureTypeCubeArray && have == MTLTextureType2DArray && layers >= 6) return layers / 6 * 6;
     return 0;
 }
-// The view itself: the first ns slices of t, all its levels, its format and swizzle, as type want
+// The view itself: the first ns slices of t, all its levels, its format and swizzle, as type want. Made from the texture under t when t is a view
+// (the view cache's), its levels and slices offset by t's place there: Metal's shader validation reported a view of a view as not resident
+// (seedds/nxnative d9c2d5e, MIT: a 64x64 cube read through a 2D-array view; plan item 296)
 static inline id<MTLTexture> nvn_tex_fit_view(id<MTLTexture> t, MTLTextureType want, NSUInteger ns) {
-    return [t newTextureViewWithPixelFormat:t.pixelFormat textureType:want levels:NSMakeRange(0, t.mipmapLevelCount) slices:NSMakeRange(0, ns) swizzle:t.swizzle];
+    id<MTLTexture> root = t; NSUInteger l0 = 0, s0 = 0;
+#ifndef DM_TEST_FIT_FROM_VIEW   // negative control of t_tex_fit only: made from t, as before
+    while (root.parentTexture) { l0 += root.parentRelativeLevel; s0 += root.parentRelativeSlice; root = root.parentTexture; }
+#endif
+    return [root newTextureViewWithPixelFormat:t.pixelFormat textureType:want levels:NSMakeRange(l0, t.mipmapLevelCount) slices:NSMakeRange(s0, ns) swizzle:t.swizzle];
 }

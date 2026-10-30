@@ -175,6 +175,15 @@ void mtl_drain(void) { @autoreleasepool { present_drop_for_suspend(); mtl_presen
 // reaches what it uses from the start. Before, such a binding, and one in no pool, fell silently to the dummy buffer: the GPU's writes were lost
 static uint64_t g_sbuf_past, g_sbuf_lost;
 void mtl_sbuf_stats(uint64_t *past, uint64_t *lost) { *past = g_sbuf_past; *lost = g_sbuf_lost; }
+// The bytes a storage binding covers, for the uniform snapshots a shader writing it drops: its size, or with size 0 the rest of the pool its address
+// lies in (Breath of the Wild binds its particle outputs so; seedds/nxnative f293a70, MIT; plan item 296: it dropped one byte); 1 outside the pools
+static uint64_t sbuf_extent(uint64_t addr, uint64_t len) {
+    if (len) return len;
+#ifndef DM_TEST_SBUF_SIZE0_ONE   // negative control of t_argbind only: one byte, as before
+    void *mb; uint64_t mo; if (mtl_addr(addr, 1, &mb, &mo)) return ((__bridge id<MTLBuffer>)mb).length - mo;
+#endif
+    return 1;
+}
 static int sbuf_gpu_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off, uint64_t *gpu) {
     if (mtl_gpu_addr(addr, len ? len : 1, buf, off, gpu)) return 1;
 #ifndef DM_TEST_SBUF_WHOLE_RANGE   // negative control of t_sbufpast only: the whole range or the dummy, as before

@@ -8,6 +8,8 @@
 //   FlushAudioOutBuffers stopped: false, nothing moved; started: true, the third (part played) released unplayed after the two played, the count 0
 //   started again with nothing queued: played 0 (since this StartAudioOut)
 // Volume not applied (-DDM_TEST_AUDIO_VOLUME_IGNORED): 3 fail; the played count not started again (-DDM_TEST_AUDIO_PLAYED_KEPT): 1 fails.
+// The output is in the registry the lifecycle and the watchdog read only once it is made (plan item 296; nxnative ce99604): in it first, as
+// before (-DDM_TEST_AUDIO_PUBLISH_EARLY): 1 fails.
 #include "../hle/hle_audio.c"
 #include <time.h>
 uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
@@ -18,6 +20,8 @@ void *objmap_del(const void *k) { for (int i = 0; i < 8; i++) if (om[i].k == k) 
 void hle_signal_system_event(void *g) { (void)g; }
 void hle_bind_system_event(void *g, int autoclear) { (void)g; (void)autoclear; }
 static int n, fail;
+static int g_built_when_registered = -1;
+static void on_registered(struct aout *a) { g_built_when_registered = a->built; }
 static void check(const char *what, int ok) { n++; fail += !ok; printf("%-100s %s\n", what, ok ? "✓" : "✗"); }
 static int all(const int16_t *s, size_t k, int16_t v) { for (size_t i = 0; i < k; i++) if (s[i] != v) return 0; return 1; }
 
@@ -25,7 +29,9 @@ int main(void) {
     setenv("DM_AUDIO", "0", 1);
     char out[64], ev[64]; uint8_t prm[16]; gbuf b[3], never = {0}; static int16_t pcm[3][480 * 2], got[480 * 2];
     h_au_InitParam(prm);
+    g_test_ao_registered = on_registered;
     if (h_au_Open(out, ev, NULL, prm)) return 1;
+    check("the output is in the registry the lifecycle and the watchdog read only once it is made", g_built_when_registered == 1);
     aout *a = ao(out);
     for (int i = 0; i < 3; i++) { for (int j = 0; j < 960; j++) pcm[i][j] = i < 2 ? 1000 : 30000; h_au_SetBuf(&b[i], pcm[i], sizeof pcm[i], sizeof pcm[i]); h_au_Append(out, &b[i]); }
     check("three appended: count 3, the second contained, one never appended not", h_au_Count(out) == 3 && h_au_Contains(out, &b[1]) && !h_au_Contains(out, &never));

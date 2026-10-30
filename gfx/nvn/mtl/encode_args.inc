@@ -35,6 +35,13 @@ static id<MTLTexture> fbx_sub(id<MTLTexture> t, uint64_t *rid) {
     }
     return nil;
 }
+// 0 when a texture's lookup ended the render pass en belongs to (a texture upgraded for a format view, tex_upgrade_pfv: blit() ends it): nothing
+// more is encoded on it, the draw begins again in a new pass (draw.inc, plan item 296; on Metal 3 the next useResource on it crashed in the driver)
+#ifndef DM_TEST_DRAW_ON_ENDED   // negative control of t_argbind only: encoded on as before
+#define ARGS_PASS_GONE() do { if (nvn_stage != 5 && (__bridge void *)g_enc != (__bridge void *)en) { pthread_mutex_unlock(&g_rmu); return 0; } } while (0)   // (USE runs under g_rmu)
+#else
+#define ARGS_PASS_GONE() do { } while (0)
+#endif
 static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, int metal_vertex) {
     if (!sh->ae) return 1;
     uint64_t slots[NVN_REFL_MAXB] = {0};
@@ -47,11 +54,11 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
 #if DM_NVN_M3
     // Older API: every resource a shader accesses indirectly through an argument block must have its usage declared on this encoder, so that the system knows its ordering dependency against other encoders (upload copies, other passes);
     // without the declaration a read-only texture gets out of order with the copy that writes it (measured before the move to Metal 4). Repeated declarations within one encoder are idempotent
-    #define USE(r, u) do { id<MTLResource> r_ = (id<MTLResource>)(r); if (r_) { if (nvn_stage == 5) [(id<MTLComputeCommandEncoder>)en useResource:r_ usage:(u)]; else if (!m3_use_seen((__bridge void *)r_, (uint32_t)(u))) [(id<MTLRenderCommandEncoder>)en useResource:r_ usage:(u) stages:MTLRenderStageVertex | MTLRenderStageFragment]; } \
+    #define USE(r, u) do { ARGS_PASS_GONE(); id<MTLResource> r_ = (id<MTLResource>)(r); if (r_) { if (nvn_stage == 5) [(id<MTLComputeCommandEncoder>)en useResource:r_ usage:(u)]; else if (!m3_use_seen((__bridge void *)r_, (uint32_t)(u))) [(id<MTLRenderCommandEncoder>)en useResource:r_ usage:(u) stages:MTLRenderStageVertex | MTLRenderStageFragment]; } \
         if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
     #define USE_SAMP(r, u) do { (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)   // samplers are not resources and need no declaration
 #else
-    #define USE(r, u) do { (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
+    #define USE(r, u) do { ARGS_PASS_GONE(); (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
     #define USE_SAMP(r, u) USE(r, u)
 #endif
     // DM_NVN_PASSDUMP: on the first new encode per pass per stage, records the shader key (K) and the actual source of each binding (B: UBO address / length / first 4 floats, texture ID and serial, or "dummy")
@@ -113,7 +120,14 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
                     PD("B %llu st%d tex reg%d Metal level 0 %lux%lu non-zero words %.4f", g_stat_pass, nvn_stage, reg, (unsigned long)tw, (unsigned long)th, mn ? (double)mz / mn : 0.0);
                 }
             }
-            if (t && t.textureType != (MTLTextureType)b->decl_tt) { ttm_note(sh->key, nvn_stage, reg, (MTLTextureType)b->decl_tt, t, tid); uint64_t r2 = 0; id<MTLTexture> fv = tex_fit(tid, t, (MTLTextureType)b->decl_tt, &r2); if (fv) { t = fv; trid = r2; } }
+            if (t && t.textureType != (MTLTextureType)b->decl_tt) { ttm_note(sh->key, nvn_stage, reg, (MTLTextureType)b->decl_tt, t, tid);
+                // A 3D slot holding another type (Batman: Arkham Knight samples a volume where 2D render targets were left bound): Metal makes no 3D view
+                // of it, so the zero 3D texture (seedds/nxnative 2bccdcc, MIT; plan item 296); what the Switch reads there is not known
+#ifndef DM_TEST_3D_SLOT_AS_IS   // negative control of t_argbind only: bound as it is, as before
+                if (b->decl_tt == MTLTextureType3D) { RED_ONCE(101, "texture ID %d (type %lu) in a 3D slot: the zero 3D texture bound (first case)", tid, (unsigned long)t.textureType); t = nil; }
+                else
+#endif
+                { uint64_t r2 = 0; id<MTLTexture> fv = tex_fit(tid, t, (MTLTextureType)b->decl_tt, &r2); if (fv) { t = fv; trid = r2; } } }
             if (t) t = fxp_sub(nvn_stage, tid, t, &trid);   // the compose pass: the scene MetalFX upscaled (plan item 63)
             if (t && g_fbx_nact) { uint64_t r2 = 0; id<MTLTexture> c = fbx_sub(t, &r2); if (c) { t = c; trid = r2; } }   // the draw samples its own attachment: the copy
             if (!t) { t = dummy_tex(b->dtt, b->dpf); trid = g_dummy_tex_rid[b->dtt & 7][b->dpf & 3]; }
@@ -139,7 +153,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
         } else if (b->kind == NVN_RB_SBUFP || b->kind == NVN_RB_UBOP) {   // B: storage buffers / compute-stage uniforms are device pointers; the address is taken by NVN slot
             const p_bind_buf *u = reg < 16 ? (b->kind == NVN_RB_UBOP ? &S.ubo[nvn_stage][reg] : &S.ssbo[nvn_stage][reg]) : NULL;
             void *mb; uint64_t mo, gpu;
-            if (b->kind == NVN_RB_SBUFP && b->rw && u && u->addr) us_drop(u->addr, u->size ? u->size : 1);   // the shader may write it
+            if (b->kind == NVN_RB_SBUFP && b->rw && u && u->addr) us_drop(u->addr, sbuf_extent(u->addr, u->size));   // the shader may write it
             void *rb_ = NULL; uint64_t rg_ = b->kind == NVN_RB_UBOP && u && u->addr && upd_any() ? upd_shadow(u->addr, u->size, &rb_) : 0;   // with the submission's updates (see upd_any)
             const us_ent *sc = !rg_ && b->kind == NVN_RB_UBOP && u ? us_find(u->addr, u->size) : NULL;   // compute uniforms as of the submit call
             if (rg_) { slots[aid] = rg_; USE((__bridge id<MTLBuffer>)rb_, MTLResourceUsageRead); }

@@ -3,7 +3,8 @@
 // and a linear sampler at ID 3. A command buffer that sets pool A resolves the handle of ID 5 to A's texture, after setting B to B's; the sampler
 // handle of ID 3 likewise; the first pool's IDs are the table's own (base 0: a game with one pool is unchanged); the same pool memory
 // initialized again keeps its base; a second pool's textures do not overwrite the first's. One ID space, as before (-DDM_TEST_POOLS_ONE_SPACE):
-// 4 fail.
+// 4 fail. A memory pool's setup (nvnMemoryPoolInitialize) gives the thread's virtual core up and takes it back (plan item 297; core_away_stub.c
+// counts; -DDM_TEST_POOL_KEEPS_CORE, the core kept: 1 fails).
 #include "../nvn/nvn_mtl.m"
 #include "../nvn/hle_nvn.c"
 const dm_game_profile dm_game = { .id = "test", .nvn_api_major = 55, .nvn_api_minor = 15, .nvn_c2 = {0x168, 128, 0x568, 128, 0x120, 8}, .nvn_depth_mode = 1 };
@@ -47,6 +48,13 @@ int main(void) { @autoreleasepool {
     check("back to pool A: A's texture again (the second pool did not overwrite it)", width_of(th) == 2);
     h_nvnTexturePoolInitialize(&ta2, (const NVNmemoryPool *)&g_p_pool, 0x10000, 64);
     check("pool A's memory initialized again: the same base", ((dpool_t *)&ta2)->base == ((dpool_t *)&ta)->base);
+    // a memory pool's setup through the public call: the core given up and taken back once
+    extern int g_core_aways, g_core_backs; int aw0 = g_core_aways, bk0 = g_core_backs;
+    static uint8_t pm[1 << 16] __attribute__((aligned(16384))); NVNmemoryPoolBuilder pb; NVNmemoryPool mp;
+    h_nvnMemoryPoolBuilderSetDefaults(&pb); h_nvnMemoryPoolBuilderSetStorage(&pb, pm, sizeof pm); h_nvnMemoryPoolBuilderSetFlags(&pb, NVN_MEMORY_POOL_FLAGS_CPU_CACHED | NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    int okp = h_nvnMemoryPoolInitialize(&mp, &pb);
+    check("nvnMemoryPoolInitialize: the virtual core given up once for the backend's setup, taken back once", okp && g_core_aways - aw0 == 1 && g_core_backs - bk0 == 1);
+    h_nvnMemoryPoolFinalize(&mp);
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 } }
