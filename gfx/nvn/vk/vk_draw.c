@@ -483,4 +483,5 @@ void vk_stats_line(void) {
          (unsigned long long)e[VK_PE_BARRIER], (unsigned long long)e[VK_PE_UB], (unsigned long long)e[VK_PE_UPD], (unsigned long long)e[VK_PE_SAMPLES],
          (unsigned long long)e[VK_PE_SUBMIT], (unsigned long long)e[VK_PE_OTHER]);
     vk_ptime_line(600);   // (called every 600 presents: vk_present.c)
+    vk_pool_line(600);
 }

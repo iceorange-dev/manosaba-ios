@@ -374,7 +374,11 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
-  `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
+  `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet. Measured in the first trial's debate (2026-10-30): the game
+  waits for its newest submission every frame (177; 12 ms a frame there), yet frames are held at the 60 Hz present (p50 16.6 ms) and its
+  dips are single long frames at the lines of text: the GPU one frame behind (224, as a probe: the waits 12 → 0.1 ms a frame) left the frame
+  times as they were. Those frames were the render thread making and dropping texture pools (batch 135); what is left of them: a pool going
+  (the wait for the GPU to go idle and one copy: 16 MB in about 15 ms), the game's own memory mapping (`svc` → `mmap`), `vkAllocateMemory`.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -1040,3 +1044,24 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   `-DDM_TEST_VK_PEND_KEPT` 1 fails). The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 133's; the headless run 40 s. gfx
   156 / 156 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two
   red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots as batch 133's (looked at).
+- [x] batch 135 · 301f part: texture pools made and dropped on Vulkan with fewer copies. In the first trial's debate (55 lines of text)
+  Unity made 236 memory pools (4.0 GB; one a texture, 16-34 MB for a character's picture with its mips) and dropped 184: timed on the phone,
+  the render thread spent 2.9 s copying them in (a pool's content kept, the device memory placed over the range, the content copied into
+  it), 0.77 s waiting for the GPU to go idle and 2.5 s copying them out, and the frame at each line took 40-100 ms (the main thread waiting
+  in `nn::os::AcquireSemaphore` for the render thread: `DM_SAMPLE` on all threads). Now a pool's pages that /proc/self/pagemap shows neither
+  present nor swapped out (never written since mapped, so zero) are not copied in, as new device memory reads zero (checked on the first
+  four pools with such pages; memory that did not would have them cleared): every page of those pools was such, 0 MB copied in. A pool
+  going gives its content back by one copy and an `mremap` of that copy over the range (two copies before). The same debate: 2.5 s on pools
+  (0.6 waiting, 1.9 copying), frames of 40 ms or more from frame 7000 on 38 → 29, frame p95 about the same (17.5-20.6 ms against
+  17.9-21.4); the pictures looked at, no red line. The stats line gives the pools every 600 presents (made, written and copied in, gone,
+  waits, copying).
+  - Tried and not kept: waiting only for the last submission that recorded one of the pool's addresses (25 frames of 40 ms or more):
+    freeing the memory while another submission ran left a 64 KB pool's range with only its first 16 KB mapped once that submission was
+    done, in 2 of 18 test runs of batch 135's first try (`t_vk_be`'s controls; SEGV_MAPERR in the tombstones); 300 more tries with the GPU
+    busy did not show it again and the cause was not found, so a pool going still waits for the GPU to go idle. `MAP_POPULATE` for the
+    kept copy: the faults it saves it spends making the pages (64 MB of pools going 72.8 → 72 ms).
+  Tests: on the phone `t_vk_be` 34 (a pool over 16 pages, 2 written: those keep their bytes, the rest read zero, 8 KB copied in; its going
+  gives the range back with what it held and the GPU's copy into it, writable: `-DDM_TEST_VK_POOL_ALL_UNWRITTEN`, every page taken as never
+  written, fails 3, the first pool's check among them). The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 134's; the headless
+  run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the
+  Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots as batch 134's.

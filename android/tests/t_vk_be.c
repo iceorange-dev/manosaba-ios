@@ -20,7 +20,10 @@
 // written (-DDM_TEST_VK_BAR_NO_SPLIT: 2 fail, the passes timed with it). The argument arena while a submission runs: the next one's allocation
 // beside its own does not wait for it, one entering blocks it used on the last lap does (-DDM_TEST_VK_ARENA_WAIT_OPEN, the old wait: 1 fails). Each
 // pass's GPU time summed by its targets (DM_VK_PASS_GPU; -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails). The pending writes
-// of completed submissions retired when the next starts (-DDM_TEST_VK_PEND_KEPT, never: 1 fails).
+// of completed submissions retired when the next starts (-DDM_TEST_VK_PEND_KEPT, never: 1 fails). Pools of textures (301f): one over pages written
+// and never written keeps the written ones' bytes, reads zero in the others and copies in only the written (-DDM_TEST_VK_POOL_ALL_UNWRITTEN, every
+// page taken as never written: 3 fail, the first pool's check among them); a pool going gives its range back with what it held (the GPU's copy into
+// it too) by one copy and an mremap.
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
@@ -163,6 +166,7 @@ static uint64_t held_sub(size_t n1, int k) {   // k allocations of n1 bytes in i
     uint8_t *c; uint64_t g; void *b; for (int i = 0; i < k; i++) nvn_be_arena(n1, &c, &g, &b);
     return mtl_sub_commit();
 }
+static void rec_copy_q(void *a) { uint8_t *q = a; nvn_be_copy_b2b((uint64_t)(uintptr_t)(q + 4096), (uint64_t)(uintptr_t)(q + 8 * 4096), 4096); }   // a use of a small pool: page 1 → 8
 static double next_alloc_ms(size_t n, uint64_t held, int *still) {   // the next submission's allocation of n bytes, timed while held runs
     pthread_t th; pthread_create(&th, NULL, release, NULL);
     uint64_t t0 = now_ns(); mtl_sub_begin(); uint8_t *c; uint64_t g; void *b; nvn_be_arena(n, &c, &g, &b); uint64_t t1 = now_ns();
@@ -333,6 +337,17 @@ int main(void) {
     CHECK(still && ms < 100, "the arena: the next submission's allocation in the block a running one used does not wait for it (%.1f ms; it was running: %d)", ms, still);
     fh = held_sub(30u << 20, 2); ms = next_alloc_ms(30u << 20, fh, &still);
     CHECK(ms > 250, "the arena: an allocation entering blocks a running submission used on the ring's last lap waits for it (%.1f ms)", ms);
+    // pools of textures (plan item 301f): a pool over pages written and never written, and its going
+    uint8_t *Q = mmap(NULL, 16 * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    memset(Q + 4096, 0x5a, 4096); Q[5 * 4096 + 7] = 0x77;   // pages 1 and 5 written, the rest never
+    uint64_t cp0 = vk_pool_copied(); mtl_pool_add(Q, 16 * 4096); uint64_t cq = vk_pool_copied() - cp0;
+    int qok = Q[4096] == 0x5a && Q[2 * 4096 - 1] == 0x5a && Q[5 * 4096 + 7] == 0x77, qzero = 1;
+    for (int i = 0; i < 16 * 4096; i++) if ((i < 4096 || i >= 2 * 4096) && i != 5 * 4096 + 7 && Q[i]) { qzero = 0; break; }
+    CHECK(qok && qzero && cq == 2 * 4096, "a pool over 16 pages, 2 of them written: those keep their bytes, the others read zero, and only theirs are copied in (%llu bytes)", (unsigned long long)cq);
+    f = run(rec_copy_q, Q); mtl_wait(f, UINT64_MAX);
+    mtl_pool_del(Q);
+    Q[0] = 1;
+    CHECK(Q[0] == 1 && Q[4096] == 0x5a && Q[5 * 4096 + 7] == 0x77 && Q[8 * 4096] == 0x5a && !mtl_pool_has((uint64_t)(uintptr_t)Q, 16), "... and its range holds what it held, the GPU's copy too, writable again");
     // the pool goes: its range is the CPU's again, with the content
     uint8_t keep = P[12345]; mtl_pool_del(P);
     CHECK(P[12345] == keep && !mtl_pool_has((uint64_t)(uintptr_t)P, 16), "after the pool's removal its range holds what it held (and is in no pool)");

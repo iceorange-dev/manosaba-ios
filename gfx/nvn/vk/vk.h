@@ -47,6 +47,8 @@ uint32_t vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryProperty
 typedef struct { uintptr_t lo, hi; VkBuffer buf; VkDeviceMemory mem; int placed; } vk_pool;   // lo, hi first (nvn_pool_find.h)
 int vk_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);   // the pool buffer holding [addr, addr + len) and the offset there
 int vk_addr_span(uint64_t addr, VkBuffer *buf, VkDeviceSize *off, uint64_t *left);   // ... and the bytes from addr to its pool's end
+void vk_pool_line(uint64_t presents);   // the stats line's: pools made and gone since the last (vk_pools.c)
+uint64_t vk_pool_copied(void);         // bytes copied into pools when they were made, all along
 
 // vk_submit.c: the submission being recorded
 typedef struct { int kind; volatile uint32_t *val; uint32_t mode, v; uint64_t addr; uint32_t type; } vk_post;   // kind 1 event, 2 timestamp, 3 samples passed
