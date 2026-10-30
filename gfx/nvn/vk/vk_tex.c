@@ -15,7 +15,7 @@
 
 static nvn_hmap g_img = {.klen = 8};   // serial → vk_img
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t g_made, g_bytes;
+static uint64_t g_made, g_bytes; static _Atomic uint64_t g_live_n, g_live_bytes;   // made so far; alive now (destroyed on the completion thread)
 
 static int fmt_is_depth(int f) { return f >= 0x31 && f <= 0x36; }
 static VkImageAspectFlags aspect_of(int f) {
@@ -71,6 +71,7 @@ static vk_img *make(const tex_t *t) {
     VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, list[1] ? &fl : NULL, .flags = cf, .imageType = im->type, .format = uf,
         .extent = {im->w, im->h, im->d}, .mipLevels = im->levels, .arrayLayers = im->layers, .samples = (VkSampleCountFlagBits)samples,
         .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = us, .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    im->usage = us;
     VkResult r = vkCreateImage(V.dev, &ci, NULL, &im->img);
     if (r != VK_SUCCESS) { VLOG("[red] image %ux%ux%u ×%u, %u levels, format %d: %d", im->w, im->h, im->d, im->layers, im->levels, (int)uf, (int)r); free(im); return NULL; }
     VkMemoryRequirements rq; vkGetImageMemoryRequirements(V.dev, im->img, &rq);
@@ -80,7 +81,7 @@ static vk_img *make(const tex_t *t) {
     if (mt == UINT32_MAX || (r = vkAllocateMemory(V.dev, &mai, NULL, &im->mem)) != VK_SUCCESS) {
         VLOG("[red] image memory of %llu KB refused (%d)", (unsigned long long)(rq.size >> 10), (int)r); vkDestroyImage(V.dev, im->img, NULL); free(im); return NULL; }
     VK(vkBindImageMemory(V.dev, im->img, im->mem, 0));
-    g_made++; g_bytes += rq.size;
+    g_made++; g_bytes += rq.size; im->bytes = rq.size; atomic_fetch_add(&g_live_n, 1); atomic_fetch_add(&g_live_bytes, rq.size);
     return im;
 }
 static void to_general(vk_img *im, VkCommandBuffer cb) {
@@ -91,11 +92,14 @@ static void to_general(vk_img *im, VkCommandBuffer cb) {
     VkDependencyInfo di = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
     vkCmdPipelineBarrier2(cb, &di);
 }
-typedef struct { VkImage img; VkDeviceMemory mem; VkImageView views[16]; int nview; } dead_img;
-static void destroy_img(void *a) { dead_img *d = a; for (int i = 0; i < d->nview; i++) vkDestroyImageView(V.dev, d->views[i], NULL); vkDestroyImage(V.dev, d->img, NULL); vkFreeMemory(V.dev, d->mem, NULL); free(d); }
+typedef struct { VkImage img; VkDeviceMemory mem; VkImageView views[16]; int nview; uint64_t bytes; } dead_img;
+static void destroy_img(void *a) {
+    dead_img *d = a; for (int i = 0; i < d->nview; i++) vkDestroyImageView(V.dev, d->views[i], NULL); vkDestroyImage(V.dev, d->img, NULL); vkFreeMemory(V.dev, d->mem, NULL);
+    atomic_fetch_sub(&g_live_n, 1); atomic_fetch_sub(&g_live_bytes, d->bytes); free(d);
+}
 static int views_take_locked(vk_img *im, VkImageView *out, int max);
 static void retire_locked(vk_img *im) {   // destroyed once the GPU is past what may use it (g_mu held)
-    dead_img *d = calloc(1, sizeof *d); d->img = im->img; d->mem = im->mem;
+    dead_img *d = calloc(1, sizeof *d); d->img = im->img; d->mem = im->mem; d->bytes = im->bytes;
     d->nview = views_take_locked(im, d->views, 16);
     vk_after(mtl_last_fence() + 1, destroy_img, d); free(im);
 }
@@ -182,7 +186,8 @@ static int views_take_locked(vk_img *im, VkImageView *out, int max) {
 }
 VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int dim) {
     if (!im) return VK_NULL_HANDLE;
-    uint8_t key[12] = {0}; if (has_v && v) memcpy(key, v, sizeof *v); key[10] = (uint8_t)(attach | (dim + 1) << 1); key[11] = (uint8_t)has_v;
+    uint8_t key[12] = {0}; if (has_v && v) memcpy(key, v, sizeof *v); key[10] = (uint8_t)(attach | (dim + 1) << 2); key[11] = (uint8_t)has_v;
+    int rt = attach == 1, store = attach == 2;
     pthread_mutex_lock(&g_mu);
     view_set *vs = nvn_hm_get(&g_views, &im->serial);
     if (vs) for (int i = 0; i < vs->n; i++) if (!memcmp(vs->e[i].key, key, sizeof key)) { VkImageView r = vs->e[i].v; pthread_mutex_unlock(&g_mu); return r; }
@@ -192,17 +197,17 @@ VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int 
         if (v->set_layers) { l0 = v->min_layer; nly = v->nlayers ? v->nlayers : im->layers - l0; }
         if (v->set_format) { VkFormat vf; if (vk_fmt(v->format, &vf, NULL) && (vf == im->fmt || vf == srgb_twin(im->fmt))) f = vf; }
     }
-    if (attach) nl = 1;
+    if (rt || store) nl = 1;
     if (base >= im->levels) base = im->levels - 1; if (base + nl > im->levels) nl = im->levels - base;
     if (l0 >= im->layers) l0 = im->layers - 1; if (l0 + nly > im->layers) nly = im->layers - l0;
-    VkImageViewType vt = im->type == VK_IMAGE_TYPE_3D ? (attach ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_3D) :
+    VkImageViewType vt = im->type == VK_IMAGE_TYPE_3D ? (rt ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_3D) :
         im->type == VK_IMAGE_TYPE_1D ? (nly > 1 ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D) : nly > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     int tg = has_v && v && v->set_target ? v->target : im->t.d.target;
-    if (!attach && (tg == NVN_TEXTURE_TARGET_CUBEMAP || tg == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY) && nly >= 6 && im->w == im->h)
+    if (!rt && (tg == NVN_TEXTURE_TARGET_CUBEMAP || tg == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY) && nly >= 6 && im->w == im->h)
         vt = tg == NVN_TEXTURE_TARGET_CUBEMAP && nly == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
     // the dimension the shader declares (dmsh_vk.py dim_of), when the image can be viewed so: a 2D texture read as an array of one, an array's
     // first layer as 2D, layers as a cube
-    if (!attach && dim >= 0) {
+    if (!rt && dim >= 0) {
         static const VkImageViewType want[9] = {VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY, VK_IMAGE_VIEW_TYPE_3D,
                                                 VK_IMAGE_VIEW_TYPE_1D, VK_IMAGE_VIEW_TYPE_1D_ARRAY, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY};
         VkImageViewType w = dim < 9 ? want[dim] : vt;
@@ -231,7 +236,7 @@ VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int 
         cm = (VkComponentMapping){b[0], b[1], b[2], b[3]};
     }
     VkImageAspectFlags asp = im->aspect;
-    if (!attach && asp == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) asp = d->ds_mode ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;   // what a depth-stencil texture samples
+    if (!rt && asp == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) asp = d->ds_mode ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;   // what a depth-stencil texture samples
     VkImageViewCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = im->img, .viewType = vt, .format = f, .components = cm, .subresourceRange = {asp, base, nl, l0, nly}};
     VkImageView view; VkResult r = vkCreateImageView(V.dev, &ci, NULL, &view);
     if (r != VK_SUCCESS) { pthread_mutex_unlock(&g_mu); VLOG("[red] image view (type %d, format %d): %d", (int)vt, (int)f, (int)r); return VK_NULL_HANDLE; }
@@ -297,7 +302,9 @@ void mtl_reg_samp(int id, const samp_par *p) {
     g_rsamp[id] = *p; g_rsamp_set[id] = 1;
     pthread_mutex_unlock(&g_mu);
 }
-void vk_tex_stats(uint64_t *made, uint64_t *bytes, uint64_t *up_n, uint64_t *up_bytes, uint64_t *reup_n) { *made = g_made; *bytes = g_bytes; *up_n = g_up_n; *up_bytes = g_up_bytes; *reup_n = g_reup_n; }
+void vk_tex_stats(vk_tex_counts *c) {
+    c->made = g_made; c->made_bytes = g_bytes; c->live = atomic_load(&g_live_n); c->live_bytes = atomic_load(&g_live_bytes); c->up_n = g_up_n; c->up_bytes = g_up_bytes; c->reup_n = g_reup_n;
+}
 
 // The texture and sampler a handle names (texture ID: the low 20 bits, sampler ID: the high 12), as the pools registered them
 int vk_tex_by_id(uint32_t id, tex_t *t, view_t *v) {

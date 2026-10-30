@@ -60,8 +60,8 @@ dv.from_dmsh_build(['decode_tex'], ns); dt = ns['decode_tex']
 comb = (TB + 8 * 3) // 4; sep = (1 << 28) | (((SB + 8 * 5) // 4) << 14) | comb
 check('a combined handle in c[2]\'s texture table: its texture slot, no sampler slot', dt(f'fp_t_cb2_{comb:X}') == (3, None, 0), f'{dt(f"fp_t_cb2_{comb:X}")}')
 check('a separate pair: the texture slot, and the sampler slot from the sampler table', dt(f'fp_t_cb2_{sep:X}') == (3, 5, 1), f'{dt(f"fp_t_cb2_{sep:X}")}')
-check('declared dimensions: 2D array (shadow), integer cube, 3D, an unknown type as 2D',
-      (dv.dim_of('sampler2DArrayShadow'), dv.dim_of('isamplerCube'), dv.dim_of('sampler3D'), dv.dim_of('image2D')) == (1, 2, 4, 0))
+check('declared dimensions: 2D array (shadow), integer cube, 3D, images as their samplers (3D, unsigned 2D array), an unknown type as 2D',
+      (dv.dim_of('sampler2DArrayShadow'), dv.dim_of('isamplerCube'), dv.dim_of('sampler3D'), dv.dim_of('image3D'), dv.dim_of('uimage2DArray'), dv.dim_of('foo')) == (1, 2, 4, 4, 1, 0))
 
 # ---- a pixel shader's reflection (glslc from the NDK makes the module; the translator's names): bindings as the moved module has them ----
 NDK = os.environ.get('NDK', '/opt/homebrew/share/android-ndk'); GLSLC = os.path.join(NDK, 'shader-tools', 'darwin-x86_64', 'glslc')

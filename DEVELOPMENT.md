@@ -42,7 +42,10 @@ run-tests`, a headless run of manosaba under adb (`work/scripts/android_smoke.sh
 own, shown over the lock screen: HyperOS allows it with its "show on lock screen" setting for the app, on on the test phone; a locked phone
 without it is reported as skipped). `android/run.sh` builds, installs and runs the app by hand; `t_vk_be` tests the Vulkan backend there.
 The APK carries the Vulkan shader bundle (`DM_GAME=manosaba gfx/tools/dmsh_vk.py work/shextract work/build/android/manosaba.dmvk`, DM_ROOT the
-workspace; again after a change of the game's shaders or of dmsh_vk.py; `tools/tests/t_dmsh_vk.py` checks the workspace's).
+workspace; again after a change of the game's shaders or of dmsh_vk.py; `tools/tests/t_dmsh_vk.py` checks the workspace's). To play on the
+phone without touching it, `work/scripts/android_live.sh start [<save dir>]`, `key <name>...`, `shot <png>`, `stop [<boot.txt>]` drive the app
+through its command channel (DM_CMD, host/front/cmdchan.c) with a test save of its own (a copy of the given save; HyperOS's pocket mode takes
+touches while the phone's top is covered, the channel's keys are not touches).
 
 **How a change is made.** One plan item at a time, each with a unit test and a broken version of the change that must fail it. A batch of
 items ends with the gfx tests (Metal 4 and Metal 3), the texture tests, the host tests and their sanitizer run, the public audit and the tool
@@ -347,12 +350,13 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   → the Vibrator through JNI).
   301e the Vulkan backend, `gfx/nvn/vk/` (the app's; adb shell's host keeps the null one). Of the other Android ports (2026-10-30 survey,
   docs/sources.md) none keeps pools at their addresses on Qualcomm's driver; the 840's has `VK_EXT_map_memory_placed`, so ours does, as on Metal.
-  301e2b what 301e2 left for the next scenes and Tears of the Kingdom: dispatches (compute pipelines, the c0 grid), storage images, texel
-  buffers and textures sampled through image slots (zeros with a red line now), indexed quads, quad strips and line loops, programs of more
-  than 32 descriptors (push descriptors' limit on the 840: a set of their own), storage buffers off 64-byte alignment (bound from below now:
-  the translator's `sb_align`), clears with a channel mask; the Adreno findings to check for: a varying the next stage reads that this one
-  does not write (pipeline creation fails), more than about 700 draws in one command buffer, LRZ across passes, subgroup instructions in
-  called functions (the 750-799 compiler), subgroups (64 lanes, none in vertex shaders on the 840: the warp32 rewrite), 284's items.
+  301e2c what neither manosaba's title, prologue nor first trial needed (each a red line when met; for the next game and Tears of the
+  Kingdom): texel buffers (null descriptors now), line loops, clears with a channel mask (all channels now), storage buffers off 64-byte
+  alignment (bound from the boundary below: needs the translator told 64 and HasUnalignedStorageBuffer, a change of the chain version, with
+  64g), storage buffers addressed from a uniform slot (the Metal backend's SBUFU); the Adreno findings to check for: a varying the next stage
+  reads that this one does not write (pipeline creation fails), more than about 700 draws in one command buffer (nx2android cuts at 128),
+  LRZ across passes, subgroup instructions in called functions (the 750-799 compiler), subgroups (64 lanes, none in vertex shaders on the
+  840: the warp32 rewrite), 284's items.
   301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the TBDR rewrites (the
   same-target continuation first: without it every SetRenderTargets ends the pass, 12 passes a frame on the title for 12.5 draws) and the
   write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, screenshots, the readings; the NVN fence on the game's last
@@ -912,3 +916,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   none dropped, no red line; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool
   tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frame 1300 the same scene in another pose (looked at); manosaba's shots as
   batch 126's.
+- [x] batch 128 · 301e2b dispatches, images and the rest of the bindings on Vulkan; manosaba played on the K100 through the prologue and
+  into the first trial (a copy of the save before it: title, story scenes, the trial's debate with its timer, looked at) at 60 fps, no red line.
+  - `vk_bind.c` (out of vk_draw.c: the resources draws and dispatches share): the layouts, pushed when they fit, else a set of their own
+    from a pool written at each use (DM_VK_PUSH=0 takes that way everywhere); storage images (image slots: the texture of that ID viewed as
+    storage, a write making it the GPU's), textures through an image slot, the compute stage's c0 (the workgroup counts at 0x200, the uniform
+    table at 0x210), writable storage slots dropping the core's snapshots they reach; texel buffers null with a red line.
+  - `vk_draw.c`: dispatches (a pipeline per compute shader, outside any pass, a full barrier after), indexed quads (their indices rewritten
+    into the arena), quad strips as triangle strips.
+  - `vk_tex.c`: storage views; images alive and their memory counted (the 600-present line: 116 alive, 444 MB, in the trial; the count of those
+    made only grew, which the first line had shown as their size).
+  - dmsh_vk.py: images' declared dimensions in the reflection (image3D was read as 2D: its i taken as a sampler type's).
+  - Item 301e2c gets what manosaba did not meet (texel buffers, line loops, masked clears, unaligned storage buffers, the Adreno checks).
+  - `work/scripts/android_live.sh` / `android_play.sh`: the app driven through its command channel (keys, not touches: HyperOS's pocket mode
+    took every touch while the phone's top was covered).
+  Tests: on the phone `t_vk_be` 19 (indexed quads, a set of its own with a fresh one each draw, a dispatch: c0's counts, a writable storage
+  slot, a texture through an image slot, an image store read back; `-DDM_TEST_VK_GRID_ZERO`: 1 fails, `-DDM_TEST_VK_SET_STALE`: 1 fails);
+  `tools/tests/t_dmsh_vk.py` 13 (images' dimensions). The app 40 s at 60 fps, 4 save commits, 31757 draws, none dropped; the headless run
+  40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's
+  two red lines, its shots near batch 127's; manosaba's as batch 127's.

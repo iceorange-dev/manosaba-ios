@@ -48,8 +48,8 @@ likely.
 
 On Android (plan item 301, under way): on a Redmi K100 Pro Max (Android 17) manosaba runs as an app of this repository's own (no Android SDK:
 `android/tools/apk.py` writes and signs the APK) at 60 fps, with sound (AAudio), touch, game controllers and saves, drawn by a Vulkan backend
-of its own (`gfx/nvn/vk/`, the game's shaders from the same translation as Metal's): the title screen so far (later scenes not checked yet); compute,
-images and the render-pass merging are still to come (plan items 301e2b, 301e3).
+of its own (`gfx/nvn/vk/`, the game's shaders from the same translation as Metal's): the title, the prologue and the first trial checked so far,
+at 60 fps; the render-pass merging, frame pacing and the on-screen controls are still to come (plan items 301e3, 301f, 301d2).
 
 ## Status (Tears of the Kingdom 1.4.3)
 

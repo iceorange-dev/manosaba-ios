@@ -157,7 +157,7 @@ Binding conventions used by the translation:
 | `nvn/core/exec.c`, `nvn/core/exec.h` | The replay loop (`nvn_exec`): the command walk in replay order, the commands that only set state, FenceSync, SetRenderTargets (continued, a deferred group's Q, new targets) and the clears (load actions or drawn); every other command handed to the backend |
 | `nvn/core/cond.c`, `nvn/core/cond.h` | Conditional rendering: SetRenderEnable(Conditional) and the samples-passed results it reads (`occ_note`, `occ_pending`) |
 | `nvn/null/null.c`, `nvn/null/readings.c` | The null backend (adb shell's Android host, plan item 301c): every function a backend provides; submissions complete at commit, nothing is drawn. The readings file (no performance readings) serves the Vulkan backend too |
-| `nvn/vk/` | The Vulkan backend (the Android app's, plan item 301e): `vk.h` lists its parts (device, pools, submissions, textures and formats, copies / clears, shaders, draws, present) |
+| `nvn/vk/` | The Vulkan backend (the Android app's, plan item 301e): `vk.h` lists its parts (device, pools, submissions, textures and formats, copies / clears, shaders, bindings, draws and dispatches, present) |
 | `nvn/nvn_backend.h` | The execution interface: what the replay hands a backend, command by command, and the render pass state it asks of it (`nvn_be_*`); each core module declares what else it asks of the backend |
 | `nvn/core/prog.c`, `nvn/core/prog.h` | The program bound per stage (prog_bind: per-stage keys combined into a composite program) |
 | `nvn/core/live.c`, `nvn/core/live.h` | The texture living at a storage address (a finalized registration follows it), and the texture objects' host copies that recorded commands use |

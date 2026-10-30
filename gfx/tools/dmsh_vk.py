@@ -72,11 +72,11 @@ def patch_module(spv, shift):
     if add and first_cap is not None: w[first_cap:first_cap] = [x for c in add for x in ((2 << 16) | OP_CAPABILITY, c)]
     return struct.pack(f'<{len(w)}I', *w)
 
-# A sampled texture's declared dimension, in its binding's off field: 0 2D, 1 2D array, 2 cube, 3 cube array, 4 3D, 5 1D, 6 1D array, 7 2D multisample,
-# 8 2D multisample array (spirv-cross's names; a Shadow suffix is the same dimension)
+# A texture's or image's declared dimension, in its binding's off field: 0 2D, 1 2D array, 2 cube, 3 cube array, 4 3D, 5 1D, 6 1D array, 7 2D
+# multisample, 8 2D multisample array (spirv-cross's names; a Shadow suffix is the same dimension, image3D the same as sampler3D)
 DIMS = ['sampler2D', 'sampler2DArray', 'samplerCube', 'samplerCubeArray', 'sampler3D', 'sampler1D', 'sampler1DArray', 'sampler2DMS', 'sampler2DMSArray']
 def dim_of(t):
-    t = re.sub(r'Shadow$', '', t or ''); t = re.sub(r'^[iu]', '', t)
+    t = re.sub(r'Shadow$', '', t or ''); t = re.sub(r'^[iu]?image', 'sampler', t); t = re.sub(r'^[iu]', '', t)   # (images first: image's own i)
     return DIMS.index(t) if t in DIMS else 0
 
 BASE_CT = {'vec': 0, 'ivec': 2, 'uvec': 1, 'float': 0, 'int': 2, 'uint': 1}   # NVN_CT_FLOAT 0, UINT 1, INT 2 (nvn_refl.h)
@@ -121,7 +121,7 @@ def reflect(key, stage, spv, res, decode_tex):
     for e in r.get('images', []):
         d = decode_tex(e['name']); reg = d[0] if d and re.match(r'[a-z]+_i', e['name']) else img_slot(e['name'])
         if reg is None: unknown.append(e['name']); continue
-        add(K_IMG, D_STORAGE_TEXEL if e.get('type', '').endswith('Buffer') else D_STORAGE_IMAGE, e, reg=reg, rw=1)
+        add(K_IMG, D_STORAGE_TEXEL if e.get('type', '').endswith('Buffer') else D_STORAGE_IMAGE, e, reg=reg, rw=1, off=dim_of(e.get('type')))
     for x in ('separate_images', 'separate_samplers', 'acceleration_structures'):
         for e in r.get(x, []): unknown.append(f'{x}:{e["name"]}')
     vin = [(e['location'], ct_of(e.get('type'))) for e in r.get('inputs', []) if 'location' in e] if stage == 'vs' else []

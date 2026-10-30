@@ -86,7 +86,7 @@ apk: $(B)/$(GAME).apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -128,6 +128,10 @@ build/tests/t_vk_be_early: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_EVENT_EARLY -o $@ $(VKT_SRC) -lvulkan -landroid -lm
 build/tests/t_vk_be_wind: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_WINDING_SWAPPED -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk_be_grid: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_GRID_ZERO -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk_be_stale: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SET_STALE -o $@ $(VKT_SRC) -lvulkan -landroid -lm
 build/tests/t_vk.dmvk: tests/mk_vk_bundle.py ../gfx/tools/dmsh_vk.py ../games/manosaba/game.json | build/tests
 	python3 tests/mk_vk_bundle.py $@
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')

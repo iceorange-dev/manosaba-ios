@@ -10,7 +10,8 @@
 //                 when the CPU writes it after, nvn_dirty.h), views, the texture and sampler pools
 //   vk_ops.c      the execution interface's copies and clears
 //   vk_shader.c   the game's shaders: the bundle gfx/tools/dmsh_vk.py writes (DM_VK_SHADERS), modules and their reflection (vk_shader.h)
-//   vk_draw.c     draws: the pass (dynamic rendering), pipelines, the pushed resources, the dynamic state
+//   vk_bind.c     what a program's shaders bind: uniform, storage and driver banks, textures, images, samplers, pushed or in a set (vk_bind.h)
+//   vk_draw.c     draws and dispatches: the pass (dynamic rendering), pipelines, the dynamic state
 //   vk_present.c  the swapchain on the app's window and the present of the game's window texture
 #pragma once
 #include <pthread.h>
@@ -63,18 +64,22 @@ struct vk_img {
     uint32_t w, h, d, layers, levels; VkImageType type;
     int gpu_written;                             // rendered into, cleared or copied into by the GPU: its storage no longer tells its content
     int cube;                                    // made cube-compatible (2D, six layers or more, square)
+    VkImageUsageFlags usage;                     // (storage only for NVN_TEXTURE_FLAGS_IMAGE textures whose format allows it)
     int uploaded;                                // its storage's content copied in (again when the CPU writes it after stamp)
     uint64_t stamp;                              // the dirty-page stamp of the content last copied in (nvn_dirty.h)
+    uint64_t bytes;                              // its memory
 };
 int vk_fmt(int nvn_format, VkFormat *f, VkComponentMapping *swz);   // 1 exact, 2 a substitute, 0 none (vk_fmt.c)
 vk_img *vk_tex(const tex_t *t);                 // the image of a texture object (made on first use; NULL: none can be made)
 void vk_tex_ready(vk_img *im, VkCommandBuffer cb);   // before a GPU read: CPU-filled content uploaded (recorded into cb before its use)
-VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int dim);   // a view (cached); attach: for rendering (one level, its layers);
-                                                // dim: the shader's declared dimension (dmsh_vk.py dim_of), -1 the texture's own
+VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int dim);   // a view (cached); attach: 0 sampled, 1 for rendering (one
+                                                // level, its layers), 2 as a storage image (one level, no swizzle); dim: the shader's declared
+                                                // dimension (dmsh_vk.py dim_of), -1 the texture's own
 int vk_tex_by_id(uint32_t id, tex_t *t, view_t *v);   // the texture pool's entry for a texture ID (0: none registered)
 int vk_samp_by_id(uint32_t id, samp_par *p);
 void vk_tex_upload_now(vk_img *im);             // its storage's content copied in now, ahead of the submission being recorded
-void vk_tex_stats(uint64_t *made, uint64_t *bytes, uint64_t *up_n, uint64_t *up_bytes, uint64_t *reup_n);
+typedef struct { uint64_t made, made_bytes, live, live_bytes, up_n, up_bytes, reup_n; } vk_tex_counts;   // images made so far and alive now, uploads
+void vk_tex_stats(vk_tex_counts *c);
 void vk_stats_line(void);                       // vk_draw.c: draws, pipelines, uploads so far (every 600 presents)
 
 // vk_ops.c / vk_draw.c: the render pass
