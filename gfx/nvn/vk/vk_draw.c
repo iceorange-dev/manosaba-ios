@@ -1,6 +1,6 @@
 // gfx/nvn/vk/vk_draw.c: draws and dispatches (plan items 301e2, 301e2b). A draw opens the pass when none is open: dynamic rendering into R's
 // targets, R's pending clears as load actions (a CLEAR load), every attachment stored; the pass stays open for the draws after it until the replay
-// ends it (new targets, a copy, a barrier, a dispatch, the submission's end). Its pipeline is made from the program's two shaders, the pass's
+// ends it (new targets, a copy, a dispatch, the submission's end; a barrier only as vk_pass_barrier says). Its pipeline is made from the program's two shaders, the pass's
 // attachment formats and the state that is not dynamic (blend, channel masks, polygon mode, the primitive class, multisampling), hashed and kept;
 // everything else is dynamic state set at each draw from S: viewport (flipped: the translation keeps NVN's clip space, whose y points up, and
 // Vulkan's framebuffer y points down), scissor, depth bias, blend constants, stencil, cull mode and front face, topology, depth test / write /
@@ -22,16 +22,51 @@ int exec_draw_dropped(void);   // core/exec.c: rendering off, no program, empty 
 static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches;
 
 // ---------- The pass ----------
-static struct { int open, n; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;
+static struct { int open, n, bar, sw; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;   // bar: a barrier in it; sw: storage written
 int vk_pass_is_open(void) { return P.open; }
 int nvn_be_pass_mode(void) { return P.open ? 0 : -1; }
 int vk_pass_attach_index(const vk_img *im) { if (!P.open) return -1; for (int i = 0; i < P.n; i++) if (P.col[i] == im) return i; return P.ds == im ? -2 : -1; }
 uint64_t vk_pass_count(void) { return g_passes; }
+static uint64_t g_pe[VK_PE_N]; static int g_pe_why = -1;
+int vk_pe_push(int why) { int was = g_pe_why; if (was < 0) g_pe_why = why; return was; }
+void vk_pe_pop(int was) { g_pe_why = was; }
+void vk_pass_ends(uint64_t out[VK_PE_N]) { memcpy(out, g_pe, sizeof g_pe); }
+static int pe_cause(void) {
+#ifndef DM_TEST_VK_PE_OP_ONLY   // negative control of t_vk_be only: the backend's own reasons not looked at
+    if (g_pe_why >= 0) return g_pe_why;
+#endif
+    if (!g_exec_cur) return VK_PE_OTHER;
+    op_hdr h; memcpy(&h, g_exec_cur, sizeof h);
+    switch (h.op) {
+    case OP_SET_RT: {
+        p_set_rt r; memcpy(&r, g_exec_cur + 8, sizeof r); int same = r.n == R.rt.n && r.depth == R.rt.depth;
+        for (int i = 0; same && i < r.n && i < 8; i++) same = r.color[i] == R.rt.color[i];
+        return same ? VK_PE_RT_SAME : VK_PE_RT; }
+    case OP_CLEAR_COLOR: case OP_CLEAR_DS: return VK_PE_CLEAR;
+    case OP_COPY_B2B: case OP_COPY_B2T: case OP_COPY_T2B: case OP_COPY_T2T: case OP_CLEAR_TEX: return VK_PE_COPY;
+    case OP_DISPATCH: return VK_PE_DISPATCH;
+    case OP_BARRIER: return VK_PE_BARRIER;
+    case OP_UPDATE_UB: return VK_PE_UB;
+    default: return VK_PE_OTHER;
+    }
+}
 static void pass_close(void) {   // (the core's continuation mark goes with it, as the Metal backend's rp_end)
-    if (P.open) { VkCommandBuffer cb = vk_cb(); vkCmdEndRendering(cb); vk_barrier_all(cb); P.open = 0; }
+    if (P.open) { VkCommandBuffer cb = vk_cb(); vkCmdEndRendering(cb); vk_barrier_all(cb); P.open = 0; g_pe[pe_cause()]++; }
     g_rt_merged = 0;
 }
 void vk_pass_end_now(void) { pass_close(); vk_land_clears(); }
+// A barrier in the open pass (plan item 301e3): the pass goes on, as on Metal (whose backend lets barriers by: its passes end for new targets,
+// copies and dispatches). Its draws are in order on its attachments, and what the pass did not write was made visible when the pass or copy
+// that wrote it ended. What a barrier orders inside it is kept: a draw after it sampling an attachment of the pass ends the pass first (as in
+// a continued pass), and storage written by a draw before it ends the pass at the barrier. 0: no pass open, or ended
+int vk_pass_barrier(void) {
+#ifndef DM_TEST_VK_BAR_NO_SPLIT   // negative control of t_vk_be only: a barrier let by whatever the draws after it sample
+    if (!P.open || P.sw) return 0;
+    P.bar = 1; return 1;
+#else
+    return P.open;
+#endif
+}
 void nvn_be_pass_flush(void) { vk_pass_end_now(); }
 void nvn_be_pass_end(void) { pass_close(); }
 // A pass the core continued (the same targets set again) holds the earlier draws' results in its attachments: a draw sampling one of them
@@ -183,7 +218,7 @@ static VkFormat vtx_format(int f) {
 }
 
 // ---------- Programs: the two shaders, their set layout and pipeline layout ----------
-typedef struct { const vk_sh *vs, *ps; vk_layout L; int ok; } vk_prog;
+typedef struct { const vk_sh *vs, *ps; vk_layout L; int ok, sw; } vk_prog;   // sw: a storage buffer or image written
 static nvn_hmap g_progs = {.klen = 16};   // vertex key, pixel key → vk_prog
 static vk_prog *prog_of(const prog_t *p) {
     int vi = -1, pi = -1; for (int i = 0; i < (int)p->nstage && i < 6; i++) { if (p->kstage[i] == 0) vi = i; else if (p->kstage[i] == 1) pi = i; }
@@ -194,6 +229,7 @@ static vk_prog *prog_of(const prog_t *p) {
     g->vs = vk_shader(p->key[vi]); g->ps = pi >= 0 ? vk_shader(p->key[pi]) : NULL;
     if (!g->vs || (pi >= 0 && !g->ps)) return NULL;
     const vk_sh *sh[2] = {g->vs, g->ps}; const VkShaderStageFlags st[2] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT};
+    for (int i = 0; i < 2; i++) if (sh[i]) for (int b = 0; b < sh[i]->nb; b++) if ((sh[i]->b[b].kind == VK_K_SBUF || sh[i]->b[b].kind == VK_K_IMG) && sh[i]->b[b].rw) g->sw = 1;
     if (!(g->ok = vk_layout_make(&g->L, sh, st, 2))) VLOG("[red] program %016llx / %016llx: no layout", (unsigned long long)g->vs->key, (unsigned long long)(g->ps ? g->ps->key : 0));
     return g->ok ? g : NULL;
 }
@@ -351,12 +387,13 @@ void nvn_be_draw(const p_draw *dw, const p_draw_idx *di) {
     const vk_sh *sh[2] = {g->vs, g->ps}; const int nst[2] = {0, 1};
     upd_guard(sh, nst, g->ps ? 2 : 1, di);
 #ifndef DM_TEST_VK_CONT_NO_SPLIT   // negative control of t_vk_be only: a continued pass kept open whatever its draws sample
-    if (P.open && g_rt_merged && samples_attachment(sh, nst, g->ps ? 2 : 1)) {
-        static int said; if (!said++) VLOG("same-target continuation: a draw samples the pass's own attachment, the pass ended before it (first case)");
-        vk_pass_end_now();
+    if (P.open && (g_rt_merged || P.bar) && samples_attachment(sh, nst, g->ps ? 2 : 1)) {
+        static int said; if (!said++) VLOG("a draw samples its pass's own attachment after a barrier or a continuation: the pass ended before it (first case)");
+        int pe = vk_pe_push(VK_PE_SAMPLES); vk_pass_end_now(); vk_pe_pop(pe);
     }
 #endif
     if (!pass_open()) { g_dropped++; return; }
+    P.sw |= g->sw;
     VkPipeline pipe = pipeline(g, topo_class(topo)); if (!pipe) { g_dropped++; return; }
     VkCommandBuffer cb = vk_cb();
     if (!vertex_input(cb, g->vs)) { g_dropped++; return; }
@@ -424,4 +461,10 @@ void vk_stats_line(void) {
          (unsigned long long)g_draws, (unsigned long long)g_dispatches, (unsigned long long)g_dropped, (unsigned long long)g_passes, (unsigned long long)g_pipes,
          (unsigned long long)vk_bind_zeros(), (unsigned long long)c.live, c.live_bytes / 1e6, (unsigned long long)c.made, (unsigned long long)c.up_n, c.up_bytes / 1e6,
          (unsigned long long)c.reup_n);
+    const uint64_t *e = g_pe;
+    VLOG("passes ended by: SetRenderTargets %llu (the same textures %llu), clears %llu, copies %llu, dispatches %llu, barriers %llu, uniform updates "
+         "%llu, renamed updates written %llu, sampling the attachment %llu, submissions %llu, other %llu", (unsigned long long)e[VK_PE_RT],
+         (unsigned long long)e[VK_PE_RT_SAME], (unsigned long long)e[VK_PE_CLEAR], (unsigned long long)e[VK_PE_COPY], (unsigned long long)e[VK_PE_DISPATCH],
+         (unsigned long long)e[VK_PE_BARRIER], (unsigned long long)e[VK_PE_UB], (unsigned long long)e[VK_PE_UPD], (unsigned long long)e[VK_PE_SAMPLES],
+         (unsigned long long)e[VK_PE_SUBMIT], (unsigned long long)e[VK_PE_OTHER]);
 }

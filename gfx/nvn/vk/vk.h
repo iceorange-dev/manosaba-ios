@@ -85,9 +85,16 @@ void vk_stats_line(void);                       // vk_draw.c: draws, pipelines, 
 
 // vk_ops.c / vk_draw.c: the render pass
 void vk_pass_end_now(void); uint64_t vk_pass_count(void);                     // end the open pass (vk_draw.c) and land the clears still pending
+// Why passes end (plan item 301e3, the stats line): the backend's own reason when one is set (vk_pe_push / vk_pe_pop around the end), else
+// the op the replay is at: SetRenderTargets of other textures or of the same ones (clears pending), a clear in a continued pass, a copy, a
+// dispatch, a barrier, an inline uniform update copied at once; OTHER: outside the replay
+enum { VK_PE_RT, VK_PE_RT_SAME, VK_PE_CLEAR, VK_PE_COPY, VK_PE_DISPATCH, VK_PE_BARRIER, VK_PE_UB, VK_PE_UPD, VK_PE_SAMPLES, VK_PE_SUBMIT, VK_PE_OTHER, VK_PE_N };
+int vk_pe_push(int why); void vk_pe_pop(int was);   // set why (if none is set yet) / back to what push returned
+void vk_pass_ends(uint64_t out[VK_PE_N]);       // the passes ended so far by each
 void vk_upd_flush(void);                       // vk_ops.c: the renamed uniform updates into memory (ends the pass)
 uint64_t vk_arena_size(void);                   // vk_pools.c
 int vk_pass_is_open(void);
+int vk_pass_barrier(void);                      // vk_draw.c: a barrier in the open pass taken there (0: none open, or it must end)
 void vk_land_clears(void);                      // vk_ops.c: R's pending clears with no pass open
 
 // vk_present.c

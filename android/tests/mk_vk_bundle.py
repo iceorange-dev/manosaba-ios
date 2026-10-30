@@ -2,10 +2,10 @@
 """t_vk_be's shader bundle (plan item 301e2): a vertex and a pixel shader written in GLSL with the translator's names (glslc from the NDK makes
 the modules), moved and reflected by gfx/tools/dmsh_vk.py as the game's shaders are, with manosaba's c[2] layout. The vertex shader passes
 attribute 0 through as the position; the pixel shader writes uniform slot 0's first vector times texture slot 3 sampled at its centre (a second
-key for the same pixel shader: a program of its own); the compute shader (groups of 4) writes storage slot 0's word i = i + 1000 x + 100000 y
-from the workgroup counts in c0 (+0x200), word 64 = the green of image slot 0's texture fetched, and image slot 1's texel (i, 0) = (16 i, 0, 0,
-255) / 255. Usage: mk_vk_bundle.py <out>   (keys: 7465737400000001 vertex, 7465737400000002 and 7465737400000003 pixel, 7465737400000005
-compute)"""
+key for the same pixel shader: a program of its own; a third that also writes 1 to storage slot 0's word 0); the compute shader (groups of 4)
+writes storage slot 0's word i = i + 1000 x + 100000 y from the workgroup counts in c0 (+0x200), word 64 = the green of image slot 0's texture
+fetched, and image slot 1's texel (i, 0) = (16 i, 0, 0, 255) / 255. Usage: mk_vk_bundle.py <out>   (keys: 7465737400000001 vertex,
+7465737400000002, 03 and 04 pixel, 7465737400000005 compute)"""
 import os, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', '..', 'gfx', 'tools')); import dmsh_vk as dv
@@ -22,6 +22,7 @@ layout(set = 0, binding = 1) uniform sampler2D fp_t_cb2_%X;
 layout(location = 0) out vec4 o;
 void main() { o = u.color * texture(fp_t_cb2_%X, vec2(0.5)); }
 ''' % (TEX3, TEX3)
+PS_SB = PS.replace('layout(location = 0) out', 'layout(set = 0, binding = 2) buffer fp_s0 { uint v[]; } sb;\nlayout(location = 0) out').replace('void main() {', 'void main() { sb.v[0] = 1u;')
 IMG = lambda slot: (ns['IMG_BASE'] + 8 * slot) // 4   # the c[2] word of image slot n
 CS = '''#version 450
 layout(local_size_x = 4) in;
@@ -37,14 +38,15 @@ void main() {
 }
 ''' % (IMG(0), IMG(1), IMG(0), IMG(1))
 CS_RES = {'sbufs': [{'binding': 1, 'cb_slot': 0, 'cb_offset': 0x310 // 4, 'flags': 1}]}   # storage slot 0 (the compute table at c0 + 0x310), written
+PS_RES = {'sbufs': [{'binding': 2, 'cb_slot': 0, 'cb_offset': 0x510 // 4, 'flags': 1}]}   # (the pixel table at c0 + 0x510)
 out, shaders = sys.argv[1], []
 with tempfile.TemporaryDirectory() as w:
-    for key, st, stage, src in [(0x7465737400000001, 'vs', 'vert', VS), (0x7465737400000002, 'ps', 'frag', PS), (0x7465737400000003, 'ps', 'frag', PS),
-                                (0x7465737400000005, 'cs', 'comp', CS)]:
+    for key, st, stage, src, res in [(0x7465737400000001, 'vs', 'vert', VS, {}), (0x7465737400000002, 'ps', 'frag', PS, {}), (0x7465737400000003, 'ps', 'frag', PS, {}),
+                                     (0x7465737400000004, 'ps', 'frag', PS_SB, PS_RES), (0x7465737400000005, 'cs', 'comp', CS, CS_RES)]:
         g = os.path.join(w, f'{st}.glsl'); sp = os.path.join(w, f'{st}.spv'); open(g, 'w').write(src)
         subprocess.run([GLSLC, f'-fshader-stage={stage}', '--target-env=vulkan1.3', '-o', sp, g], check=True)
         spv = dv.patch_module(open(sp, 'rb').read(), dv.SHIFT[st])
-        binds, vin, vout, unknown = dv.reflect(f'{key:016x}', st, spv, CS_RES if st == 'cs' else {}, ns['decode_tex'])
+        binds, vin, vout, unknown = dv.reflect(f'{key:016x}', st, spv, res, ns['decode_tex'])
         if unknown: sys.exit(f'[red] {st}: bindings not understood: {unknown}')
         shaders.append((key, dv.STAGE_NO[st], spv, dv.pack_refl(binds, vin, vout, b'', [4, 1, 1] if st == 'cs' else None)))
 open(out, 'wb').write(dv.pack_bundle(shaders))

@@ -360,9 +360,13 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   840: the warp32 rewrite), 284's items.
   301e3 the rest of the set: samples passed by occlusion queries and the counter reports' timestamps from the GPU (each submission's GPU span
   is measured since batch 130, for the fps line), layered passes, the other TBDR rewrites (the same-target continuation and renamed uniform
-  updates are on since batch 129: a pass for 2.7 draws in the prologue, 1.5 in the first trial; what still ends the trial's passes to be
-  counted) and the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth);
-  the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
+  updates since batch 129, barriers kept in the pass since batch 131: 3.9 draws a pass in the first trial; its passes now end for new
+  targets (40-66 % in 10-second spans), renamed updates written before a draw whose range has no snapshot (16-50 %) and submissions
+  (10-17 %). In 300 frames the snapshot line counts 192 ranges not copied for a GPU write of an earlier submission still running, and the
+  GPU writes noted (`us_gw_note`, the Metal backend's too) include the writes of the renamed updates themselves, whose bytes are known: to
+  be checked whether those are the ranges. The trial's GPU time stayed 9-10 ms a frame when its passes halved, so this is not first) and
+  the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth); the NVN
+  fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
@@ -965,3 +969,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   failure of this batch, run again after). The app 40 s at 60 fps, 4 save commits; the headless run 40 s. gfx 153 / 153 on Metal 4 and
   Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frame 1300 the
   same scene a moment later (looked at); manosaba's shots as batch 129's.
+- [x] batch 131 · 301e3 part: why passes end, and barriers kept in the pass on Vulkan. In the first trial a pass now holds 3.9 draws (1.8
+  before; about 4300 passes in 10 s against 9500), the same scenes and pictures (the debate's shots of both looked at), no red line; its GPU
+  time stayed 9-10 ms a frame.
+  - Each pass end counted by its cause (`vk_pe_push` / `vk_pass_ends`: the backend's own reason, else the op the replay is at), a line beside
+    the stats line every 600 presents. In the trial (10-second spans) barriers ended 56-67 % of the passes, SetRenderTargets of other
+    targets 24-30 %, renamed updates written 3-12 %, submissions 6-8 %; none SetRenderTargets of the same textures, copies under 1 %.
+  - A barrier in an open pass lets it go on, as the Metal backend lets every barrier by (`vk_pass_barrier`): a draw after one that samples an
+    attachment of the pass ends it first (the continued pass's split, now for both), and storage written by a draw of the pass ends it at the
+    barrier.
+  Tests: on the phone `t_vk_be` 28 (why passes ended: sampling, SetRenderTargets, the submission with its renamed updates pending:
+  `-DDM_TEST_VK_PE_OP_ONLY` 2 fail; a pass through a barrier, split before a draw sampling its attachment and at a barrier after storage
+  written, a pixel shader writing storage (the test bundle's fourth key): `-DDM_TEST_VK_BAR_NO_SPLIT` 1 fails; the continuation control fails
+  3 now). The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 130's (the title, looked at); the headless run 40 s. gfx 153 / 153
+  on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines,
+  frame 1300 the same scene a moment later (looked at); manosaba's shots as batch 130's.

@@ -153,7 +153,7 @@ void nvn_be_copy_b2b(uint64_t src, uint64_t dst, uint64_t n) {
 static int g_upd_flushing;
 void vk_upd_flush(void) {
     if (!g_nupd || g_upd_flushing) return;
-    g_upd_flushing = 1; vk_pass_end_now();
+    g_upd_flushing = 1; { int pe = vk_pe_push(VK_PE_UPD); vk_pass_end_now(); vk_pe_pop(pe); }
     VkCommandBuffer cb = vk_cb(); upd_list *l = &g_upd;
     for (int i = 0; i < l->n;) {
         uint64_t lo = l->e[i].lo, hi = l->e[i].hi; int j = i + 1;
@@ -252,7 +252,10 @@ void nvn_be_copy_t2t(const p_copy_t2t *c) {
     vkCmdBlitImage(cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &bl, (c->flags & NVN_COPY_FLAGS_LINEAR_FILTER_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
     vk_barrier_all(cb); d->gpu_written = 1; d->uploaded = 1;
 }
-void nvn_be_barrier(const uint8_t *p, const void *a) { (void)p; (void)a; vk_pass_end_now(); vk_barrier_all(vk_cb()); }
+void nvn_be_barrier(const uint8_t *p, const void *a) {   // (in a pass: vk_draw.c)
+    (void)p; (void)a; if (vk_pass_barrier()) return;
+    int pe = vk_pe_push(VK_PE_BARRIER); vk_pass_end_now(); vk_pe_pop(pe); vk_barrier_all(vk_cb());
+}
 
 // Of the core's TBDR rewrites only the same-target continuation (plan item 301e3: SetRenderTargets of the open pass's own targets leaves it open,
 // its tiles on the chip; the title drew 12.5 draws in 12 passes a frame without it); the others need what the Metal backend does with them

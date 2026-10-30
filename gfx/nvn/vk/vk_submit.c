@@ -113,8 +113,9 @@ void vk_post_add(vk_post p) {
 }
 uint64_t mtl_sub_commit(void) {
     slot_t *s = g_cur; if (!s) VDIE("commit without a submission");
+    int pe = vk_pe_push(VK_PE_SUBMIT);
     vk_upd_flush(); upd_sub_end();   // renamed uniform updates reach memory at the end of their submission
-    vk_pass_end_now();
+    vk_pass_end_now(); vk_pe_pop(pe);
     if (s->begun && g_qp) {   // (an empty submission has no GPU time)
         vkCmdWriteTimestamp2(s->cb, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, g_qp, 2 * (uint32_t)(s - g_slot) + 1);
         s->gpu_f = atomic_load(&g_cur_frame); gpu_tag_begin(s->gpu_f); s->timed = 1;

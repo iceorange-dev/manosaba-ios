@@ -7,14 +7,17 @@
 // (pool IDs, its sampler from the same handle) found through its moved bindings, the pass's clear as its load action. 301e2b: indexed quads
 // (both triangles of each); a program's own descriptor set in place of pushed descriptors (DM_VK_PUSH=0), a fresh set for each draw; a dispatch
 // (its workgroup counts in c0, a writable storage slot, a texture through an image slot, an image store read back from the texture).
-// -DDM_TEST_VK_EVENT_EARLY (event writes and reports landed when recorded): 2 fail; -DDM_TEST_VK_WINDING_SWAPPED (vk_draw.c's winding
-// turned around): 4 fail (the screenshot is of that target); -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first set used again
-// unwritten): 1 fails. 301e3: a pass the core continued (the same targets set again) goes on through a draw sampling another texture and is
-// ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 1 fails). An inline
-// uniform update between two draws keeps the pass open, the draw before it reading the old bytes and the one after the new (a private copy over
-// the core's snapshot), and reaches memory when the submission ends (-DDM_TEST_VK_UB_NO_SHADOW, no private copies: 1 fails). A screenshot of
-// the presented texture (the command channel's shot, no window here) read back as a PNG (-DDM_TEST_VK_SHOT_FLIPPED, rows bottom first: 1 fails).
-// The GPU time of the frame a submission was committed in (its timestamps; -DDM_TEST_VK_TS_NONE, not handed on: 1 fails).
+// -DDM_TEST_VK_EVENT_EARLY (event writes and reports landed when recorded): 2 fail; -DDM_TEST_VK_WINDING_SWAPPED (vk_draw.c's winding turned
+// around): 4 fail (the screenshot is of that target); -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first
+// set used again unwritten): 1 fails. 301e3: a pass the core continued (the same targets set again) goes on through a draw sampling another texture
+// and is ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 3 fail, with it the
+// barriers' split and the count of why passes ended). An inline uniform update between two draws keeps the pass open, the draw before it reading the
+// old bytes and the one after the new (a private copy over the core's snapshot), and reaches memory when the submission ends
+// (-DDM_TEST_VK_UB_NO_SHADOW, no private copies: 1 fails). A screenshot of the presented texture (the command channel's shot, no window here) read
+// back as a PNG (-DDM_TEST_VK_SHOT_FLIPPED, rows bottom first: 1 fails). The GPU time of the frame a submission was committed in (its timestamps;
+// -DDM_TEST_VK_TS_NONE, not handed on: 1 fails). Why passes end: the backend's own reasons over the op the replay is at (-DDM_TEST_VK_PE_OP_ONLY,
+// only the op: 2 fail). Barriers in a pass: it goes on, ended before a draw after one sampling the pass's attachment and at one after storage
+// written (-DDM_TEST_VK_BAR_NO_SPLIT: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
@@ -38,6 +41,7 @@ void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) { (vo
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len)) { (void)fn; }   // (the same: nvn_dirty.c's, no pool is tracked here)
 int exec_draw_dropped(void) { return 0; }   // (core/exec.c's: rendering on)
 int g_rt_merged;   // (core/pass.c's: the core's mark of a continued pass)
+const uint8_t *g_exec_cur;   // (core/pass.c's: the op the replay is at; none here but the SetRenderTargets below)
 static uint64_t g_ser = 100;
 static tex_t tex2d(uint8_t *mem, uint32_t w, uint32_t h, int fmt) {
     tex_t t; memset(&t, 0, sizeof t); t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = fmt; t.d.width = w; t.d.height = h; t.d.depth = 1; t.d.levels = 1;
@@ -87,9 +91,10 @@ static void rec_draw2(void *a) {
     target(&g_rt4); nvn_be_draw(&dw, NULL); nvn_be_pass_end();
 }
 // a pass the core continues: draws 1 and 2 (another texture sampled) in one pass, draw 3 (its own attachment sampled, no channel written) after it
-static tex_t g_rtA; static uint64_t g_cont_passes; static int g_cont_mark;
+static tex_t g_rtA; static uint64_t g_cont_passes, g_cont_pe[VK_PE_N]; static int g_cont_mark;
 static void rec_cont(void *a) {
     (void)a; st_reset(); memset(&R, 0, sizeof R);
+    uint64_t e0[VK_PE_N], e1[VK_PE_N]; vk_pass_ends(e0);
     S.has_vp = 1; S.vp[0][2] = 64; S.vp[0][3] = 64; S.dr[0] = 0; S.dr[1] = 1;
     S.attr[0] = (va_st){NVN_FORMAT_RGBA32F, 0, 0}; S.nattr = 1; S.stream[0] = (vs_st){16, 0}; S.nstream = 1;
     S.vbuf[0].address = (uint64_t)(uintptr_t)g_vb2; S.vbuf[0].size = 64;
@@ -101,7 +106,12 @@ static void rec_cont(void *a) {
     nvn_be_draw(&dw, NULL);
     S.tex[1][3] = 9 | (2ull << 20); S.chmask.mask = 0;   // texture ID 9: the pass's colour target
     nvn_be_draw(&dw, NULL);
-    g_cont_passes = vk_pass_count() - p0; nvn_be_pass_end(); g_cont_mark = g_rt_merged;
+    g_cont_passes = vk_pass_count() - p0;
+    static uint8_t op[8 + sizeof(p_set_rt)]; op_hdr h = {OP_SET_RT, sizeof op}; p_set_rt r; memset(&r, 0, sizeof r); r.n = 1; r.color[0] = &g_rt2;
+    memcpy(op, &h, sizeof h); memcpy(op + 8, &r, sizeof r);
+    g_exec_cur = op; nvn_be_pass_flush(); g_exec_cur = NULL;   // (the replay at a SetRenderTargets of another texture)
+    g_cont_mark = g_rt_merged;
+    vk_pass_ends(e1); for (int i = 0; i < VK_PE_N; i++) g_cont_pe[i] = e1[i] - e0[i];
 }
 // an 8-bit RGB PNG of filter 0 rows (vk_shot.c's) read back
 static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
@@ -120,8 +130,28 @@ static int png_read(const char *path, uint32_t *w, uint32_t *h, uint8_t **rgb) {
     for (uint32_t y = 0; ok && y < *h; y++) { ok = raw[(size_t)y * (*w * 3 + 1)] == 0; memcpy(*rgb + (size_t)y * *w * 3, raw + (size_t)y * (*w * 3 + 1) + 1, (size_t)*w * 3); }
     free(raw); free(idat); free(b); return ok;
 }
+// barriers in a pass: draw 1, a barrier, draw 2 (another texture sampled) in one pass, a barrier, draw 3 (its own attachment sampled, no
+// channel written) in a pass after it; draw 4 writing storage, then a barrier: the pass ends at the barrier
+static tex_t g_rtB; static prog_t g_prog4; static uint8_t *g_sb4; static uint64_t g_bar_passes, g_bar_pe[VK_PE_N];
+static void rec_bar(void *a) {
+    (void)a; st_reset(); memset(&R, 0, sizeof R);
+    uint64_t e0[VK_PE_N], e1[VK_PE_N]; vk_pass_ends(e0);
+    S.has_vp = 1; S.vp[0][2] = 64; S.vp[0][3] = 64; S.dr[0] = 0; S.dr[1] = 1;
+    S.attr[0] = (va_st){NVN_FORMAT_RGBA32F, 0, 0}; S.nattr = 1; S.stream[0] = (vs_st){16, 0}; S.nstream = 1;
+    S.vbuf[0].address = (uint64_t)(uintptr_t)g_vb2; S.vbuf[0].size = 64;
+    S.ubo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_ubo, 256}; S.tex[1][3] = 5 | (2ull << 20);
+    S.ssbo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_sb4, 256};
+    target(&g_rtB); S.prog = &g_prog;
+    p_draw dw = {NVN_DRAW_PRIMITIVE_QUADS, 0, 4, 1, 0}; uint64_t p0 = vk_pass_count();
+    int32_t bits = NVN_BARRIER_ORDER_FRAGMENTS_BIT | NVN_BARRIER_INVALIDATE_TEXTURE_BIT; uint32_t m = S.chmask.mask;
+    nvn_be_draw(&dw, NULL); nvn_be_barrier(NULL, &bits); nvn_be_draw(&dw, NULL); nvn_be_barrier(NULL, &bits);
+    S.tex[1][3] = 10 | (2ull << 20); S.chmask.mask = 0; nvn_be_draw(&dw, NULL);   // texture ID 10: the pass's colour target
+    S.tex[1][3] = 5 | (2ull << 20); S.chmask.mask = m; S.prog = &g_prog4; nvn_be_draw(&dw, NULL); nvn_be_barrier(NULL, &bits);
+    g_bar_passes = vk_pass_count() - p0;
+    vk_pass_ends(e1); for (int i = 0; i < VK_PE_N; i++) g_bar_pe[i] = e1[i] - e0[i];
+}
 // two draws of one pass with an inline uniform update between them; the range has a snapshot, as the core makes at the submission's start
-static tex_t g_rtU; static uint8_t *g_ubo3, *g_vb3; static uint64_t g_upd_passes;
+static tex_t g_rtU; static uint8_t *g_ubo3, *g_vb3; static uint64_t g_upd_passes, g_upd_pe[VK_PE_N];
 static void rec_upd(void *a) {
     (void)a; st_reset(); memset(&R, 0, sizeof R);
     g_us.n = 0; g_us.last = 0; us_reserve(1); us_add((uint64_t)(uintptr_t)g_ubo3, (uint64_t)(uintptr_t)g_ubo3 + 256); us_copy_all();
@@ -234,6 +264,14 @@ int main(void) {
     CHECK(g_cont_passes == 2, "a continued pass goes on through a draw sampling another texture, and ends before one sampling its own attachment (%llu passes)",
           (unsigned long long)g_cont_passes);
     CHECK(g_cont_mark == 0, "the pass's end clears the core's continuation mark");
+    // barriers in a pass
+    g_rtB = tex2d(P + 0x320000, 64, 64, NVN_FORMAT_RGBA8); mtl_reg_tex(10, &g_rtB, NULL); g_sb4 = P + 0x330000; memset(g_sb4, 0, 256);
+    g_prog4 = g_prog; memcpy(g_prog4.key[1], "\x74\x65\x73\x74\x00\x00\x00\x04", 8);
+    f = run(rec_bar, NULL); mtl_wait(f, UINT64_MAX);
+    CHECK(g_bar_passes == 2 && g_bar_pe[VK_PE_SAMPLES] == 1 && g_bar_pe[VK_PE_BARRIER] == 1,
+          "barriers in a pass: it goes on through one, ends before a draw after it sampling its attachment (%llu) and at one after storage written (%llu; %llu passes)",
+          (unsigned long long)g_bar_pe[VK_PE_SAMPLES], (unsigned long long)g_bar_pe[VK_PE_BARRIER], (unsigned long long)g_bar_passes);
+    CHECK(*(uint32_t *)g_sb4 == 1, "a pixel shader's storage slot written: %u", *(uint32_t *)g_sb4);
     // a dispatch: storage slot 0 written, a texture through image slot 0 fetched, image slot 1 stored to
     uint8_t *img_mem = P + 0x360000, *tx7_mem = P + 0x361000; g_sb = P + 0x362000; memset(g_sb, 0, 1024);
     g_img = tex2d(img_mem, 8, 1, NVN_FORMAT_RGBA8); g_img.d.flags |= NVN_TEXTURE_FLAGS_IMAGE; g_tx7 = tex2d(tx7_mem, 4, 4, NVN_FORMAT_RGBA8);
@@ -249,7 +287,9 @@ int main(void) {
     // an inline uniform update inside a pass
     g_rtU = tex2d(P + 0x350000, 64, 64, NVN_FORMAT_RGBA8); g_ubo3 = P + 0x3F0300; g_vb3 = P + 0x3F0400;
     memcpy(g_ubo3, col, sizeof col); const float lower[16] = {-1, -1, 0, 1, 1, -1, 0, 1, 1, 0, 0, 1, -1, 0, 0, 1}; memcpy(g_vb3, lower, sizeof lower);
+    uint64_t e0[VK_PE_N], e1[VK_PE_N]; vk_pass_ends(e0);
     f = run(rec_upd, NULL); mtl_wait(f, UINT64_MAX); g_us.n = 0;
+    vk_pass_ends(e1); for (int i = 0; i < VK_PE_N; i++) g_upd_pe[i] = e1[i] - e0[i];
     uint8_t qu[64 * 64 * 4]; memset(qu, 0x55, sizeof qu); mtl_read_texels(&g_rtU, 0, 0, &all, qu, 256, 0);
     const uint8_t *ut = qu + (16 * 64 + 32) * 4, *ub = qu + (48 * 64 + 32) * 4;
     CHECK(g_upd_passes == 1 && ut[1] == 255 && (ut[2] == 127 || ut[2] == 128) && ub[1] == 0 && ub[2] == 255,
@@ -257,6 +297,10 @@ int main(void) {
           (unsigned long long)g_upd_passes, ut[1], ut[2], ub[1], ub[2]);
     float mem[4]; memcpy(mem, g_ubo3, sizeof mem);
     CHECK(mem[0] == 1 && mem[1] == 0 && mem[2] == 1 && mem[3] == 1, "the update reaches memory when the submission ends (%g %g %g %g)", mem[0], mem[1], mem[2], mem[3]);
+    uint64_t pe_n = 0; for (int i = 0; i < VK_PE_N; i++) pe_n += g_cont_pe[i] + g_upd_pe[i];
+    CHECK(g_cont_pe[VK_PE_SAMPLES] == 1 && g_cont_pe[VK_PE_RT] == 1 && g_upd_pe[VK_PE_SUBMIT] == 1 && pe_n == 3,
+          "why passes ended: sampling the attachment %llu and SetRenderTargets %llu (the continued pass), the submission %llu (its renamed updates pending; %llu in all)",
+          (unsigned long long)g_cont_pe[VK_PE_SAMPLES], (unsigned long long)g_cont_pe[VK_PE_RT], (unsigned long long)g_upd_pe[VK_PE_SUBMIT], (unsigned long long)pe_n);
     // the pool goes: its range is the CPU's again, with the content
     uint8_t keep = P[12345]; mtl_pool_del(P);
     CHECK(P[12345] == keep && !mtl_pool_has((uint64_t)(uintptr_t)P, 16), "after the pool's removal its range holds what it held (and is in no pool)");
