@@ -367,14 +367,18 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   updates written, still running, which are now copied with those bytes laid over (core, the Metal backend's too; Tears of the Kingdom's
   capture path still leaves them out). The debate's GPU time in passes stayed the same (8.4-9.8 ms a frame in 600-present spans against
   8.5-9.7), so those passes' loads and stores were not its cost) and
-  the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth; each pass's
+  the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation (measured 2026-10-30: the compositor puts the identity
+  swapchain on the panel with the display hardware, `dumpsys SurfaceFlinger`: composition DEVICE, ROT_90, no client composition, so no GPU
+  pass is spent on it; only when that changes), the other readings (GPU memory, bandwidth; each pass's
   GPU time by its targets since batch 132: in the trial 7.4-7.7 ms a frame in passes, 3.3 of them in about 1.2 passes a frame of 3-4 draws
   on a 1280 x 720 target with depth, a projection matrix among their uniforms; that pass loads and stores about 15 MB, so the cost is its
   draws' work, to be looked into next); the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when presents become
   submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
-  interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
-  `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet. Measured in the first trial's debate (2026-10-30): the game
+  interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts), which say
+  nothing on Android yet (`dm_thermal_now` does since batch 137). In the debate the process's two busiest threads ran on cpu4-5 (the six-core
+  cluster, 3.6 GHz at most) at 1.0-1.6 GHz and the two prime cores (4.6 GHz) sit at 0.88 GHz: the load is light; Android's power saving
+  mode is not read (no NDK call tells it). Measured in the first trial's debate (2026-10-30): the game
   waits for its newest submission every frame (177; 12 ms a frame there), yet frames are held at the 60 Hz present (p50 16.6 ms) and its
   dips are single long frames at the lines of text: the GPU one frame behind (224, as a probe: the waits 12 → 0.1 ms a frame) left the frame
   times as they were. Those frames were the render thread making and dropping texture pools (batch 135) and mapping and unmapping their
@@ -1078,3 +1082,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   fps, 4 save commits, its frame 1800 as batch 135's; the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 183 / 183, sanitizer,
   texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at;
   its alias region peaked at 512 MB as before); manosaba's shots as batch 135's.
+- [x] batch 137 · 301f part: the thermal state on Android, and the frame rate held at 30 when hot as on the iPhone. `dm_thermal_now`
+  (`android/diag_android.c`) said nominal always; it now follows Android's thermal status (AThermal, API 30: read at the start, then its
+  listener), mapped onto Apple's four states by the NDK's words for each: none → nominal; light and moderate (throttling "where UX is not
+  impacted" / "not largely impacted") → fair; severe ("UX is largely impacted") → serious; critical, emergency and shutdown → critical; an
+  error -1. The app's front end (`front_android.c`) applies `nvn_fps_policy` (plan item 135) when the host starts and on each change: the
+  player's rate (DM_FPS) held at 30 from serious up unless DM_HOT_HOLD=0 (the iPhone's "Hold 30 fps when hot" off); the Vulkan backend's
+  frame rate target is now set by it (`mtl_fps_set`, as the Metal backend's), the hle's pacing holds presents to it. On the phone (title,
+  DM_THERMAL_STATUS=<status> standing in for the system's): status 0 → 60 fps; 3 (severe) → "frame rate 30 fps (thermal state serious)" and
+  30 fps; 3 with DM_HOT_HOLD=0 → 60 fps; the real status read 0 and the listener taken. The headless host links libandroid now (the thermal
+  manager is there).
+  Tests: on the phone `t_thermal` 9 (the eight statuses and a reading of 0-3 now: `-DDM_TEST_THERMAL_RAW`, the status as it is, fails 5).
+  The app 40 s at 60 fps (its log: status 0 followed, "frame rate 60 fps (the setting; thermal state 0)"), 4 save commits, its frame 1800 as
+  batch 136's; the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 183 / 183, sanitizer, texture, audit and tool tests, both
+  IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots as batch 136's.

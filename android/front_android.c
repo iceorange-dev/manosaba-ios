@@ -7,6 +7,9 @@
 //   normalised to the game picture; game controllers (KEYCODE_BUTTON_*, sticks, hat, triggers) → the controller, every one merged as on Apple
 //   (gamepad.m: buttons ORed, each stick from the one pushed furthest); keys that are not the game's (volume, Back's system meaning aside) stay
 //   the system's. Back is taken and dropped, so that it does not close the game.
+//   Frame rate: the player's (DM_FPS, 60 unless 30) held at 30 from thermal state serious up, as on the iPhone (nvn_fps_policy, plan item 135;
+//   DM_HOT_HOLD=0 keeps it at any state, as "Hold 30 fps when hot" off); applied at the start and again when the thermal status changes
+//   (diag_android.c). Android's power saving mode is not read (no NDK call tells it).
 // Not yet: the software keyboard (front_text_input says nothing is shown: hle_swkbd.c keeps the game's text), the on-screen controls, motion and
 // vibration (with 301e's drawing and 301f).
 #include <android/input.h>
@@ -21,16 +24,30 @@
 #include "game.h"
 #include "hle.h"
 #include "input_map.h"
+#include "../gfx/nvn/nvn_pace.h"
+#include <stdlib.h>
 
 void dm_dialog(const char *title, const char *msg);   // app_android.c
 void dm_main_post(void (*fn)(void *), void *arg);
 void dm_bars_hide(void *unused);
 uint64_t dm_audio_render_calls(void);
 
+// ---------- frame rate ----------
+int dm_thermal_now(void); void dm_thermal_watch(void (*fn)(void));   // diag_android.c
+void mtl_fps_set(int fps);                                            // gfx/nvn/vk/vk_present.c
+static void fps_apply(void) {
+    const char *e = getenv("DM_FPS"), *h = getenv("DM_HOT_HOLD"); int user = e && atoi(e) == 30 ? 30 : 60, hold = !(h && !strcmp(h, "0")), th = dm_thermal_now();
+    int f = nvn_fps_policy(user, 0, th, hold); static _Atomic int last;
+    if (atomic_exchange(&last, f) != f) LOG("front: frame rate %d fps (%s; thermal state %d)", f, f < user ? (th >= 3 ? "thermal state critical" : "thermal state serious")
+                                             : th >= 2 && !hold && user > 30 ? "the setting; hot, but DM_HOT_HOLD=0" : "the setting", th);
+    mtl_fps_set(f);
+}
+
 // ---------- the host's side of front.h ----------
 static void *guest_main(void *g) { ((void (*)(void))g)(); return NULL; }
 // The guest's main thread with a fixed 16 MB stack (front_headless.c has why), joined: dm_main returns when the game does
 void front_run(void (*guest)(void)) {
+    dm_thermal_watch(fps_apply); fps_apply();   // (the environment and the log are the app's by now: app_android.c boot)
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 16u << 20); pthread_t th;
     if (pthread_create(&th, &a, guest_main, (void *)guest)) die("cannot start the guest main thread");
     pthread_attr_destroy(&a); pthread_join(th, NULL);

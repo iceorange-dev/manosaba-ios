@@ -133,7 +133,10 @@ double mtl_presented_time(uint64_t n) { (void)n; return 0; }
 uint32_t mtl_present_qos(void) { return 0; }
 int mtl_has_window(void) { return front_android_window() != NULL; }
 int mtl_display_hz(void) { return front_android_window() ? 60 : 0; }   // (the panel's own rate and frame pacing: 301f)
-int mtl_fps_target(void) { const char *e = getenv("DM_FPS"); return e && atoi(e) == 30 ? 30 : 60; }
+// The frame rate target (the hle's pacing holds presents to it): DM_FPS until the front end sets it (front_android.c: the policy of plan item 135)
+static _Atomic int g_fps;
+int mtl_fps_target(void) { int f = atomic_load(&g_fps); if (f) return f; const char *e = getenv("DM_FPS"); return e && atoi(e) == 30 ? 30 : 60; }
+void mtl_fps_set(int fps) { int v = fps == 30 ? 30 : 60; if (atomic_exchange(&g_fps, v) != v) VLOG("frame rate target %d fps", v); }
 int mtl_link_active(void) { return 0; }
 int mtl_link_wait_tick(uint64_t timeout_ns) { (void)timeout_ns; return 0; }
 void mtl_link_set_fifo(int on) { (void)on; }

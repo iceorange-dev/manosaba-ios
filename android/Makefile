@@ -54,7 +54,7 @@ $(B)/obj/game_profile.c.o: $(B)/game_profile.c $(B)/flags.txt
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 -include $(OBJ:.o=.d) $(NULL_OBJ:.o=.d) $(VK_OBJ:.o=.d) $(B)/obj/android/front_headless.c.d $(B)/obj/android/app_android.c.d $(B)/obj/android/front_android.c.d
 $(B)/dmhost: $(OBJ) $(NULL_OBJ) $(B)/obj/android/front_headless.c.o
-	$(CC) -o $@ $^ -lm -ldl -laaudio -lmediandk
+	$(CC) -o $@ $^ -lm -ldl -landroid -laaudio -lmediandk
 
 # The app's library: NativeActivity loads it and calls ANativeActivity_onCreate (app_android.c). -Bsymbolic: the assembly's branches and adrp to
 # the library's own global symbols (dm_hcall, nvn_slot ...) bind inside it, with no PLT stub (one would take x16 / x17, which the thunks pass) and
@@ -86,7 +86,7 @@ apk: $(B)/$(GAME).apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_thermal t_thermal_raw
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -101,6 +101,10 @@ build/tests/t_hthread_nov: tests/t_hthread.c plat_linux.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -DDM_TEST_STOP_NO_V -o $@ $^
 build/tests/t_slots: tests/t_slots.c slots.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $^
+build/tests/t_thermal: tests/t_thermal.c diag_android.c | build/tests
+	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $^ -landroid
+build/tests/t_thermal_raw: tests/t_thermal.c diag_android.c | build/tests
+	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -DDM_TEST_THERMAL_RAW -I$(H) -Icompat -include compat/darwin.h -o $@ $^ -landroid
 build/tests/t_input: tests/t_input.c input_map.h | build/tests
 	$(CC) -O1 -Wall -I. -I$(H) -o $@ $< -lm
 build/tests/t_input_ydown: tests/t_input.c input_map.h | build/tests
