@@ -49,6 +49,8 @@ int vk_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);   //
 int vk_addr_span(uint64_t addr, VkBuffer *buf, VkDeviceSize *off, uint64_t *left);   // ... and the bytes from addr to its pool's end
 void vk_pool_line(uint64_t presents);   // the stats line's: pools made and gone since the last (vk_pools.c)
 uint64_t vk_pool_copied(void);         // bytes copied into pools when they were made, all along
+uint64_t vk_pool_kept(void);           // bytes copied out of pools gone when they were freed, all along
+void vk_pool_gone_cap(uint64_t bytes);  // the pools gone kept placed at most (256 MB; t_vk_be sets less)
 
 // vk_submit.c: the submission being recorded
 typedef struct { int kind; volatile uint32_t *val; uint32_t mode, v; uint64_t addr; uint32_t type; } vk_post;   // kind 1 event, 2 timestamp, 3 samples passed

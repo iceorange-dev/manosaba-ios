@@ -118,6 +118,7 @@ void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc));
 void dm_yield_top(char *out, size_t n);
 int dm_game_slot_acquire(const char *what);   // game_slot.c: one game at a time on the Mac (waits, or stops an agent's run for the player)   // hle_thread.c: the two threads that yielded most since the last call
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len));
+void dm_guest_unmap_register(void (*fn)(void *addr, size_t len));   // hle_svc.c: called before the host gives guest memory back (UnmapPhysicalMemory, a heap shrink), the content going with it
 void dm_res_report_register(void (*fn)(uint32_t tick, const char *why));   // Resource count callback (registered by the graphics layer): called every 250 ticks, when the loading screen has been dismissed, and on exit when the record is full
 void (*dm_res_report_cb(void))(uint32_t tick, const char *why);   // Get the registered resource count callback (null if not registered)
 void dm_guest_write_prepare(void *addr, size_t len);

@@ -7,9 +7,13 @@
 // Unity makes a pool for each texture (16-34 MB for a character's picture with its mips): in manosaba's first trial about one is made and one goes at
 // each line of text, and copying them both ways (and waiting for the GPU to go idle) made those frames 40-100 ms (plan item 301f). Now a page that
 // /proc/self/pagemap shows neither present nor swapped out (never written since it was mapped: the pools there were all such) is not copied in, as
-// new device memory reads zero, and a pool going gives its content back by one copy and an mremap. It still waits for the GPU to go idle first:
-// freed while another submission ran, a 64 KB pool's range kept only its first 16 KB once that submission was done, in 2 of 18 test runs (batch
-// 135's; not seen again in 300 tries, the cause not found), so the memory is freed with the GPU idle, as before.
+// new device memory reads zero. A pool going stays where it is (its device memory placed over the range, which is the game's again: no copy and no
+// wait then) until the host is about to give that memory back (UnmapPhysicalMemory, a heap shrink: dm_guest_unmap_register), a new pool takes
+// some of its range, or more than 256 MB of pools gone are still placed. Given back whole, its content goes with it: the memory is freed and fresh
+// inaccessible pages put there, nothing copied; otherwise the content is copied out first and moved back by an mremap. In the first trial every
+// one of 170 pools gone was unmapped whole by the game within 20 ms (Unity's VammManager): the copy out (1.8 s in the debate, 9-16 ms a 16 MB
+// pool) was work for nothing. The memory is still freed with the GPU idle: freed while another submission ran, a 64 KB pool's range kept only its
+// first 16 KB once that submission was done, in 2 of 18 test runs (batch 135's; not seen again in 300 tries, the cause not found).
 // Other projects (2026-10-30): nx2android maps an AHardwareBuffer's dma-buf over the pool (gralloc refused large ones, so 256 MB chunks), PKShield an
 // exported fd or an mremap of the driver's mapping, d2r-mobile copies what each draw reads; mamcjr's placed heap needed Mesa's driver on the Adreno
 // 830, Qualcomm's has it on the 840.
@@ -27,7 +31,11 @@ static vk_pool *g_pools; static int g_npool, g_cap;
 static pool_find_t g_pf = {.last = -1};
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_type = UINT32_MAX; static uint64_t g_bytes;
-static struct { uint64_t add, add_b, copied_b, del, del_b, wait_ns, copy_ns; } g_ps;   // pools made and gone, bytes, bytes copied in, time (under g_mu)
+static struct { uint64_t add, add_b, copied_b, alloc_ns, del, del_b, freed, freed_b, kept_b, wait_ns, copy_ns; } g_ps;   // pools made, gone and freed, bytes, time (under g_mu)
+static vk_pool *g_gone; static int g_ngone, g_gonecap; static uint64_t g_gone_bytes, g_gone_cap = 256u << 20;   // pools gone, still placed (oldest first)
+static _Atomic uint64_t g_kept_all;   // bytes copied out of pools gone, all along (t_vk_be)
+uint64_t vk_pool_kept(void) { return atomic_load(&g_kept_all); }
+void vk_pool_gone_cap(uint64_t bytes) { pthread_mutex_lock(&g_mu); g_gone_cap = bytes; pthread_mutex_unlock(&g_mu); }
 // New device memory reads zero on the 840 (the kernel's pages: 168 pools of 2-34 MB in manosaba's first trial, every page). It is checked on the first
 // pools with unwritten pages before it is relied on; memory that does not read zero has those pages cleared instead
 static _Atomic int g_zero_checks = 4, g_zero_bad;
@@ -60,10 +68,51 @@ static const VkBufferUsageFlags k_usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_
     VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
+// A pool's device memory freed and its range given back (the GPU idle first, as above): with its content (copied out, then moved there by an mremap)
+// or without (fresh inaccessible pages, as the host's own unmapping leaves them)
+static void pool_free(vk_pool p, int keep_content) {
+    uint64_t size = p.hi - p.lo, t0 = core_now_ns(); void *mem = (void *)p.lo, *keep = NULL;
+    if (keep_content && (keep = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) VDIE("pool %p: no room to keep its content", mem);
+    // Freeing the memory unmaps the range the driver reserved, and took the anonymous mapping put there first with it (the first try, on the K100:
+    // the range was gone after vkFreeMemory), so the range is given back after the free
+    mtl_finish();
+    uint64_t t1 = core_now_ns();
+    if (keep) memcpy(keep, mem, size);
+    VkMemoryUnmapInfoKHR ui = {VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR, .flags = V.unmap_reserve ? VK_MEMORY_UNMAP_RESERVE_BIT_EXT : 0, .memory = p.mem};
+    VK(V.unmap2(V.dev, &ui));
+    vkDestroyBuffer(V.dev, p.buf, NULL); vkFreeMemory(V.dev, p.mem, NULL);
+    if (keep) { if (mremap(keep, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, mem) != mem) VDIE("pool %p: the range could not be given back (%s)", mem, strerror(errno)); }
+    else if (mmap(mem, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != mem) VDIE("pool %p: the range could not be given back (%s)", mem, strerror(errno));
+    uint64_t t2 = core_now_ns();
+    pthread_mutex_lock(&g_mu); g_ps.freed++; g_ps.freed_b += size; g_ps.wait_ns += t1 - t0; g_ps.copy_ns += t2 - t1; if (keep) g_ps.kept_b += size; pthread_mutex_unlock(&g_mu);
+    if (keep) atomic_fetch_add(&g_kept_all, size);
+}
+// The pools gone that [lo, hi) overlaps freed: given back without their content when they lie wholly inside it and discard says so (the host is
+// about to give that memory back), with it otherwise
+static void gone_free(uintptr_t lo, uintptr_t hi, int discard) {
+    for (;;) {
+        pthread_mutex_lock(&g_mu);
+        int i = 0; for (; i < g_ngone && !(g_gone[i].lo < hi && lo < g_gone[i].hi); i++) ;
+        if (i == g_ngone) { pthread_mutex_unlock(&g_mu); return; }
+        vk_pool p = g_gone[i]; memmove(&g_gone[i], &g_gone[i + 1], (size_t)(g_ngone - i - 1) * sizeof *g_gone); g_ngone--; g_gone_bytes -= p.hi - p.lo;
+        pthread_mutex_unlock(&g_mu);
+        int whole = discard && lo <= p.lo && p.hi <= hi;
+#ifdef DM_TEST_VK_POOL_GONE_DISCARD_PART   // negative control of t_vk_be only: a pool gone given back without its content when only part of it goes
+        whole = discard;
+#endif
+        pool_free(p, !whole);
+    }
+}
+static void unmap_note(void *a, size_t n) { gone_free((uintptr_t)a, (uintptr_t)a + n, 1); }   // the host gives [a, a + n) back next (hle_svc.c)
+static pthread_once_t g_note_once = PTHREAD_ONCE_INIT;
+static void note_reg(void) { dm_guest_unmap_register(unmap_note); }
+
 void mtl_pool_add(const void *mem, uint64_t size) {
-    vk_init();
+    vk_init(); pthread_once(&g_note_once, note_reg);
     uintptr_t lo = (uintptr_t)mem, hi = lo + size;
     if ((lo & 4095) || (size & 4095) || !size) VDIE("pool %p + %#llx is not whole 4 KB pages (NVN pools are)", mem, (unsigned long long)size);
+    gone_free(lo, hi, 0);   // a pool gone still placed over some of the range: freed first, its content (the game's since) kept
+    uint64_t ta = core_now_ns();
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = k_usage, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
     VkBuffer buf; VK(vkCreateBuffer(V.dev, &bi, NULL, &buf));
     VkMemoryRequirements rq; vkGetBufferMemoryRequirements(V.dev, buf, &rq);
@@ -110,7 +159,7 @@ void mtl_pool_add(const void *mem, uint64_t size) {
     if (g_npool == g_cap) { g_cap = g_cap ? 2 * g_cap : 64; g_pools = realloc(g_pools, (size_t)g_cap * sizeof *g_pools); if (!g_pools) VDIE("pool table"); }
     g_pools[g_npool++] = (vk_pool){lo, hi, buf, dm, 1};
     pool_find_reset(&g_pf); g_bytes += size;
-    g_ps.add++; g_ps.add_b += size; g_ps.copied_b += copied; g_ps.copy_ns += core_now_ns() - t0; atomic_fetch_add(&g_copied_all, copied);
+    g_ps.add++; g_ps.add_b += size; g_ps.copied_b += copied; g_ps.alloc_ns += t0 - ta; g_ps.copy_ns += core_now_ns() - t0; atomic_fetch_add(&g_copied_all, copied);
     pthread_mutex_unlock(&g_mu);
     static unsigned said; if (said++ < 4 || size >= (64u << 20)) VLOG("pool %p + %llu MB placed (%d pools, %llu MB)", mem, (unsigned long long)(size >> 20), g_npool, (unsigned long long)(g_bytes >> 20));
 }
@@ -120,22 +169,24 @@ void mtl_pool_del(const void *mem) {
     int i = 0; for (; i < g_npool && g_pools[i].lo != lo; i++) ;
     if (i == g_npool) { pthread_mutex_unlock(&g_mu); return; }
     vk_pool p = g_pools[i]; g_pools[i] = g_pools[--g_npool]; pool_find_reset(&g_pf); g_bytes -= p.hi - p.lo;
+    g_ps.del++; g_ps.del_b += p.hi - p.lo;
+#ifndef DM_TEST_VK_POOL_GONE_COPY   // negative control of t_vk_be only: freed at once with its content, as before
+    // kept placed (above); the oldest beyond the cap freed with its content
+    if (g_ngone == g_gonecap) { g_gonecap = g_gonecap ? 2 * g_gonecap : 64; g_gone = realloc(g_gone, (size_t)g_gonecap * sizeof *g_gone); if (!g_gone) VDIE("gone pools"); }
+    g_gone[g_ngone++] = p; g_gone_bytes += p.hi - p.lo;
     pthread_mutex_unlock(&g_mu);
-    uint64_t size = p.hi - p.lo, t0 = core_now_ns();
-    void *keep = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (keep == MAP_FAILED) VDIE("pool %p: no room to keep its content", mem);
-    // The GPU is let finish what it may still do with it (the game finalizes a pool only once its work is done: short), then the memory is unmapped
-    // and freed before anonymous memory takes the range: freeing it unmaps the range the driver reserved, and took the anonymous mapping put there
-    // first with it (the first try, on the K100: the range was gone after vkFreeMemory). The copy kept is moved there (mremap: no second copy)
-    mtl_finish();
-    uint64_t t1 = core_now_ns();
-    memcpy(keep, mem, size);
-    VkMemoryUnmapInfoKHR ui = {VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR, .flags = V.unmap_reserve ? VK_MEMORY_UNMAP_RESERVE_BIT_EXT : 0, .memory = p.mem};
-    VK(V.unmap2(V.dev, &ui));
-    vkDestroyBuffer(V.dev, p.buf, NULL); vkFreeMemory(V.dev, p.mem, NULL);
-    if (mremap(keep, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, (void *)mem) != mem) VDIE("pool %p: the range could not be given back (%s)", mem, strerror(errno));
-    uint64_t t2 = core_now_ns();
-    pthread_mutex_lock(&g_mu); g_ps.del++; g_ps.del_b += size; g_ps.wait_ns += t1 - t0; g_ps.copy_ns += t2 - t1; pthread_mutex_unlock(&g_mu);
+    for (;;) {
+        pthread_mutex_lock(&g_mu);
+        int old = g_gone_bytes > g_gone_cap && g_ngone > 1; vk_pool o = g_gone[0];
+        if (old) { memmove(&g_gone[0], &g_gone[1], (size_t)(g_ngone - 1) * sizeof *g_gone); g_ngone--; g_gone_bytes -= o.hi - o.lo; }
+        pthread_mutex_unlock(&g_mu);
+        if (!old) break;
+        pool_free(o, 1);
+    }
+#else
+    (void)g_gonecap; pthread_mutex_unlock(&g_mu);
+    pool_free(p, 1);
+#endif
 }
 static int find_locked(uint64_t addr, uint64_t len) { return pool_find(&g_pf, g_pools, sizeof *g_pools, g_npool, addr, len ? len : 1); }
 int mtl_pool_has(uint64_t addr, uint64_t len) { pthread_mutex_lock(&g_mu); int i = find_locked(addr, len); pthread_mutex_unlock(&g_mu); return i >= 0; }
@@ -152,10 +203,11 @@ int vk_addr_span(uint64_t addr, VkBuffer *buf, VkDeviceSize *off, uint64_t *left
 }
 void vk_pool_line(uint64_t presents) {   // the stats line's: pools made and gone since the last
     pthread_mutex_lock(&g_mu); __typeof__(g_ps) s = g_ps; memset(&g_ps, 0, sizeof g_ps); pthread_mutex_unlock(&g_mu);
-    if (!s.add && !s.del) return;
-    VLOG("memory pools over the last %llu presents: %llu made (%.0f MB, %.0f MB of it written and copied in), %llu gone (%.0f MB); %.1f ms waiting for "
-         "the GPU, %.1f ms copying", (unsigned long long)presents, (unsigned long long)s.add, s.add_b / 1048576.0, s.copied_b / 1048576.0,
-         (unsigned long long)s.del, s.del_b / 1048576.0, s.wait_ns / 1e6, s.copy_ns / 1e6);
+    if (!s.add && !s.del && !s.freed) return;
+    VLOG("memory pools over the last %llu presents: %llu made (%.0f MB, %.0f MB of it written and copied in, %.1f ms allocating), %llu gone (%.0f MB), "
+         "%llu freed (%.0f MB, %.0f MB of it copied out); %.1f ms waiting for the GPU, %.1f ms copying", (unsigned long long)presents, (unsigned long long)s.add,
+         s.add_b / 1048576.0, s.copied_b / 1048576.0, s.alloc_ns / 1e6, (unsigned long long)s.del, s.del_b / 1048576.0, (unsigned long long)s.freed,
+         s.freed_b / 1048576.0, s.kept_b / 1048576.0, s.wait_ns / 1e6, s.copy_ns / 1e6);
 }
 void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { (void)p; (void)off; (void)n; }   // coherent memory: nothing to do
 

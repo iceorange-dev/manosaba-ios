@@ -386,8 +386,11 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   waits for its newest submission every frame (177; 12 ms a frame there), yet frames are held at the 60 Hz present (p50 16.6 ms) and its
   dips are single long frames at the lines of text: the GPU one frame behind (224, as a probe: the waits 12 → 0.1 ms a frame) left the frame
   times as they were. Those frames were the render thread making and dropping texture pools (batch 135) and mapping and unmapping their
-  memory (batch 136); what is left of them: a pool going (the wait for the GPU to go idle and one copy: 16 MB in about 15 ms),
-  `vkAllocateMemory`, a few frames of 145-186 ms not looked into yet.
+  memory (batch 136) and copying a pool's content out when it went, which the game then gave back unread (batch 140). What is left
+  (two runs of 150 s): the wait for the GPU to go idle before a pool's memory is freed (0.5-0.66 s in all), `vkAllocateMemory` (0.44-0.55 s;
+  recycling the memory would need the placed range unmapped without the driver's reservation, which batch 135's lost range makes a thing to
+  stress-test first), and the game's own work on its main thread (a frame of 140 ms with the render thread waiting for it). The frame of
+  about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -1140,3 +1143,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   (looked at: the butterflies moved); the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 185 / 185, sanitizer, texture, audit
   and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots
   as batch 138's.
+- [x] batch 140 · 301f part: a texture pool gone is no longer copied out. In the debate every one of 170 pools gone was given back whole by the
+  game within 20 ms (UnmapPhysicalMemory, Unity's VammManager), so copying its 16-34 MB out (1.8 s in the debate, 9-16 ms a pool) was work
+  for nothing. Now a pool gone stays placed (its device memory over the range, which is the game's again) until the host is about to give that
+  memory back (`dm_guest_unmap_register`, called by UnmapPhysicalMemory and a heap shrink before they change the mapping), a new pool takes
+  some of its range, or more than 256 MB of pools gone are still placed; given back whole, the memory is freed and fresh inaccessible pages
+  put there without a copy, otherwise the content is copied out first as before. The memory is still freed with the GPU idle. The stats line
+  says pools freed, how much of it was copied out and the time `vkAllocateMemory` took. Debate on the phone (`work/scripts/android_debate.sh`,
+  two runs against two before): 197 and 167 pools freed, 0 MB copied out, copying 0.14 s against 2.0; long frames from frame 7000 22-25
+  (1.1-1.3 s) against 37-40 (1.7-2.1 s), 6-13 of them 40 ms or more against 15-22.
+  Tests: on the phone `t_vk_be` 38 (a pool gone keeps its range and the game's writes; given back whole, nothing copied and it reads zero
+  mapped again; in part, the rest keeps its content; a new pool over one gone keeps what the game wrote; past the cap the oldest freed with
+  its content: `-DDM_TEST_VK_POOL_GONE_COPY` fails 3, `-DDM_TEST_VK_POOL_GONE_DISCARD_PART` 1, `-DDM_TEST_VK_POOL_ALL_UNWRITTEN` now 7);
+  `t_guest_mem` 75 (UnmapPhysicalMemory and a heap shrink call the hook with their range, the content still there; MapPhysicalMemory and a
+  growth do not: `-DDM_TEST_UNMAP_UNNOTED` fails 2).

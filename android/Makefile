@@ -113,7 +113,7 @@ apk-data: $(B)/$(GAME)-data.apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_vk_be_gcopy t_vk_be_gpart t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -195,6 +195,10 @@ build/tests/t_vk_be_pend: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PEND_KEPT -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
 build/tests/t_vk_be_pgall: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_ALL_UNWRITTEN -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+build/tests/t_vk_be_gcopy: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_COPY -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+build/tests/t_vk_be_gpart: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_DISCARD_PART -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
 build/tests/t_vk.dmvk: tests/mk_vk_bundle.py ../gfx/tools/dmsh_vk.py ../games/manosaba/game.json | build/tests
 	python3 tests/mk_vk_bundle.py $@
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')

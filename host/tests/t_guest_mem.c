@@ -28,6 +28,8 @@
 //   saw entries move under them (an unmap moves the last entry into the freed slot): another mapping, or the stack reported free.
 // Address regions (plan item 289): (11) the SDK's AllocateAddressRegion as is, the highest region end kept, a refusal counted for its red line;
 //   a refusal unseen as before (-DDM_TEST_AR_UNLOGGED): 1 fails.
+// The hook before guest memory is given back (plan item 301f, dm_guest_unmap_register): (12) UnmapPhysicalMemory and a heap shrink call it with
+//   their range while it still holds its content, MapPhysicalMemory and a heap growth do not; given back unannounced (-DDM_TEST_UNMAP_UNNOTED): 2 fail.
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -110,6 +112,8 @@ static void *churner(void *arg) {   // section 10: unmaps and maps again its hal
     return NULL;
 }
 enum { NP = 4096 };   // pages of the alias region the random test uses (16 MB)
+static int g_notes; static uint64_t g_note_a, g_note_n; static uint8_t g_note_byte;   // section 12: the calls of the hook before memory is given back
+static void note_unmap(void *a, size_t n) { g_notes++; g_note_a = (uint64_t)(uintptr_t)a; g_note_n = n; g_note_byte = *(volatile uint8_t *)a; }
 static uint8_t ref[NP];
 static size_t ref_mapped(void) { size_t n = 0; for (int i = 0; i < NP; i++) n += ref[i]; return n; }
 static size_t ref_hpages(size_t sub) { size_t n = 0; for (size_t h = 0; h < NP; h += sub) { int u = 0; for (size_t k = h; k < h + sub; k++) u |= ref[k]; n += u; } return n; }
@@ -298,6 +302,26 @@ int main(void) {
         CHECK(top == 0x3e00000 + 0x10000000, "... a region ending lower leaves the highest end");
         g_fake_ar_result = 0x1803; r = hle_os_alloc_region(&at, 0x40000000); svc_region_stat(&top, &refused); g_fake_ar_result = 0;
         CHECK(r == 0x1803 && refused == 1, "a refused address region: its result passed back, and counted (logged red)");
+    }
+
+    // (12) The graphics backend's hook before guest memory is given back (plan item 301f: the Vulkan backend's pools gone, still placed there):
+    // UnmapPhysicalMemory and a heap shrink call it with their range while the memory still holds its content; MapPhysicalMemory does not
+    printf("12 the hook before guest memory is given back\n");
+    {   dm_guest_unmap_register(note_unmap);
+        uint64_t r[32], at = (uint64_t)(uintptr_t)g_alias + 0x2000000, hp = dm_page_size();
+#define PHYS(n, a, sz) (memset(r, 0, sizeof r), r[0] = (a), r[1] = (sz), svc_dispatch((n), r, 0), r[0])
+#define HEAP(sz) (memset(r, 0, sizeof r), r[1] = (sz), svc_dispatch(0x01, r, 0), r[0])
+        CHECK(PHYS(0x2C, at, 4 * hp) == 0 && g_notes == 0, "MapPhysicalMemory: no call");
+        memset((void *)(uintptr_t)at, 0x5c, 4 * hp);
+        CHECK(PHYS(0x2D, at, 4 * hp) == 0 && g_notes == 1 && g_note_a == at && g_note_n == 4 * hp && g_note_byte == 0x5c,
+              "UnmapPhysicalMemory: one call with its range, the memory still holding its content then (%d calls)", g_notes);
+        HEAP(0x400000); memset(g_heap + 0x200000, 0x6d, 0x1000);
+        CHECK(HEAP(0x200000) == 0 && g_notes == 2 && g_note_a == (uint64_t)(uintptr_t)(g_heap + 0x200000) && g_note_n == 0x200000 && g_note_byte == 0x6d,
+              "a heap shrink to 2 MiB: one call with the part given back, its content still there then (%d calls)", g_notes);
+        int k = g_notes; HEAP(0x400000); CHECK(g_notes == k, "a heap grown: no call"); HEAP(0);
+#undef PHYS
+#undef HEAP
+        dm_guest_unmap_register(NULL);
     }
 
     printf("t_guest_mem: %d checks, %d failed\n", checks, fails);

@@ -60,6 +60,7 @@ run: \
 	$(B)/t_guest_mem_perpage \
 	$(B)/t_guest_mem_getinfoold \
 	$(B)/t_guest_mem_arold \
+	$(B)/t_guest_mem_unnoted \
 	$(B)/t_hid_receipt \
 	$(B)/t_hid_receipt_oneslot \
 	$(B)/t_hid_applet \
@@ -305,6 +306,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "FAIL a refused address region" $(B)/t_guest_mem_arold.log; then \
 	   cat $(B)/t_guest_mem_arold.log; echo "t_guest_mem_arold: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_guest_mem_arold: a refused address region left unseen, as expected"
+	@status=0; $(B)/t_guest_mem_unnoted > $(B)/t_guest_mem_unnoted.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '^FAIL' $(B)/t_guest_mem_unnoted.log)" -ne 2 ] || ! grep -q "FAIL UnmapPhysicalMemory: one call" $(B)/t_guest_mem_unnoted.log; then \
+	   cat $(B)/t_guest_mem_unnoted.log; echo "t_guest_mem_unnoted: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_guest_mem_unnoted: memory given back without the backend's hook fails 2, as expected"
 	@status=0; $(B)/t_guest_mem_perpage > $(B)/t_guest_mem_perpage.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '^FAIL' $(B)/t_guest_mem_perpage.log)" -ne 1 ] || ! grep -q "FAIL 4 MB mapped in one system call" $(B)/t_guest_mem_perpage.log; then \
 	   cat $(B)/t_guest_mem_perpage.log; echo "t_guest_mem_perpage: unexpected negative-control result ($$status)"; exit 1; \
@@ -907,6 +912,8 @@ $(B)/t_guest_mem_perpage: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle
 	clang -O1 -Wno-unused-function -DDM_TEST_ALIAS_PER_PAGE -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_guest_mem_arold: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_AR_UNLOGGED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
+$(B)/t_guest_mem_unnoted: t_guest_mem.c ../hle/hle_svc.c ../rodata_seal.h ../hle.h ../dm.h ../game/game.c $(GEN) ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_UNMAP_UNNOTED -I.. -o $@ t_guest_mem.c ../game/game.c $(GEN) ../runtime/plat_apple.c
 $(B)/t_coremask: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_coremask_noproc: t_coremask.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

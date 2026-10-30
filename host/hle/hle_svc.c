@@ -37,6 +37,16 @@ static int alias_bit(size_t i) { return g_alias_bits[i >> 3] >> (i & 7) & 1; }
 // is what 4 KB mappings scattered over 16 KB host pages cost on top
 void dm_alias_stat(size_t *mapped_mb, size_t *host_mb) { *mapped_mb = g_alias_mapped >> 8; *host_mb = g_alias_hpages * dm_page_size() >> 20; }
 size_t g_alias_calls;   // system calls alias_phys made (t_guest_mem)
+// The graphics backend's hook before guest memory is given back (dm.h): the Vulkan backend's pools gone but still placed there are freed first
+static void (*g_unmap_note)(void *addr, size_t len);
+void dm_guest_unmap_register(void (*fn)(void *addr, size_t len)) { g_unmap_note = fn; }
+static void unmap_note(void *a, size_t n) {
+#ifndef DM_TEST_UNMAP_UNNOTED   // negative control of t_guest_mem only: given back unannounced
+    if (g_unmap_note) g_unmap_note(a, n);
+#else
+    (void)a; (void)n;
+#endif
+}
 // Host pages [*run, end) (in 4 KB pages) with no mapped subpage left replaced by fresh anonymous PROT_NONE memory in one call (later maps read zero)
 static void alias_fresh(size_t *run, size_t end) {
     if (*run == SIZE_MAX || end <= *run) { *run = SIZE_MAX; return; }
@@ -539,6 +549,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
             if (busy) { LOG("SetHeapSize: %#zx would free heap memory a MapMemory still holds (InvalidCurrentMemory)", size); regs[0] = 0xD401; return 0; } }
 #endif
         int rc = 0;
+        if (size < g_heap_cur) unmap_note(g_heap + size, g_heap_cur - size);
         if (size > g_heap_cur) rc = mprotect(g_heap + g_heap_cur, size - g_heap_cur, PROT_READ | PROT_WRITE);
 #ifndef DM_TEST_HEAP_OLD
         else if (size < g_heap_cur) rc = mmap(g_heap + size, g_heap_cur - size, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED;   // given back: fresh pages
@@ -635,6 +646,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
 #endif
         // The physical memory the game may map: the application pool it is told about (GetInfo TotalMemory) less the images and the heap, as on the console
         size_t pool = (size_t)app_pool(), used = image_bytes() + g_heap_cur, limit = pool > used ? (pool - used) / 0x1000 : 0;
+        if (num == 0x2D) unmap_note(a, size);
         if (alias_phys(a, size, num == 0x2C, limit)) {
             static _Atomic unsigned long long refused; unsigned long long k = atomic_fetch_add(&refused, 1) + 1; size_t mm, hm; dm_alias_stat(&mm, &hm);
             if (k <= 8 || !(k & (k - 1))) LOG("MapPhysicalMemory refused (LimitReached, #%llu): %zu KB more would pass the %zu MB the application pool leaves for it (%zu MB mapped)", k, size >> 10, limit >> 8, mm);

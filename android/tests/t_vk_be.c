@@ -22,8 +22,11 @@
 // pass's GPU time summed by its targets (DM_VK_PASS_GPU; -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails). The pending writes
 // of completed submissions retired when the next starts (-DDM_TEST_VK_PEND_KEPT, never: 1 fails). Pools of textures (301f): one over pages written
 // and never written keeps the written ones' bytes, reads zero in the others and copies in only the written (-DDM_TEST_VK_POOL_ALL_UNWRITTEN, every
-// page taken as never written: 3 fail, the first pool's check among them); a pool going gives its range back with what it held (the GPU's copy into
-// it too) by one copy and an mremap.
+// page taken as never written: 7 fail, the first pool's check and those of the pools gone among them); a pool going keeps its range with what it
+// held (the GPU's copy into it too), placed until the host gives that memory back: given back whole, nothing is copied and it reads zero when
+// mapped again; in part, the rest keeps its content; a new pool over one gone keeps what the game wrote since; past the cap of pools gone the
+// oldest is freed with its content (-DDM_TEST_VK_POOL_GONE_COPY, freed at once with its content as before: 3 fail;
+// -DDM_TEST_VK_POOL_GONE_DISCARD_PART, given back without its content when only part goes: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
@@ -47,6 +50,8 @@ uint64_t now_ns(void) { return guest_ns(); }   // (hle_os.c's: the pipelines' ti
 ANativeWindow *front_android_window(void) { return NULL; }
 void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) { (void)fn; }   // (the host's crash.c; no guarded copies here)
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len)) { (void)fn; }   // (the same: nvn_dirty.c's, no pool is tracked here)
+static void (*g_unmap)(void *addr, size_t len);
+void dm_guest_unmap_register(void (*fn)(void *addr, size_t len)) { g_unmap = fn; }   // (hle_svc.c's: the test plays the host giving memory back)
 int exec_draw_dropped(void) { return 0; }   // (core/exec.c's: rendering on)
 int g_rt_merged;   // (core/pass.c's: the core's mark of a continued pass)
 const uint8_t *g_exec_cur;   // (core/pass.c's: the op the replay is at; none here but the SetRenderTargets below)
@@ -351,6 +356,31 @@ int main(void) {
     // the pool goes: its range is the CPU's again, with the content
     uint8_t keep = P[12345]; mtl_pool_del(P);
     CHECK(P[12345] == keep && !mtl_pool_has((uint64_t)(uintptr_t)P, 16), "after the pool's removal its range holds what it held (and is in no pool)");
+    // pools gone, still placed until the host gives their memory back (plan item 301f)
+    const size_t pg4 = 4096; uint64_t k0 = vk_pool_kept();
+    uint8_t *G = mmap(NULL, 32 * pg4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); memset(G, 0x33, 32 * pg4);
+    mtl_pool_add(G, 16 * pg4); mtl_pool_add(G + 16 * pg4, 16 * pg4);
+    mtl_pool_del(G); G[5] = 0x44;   // the game's again
+    int held = G[5] == 0x44 && G[pg4] == 0x33;
+    g_unmap(G, 16 * pg4); mprotect(G, 16 * pg4, PROT_READ | PROT_WRITE);   // (the host's own unmapping, then the game mapping it again)
+    int gz = 1; for (size_t i = 0; i < 16 * pg4; i++) if (G[i]) { gz = 0; break; }
+    CHECK(held && gz && vk_pool_kept() == k0, "a pool gone keeps its range, the game's again; given back whole, nothing is copied and it reads zero mapped again (%llu bytes copied)",
+          (unsigned long long)(vk_pool_kept() - k0));
+    uint8_t *G2 = G + 16 * pg4; mtl_pool_del(G2); G2[0] = 0x55;
+    g_unmap(G2, 8 * pg4); mprotect(G2 + 8 * pg4, 8 * pg4, PROT_READ | PROT_WRITE);   // half of it given back (the rest stays the game's)
+    CHECK(G2[8 * pg4] == 0x33 && G2[16 * pg4 - 1] == 0x33 && vk_pool_kept() - k0 == 16 * pg4, "given back in part: the rest keeps its content, the pool copied out first (%llu bytes)",
+          (unsigned long long)(vk_pool_kept() - k0));
+    uint8_t *H = mmap(NULL, 8 * pg4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); memset(H, 0x66, 8 * pg4);
+    mtl_pool_add(H, 8 * pg4); mtl_pool_del(H); H[100] = 0x77; mtl_pool_add(H, 8 * pg4);
+    CHECK(H[100] == 0x77 && H[pg4] == 0x66 && mtl_pool_has((uint64_t)(uintptr_t)H, 16), "a new pool over a pool gone: what the game wrote since is kept");
+    mtl_pool_del(H); g_unmap(H, 8 * pg4);
+    uint8_t *I = mmap(NULL, 16 * pg4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); memset(I, 0x11, 16 * pg4);
+    g_unmap(Q, 16 * 4096); g_unmap(P, 4 << 20);   // (the earlier pools gone, done with)
+    vk_pool_gone_cap(8 * pg4); uint64_t k1 = vk_pool_kept();
+    mtl_pool_add(I, 8 * pg4); mtl_pool_add(I + 8 * pg4, 8 * pg4); mtl_pool_del(I); mtl_pool_del(I + 8 * pg4);
+    CHECK(vk_pool_kept() - k1 == 8 * pg4 && I[0] == 0x11 && I[15 * pg4] == 0x11, "past the cap of pools gone, the oldest is freed with its content (%llu bytes copied)",
+          (unsigned long long)(vk_pool_kept() - k1));
+    vk_pool_gone_cap(256u << 20);
     VkFormat vf; VkComponentMapping cm;
     CHECK(vk_fmt(0x25, &vf, &cm) == 1 && vf == VK_FORMAT_R8G8B8A8_UNORM && vk_fmt(0x41, &vf, &cm) == 1 && vf == VK_FORMAT_BC1_RGB_UNORM_BLOCK &&
           vk_fmt(0x94, &vf, NULL) == 1 && vf == VK_FORMAT_ASTC_12x12_SRGB_BLOCK && vk_fmt(0x7E, &vf, NULL) == 1 && vf == VK_FORMAT_ASTC_8x5_UNORM_BLOCK &&
