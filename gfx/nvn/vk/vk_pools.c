@@ -97,7 +97,9 @@ int vk_addr_span(uint64_t addr, VkBuffer *buf, VkDeviceSize *off, uint64_t *left
 void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { (void)p; (void)off; (void)n; }   // coherent memory: nothing to do
 
 // The argument arena (the core's uniform snapshots and renamed updates, usnap.h): 64 MB of host-visible coherent memory in rings of submissions,
-// *gpu is the offset in *buf (the core adds the same padding to both). A block is reused once its submission has completed (a wrap waits for it)
+// *gpu is the offset in *buf (the core adds the same padding to both). An allocation entering a 1 MB block waits for the newest submission that
+// used the block on the ring's last lap (a wrap); the rest of the block the last allocation ended in is free whoever used its start (batch 133:
+// that wait made each submission's first allocation wait for the one before it to finish on the GPU, its uniform snapshot 4-10 ms in the trial)
 enum { ARENA = 64u << 20 };
 static struct { VkBuffer buf; VkDeviceMemory mem; uint8_t *cpu; size_t at; uint64_t fence_at[64]; } g_ar;   // fence_at[k]: the newest submission using 1 MB block k
 uint64_t vk_arena_size(void) { return ARENA; }
@@ -115,8 +117,14 @@ void nvn_be_arena(size_t n, uint8_t **cpu, uint64_t *gpu, void **buf) {
     n = (n + 255) & ~(size_t)255;
     if (n > ARENA / 2) VDIE("an arena allocation of %zu bytes", n);
     if (g_ar.at + n > ARENA) g_ar.at = 0;
-    for (size_t k = g_ar.at >> 20; k <= (g_ar.at + n - 1) >> 20; k++) {   // blocks a submission still on the GPU uses: wait for it
-        if (g_ar.fence_at[k] && g_ar.fence_at[k] != vk_cur_fence() && !mtl_wait(g_ar.fence_at[k], 0)) mtl_wait(g_ar.fence_at[k], UINT64_MAX);
+    size_t open = g_ar.at & ((1u << 20) - 1) ? g_ar.at >> 20 : SIZE_MAX;   // the block the last allocation ended in (none at a block's start)
+    for (size_t k = g_ar.at >> 20; k <= (g_ar.at + n - 1) >> 20; k++) {
+#ifndef DM_TEST_VK_ARENA_WAIT_OPEN   // negative control of t_vk_be only: the open block waited for as well (as before batch 133)
+        int enter = k != open;
+#else
+        int enter = 1; (void)open;
+#endif
+        if (enter && g_ar.fence_at[k] && g_ar.fence_at[k] != vk_cur_fence() && !mtl_wait(g_ar.fence_at[k], 0)) mtl_wait(g_ar.fence_at[k], UINT64_MAX);
         g_ar.fence_at[k] = vk_cur_fence();
     }
     *cpu = g_ar.cpu + g_ar.at; *gpu = g_ar.at; *buf = (void *)(uintptr_t)g_ar.buf; g_ar.at += n;

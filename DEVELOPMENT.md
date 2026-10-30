@@ -362,9 +362,10 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   is measured since batch 130, for the fps line), layered passes, the other TBDR rewrites (the same-target continuation and renamed uniform
   updates since batch 129, barriers kept in the pass since batch 131: 3.9 draws a pass in the first trial; its passes now end for new
   targets (40-66 % in 10-second spans), renamed updates written before a draw whose range has no snapshot (16-50 %) and submissions
-  (10-17 %). In 300 frames the snapshot line counts 192 ranges not copied for a GPU write of an earlier submission still running, and the
-  GPU writes noted (`us_gw_note`, the Metal backend's too) include the writes of the renamed updates themselves, whose bytes are known: to
-  be checked whether those are the ranges. The trial's GPU time stayed 9-10 ms a frame when its passes halved, so this is not first) and
+  (10-17 %). In the debate those flushes were 3300-10800 in 300 frames while the Vulkan arena made each submission wait for the one before
+  it (batch 133), 400-2700 after; the snapshot line then still counts 96-496 ranges in 300 frames not copied for a GPU write of an earlier
+  submission still running (`us_gw_note`, the Metal backend's too; the renamed updates' own writes, whose bytes are known, are among the
+  writes noted): whether those are the flushes' ranges is to be checked) and
   the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, the other readings (GPU memory, bandwidth; each pass's
   GPU time by its targets since batch 132: in the trial 7.4-7.7 ms a frame in passes, 3.3 of them in about 1.2 passes a frame of 3-4 draws
   on a 1280 x 720 target with depth, a projection matrix among their uniforms; that pass loads and stores about 15 MB, so the cost is its
@@ -1002,3 +1003,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   commits, its frame 1800 as batch 131's; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182 (as above),
   sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes
   (looked at); manosaba's shots as batch 131's.
+- [x] batch 133 · 301e3 part: the Vulkan arena no longer makes a submission wait for the one before it. In the first trial's debate the
+  uniform snapshot took 4-10 ms a submission, nearly all of it in `nvn_be_arena` (timed by phase on the phone): an allocation waited for
+  every in-flight submission that had used its 1 MB block, so each submission's first allocation, in the block the one before it ended in,
+  waited for that one to finish on the GPU. Now only a block entered anew (a wrap: its user on the ring's last lap) is waited for, as the
+  comment meant; the Metal backend's arena (a buffer a submission) never waited. The debate, at the fps line every 300 frames: 54-61 fps
+  (44-58 before), GPU 8.6-12.3 ms a frame (8.7-17.2); snapshots 0.04-0.05 ms a submission; renamed updates written for a draw with no
+  snapshot 400-2700 in 300 frames (3300-10800); the same scenes (looked at), no red line.
+  - The pass records on Vulkan add each draw (D lines: the vertex and pixel shader keys, primitive, count, instances). In the debate's
+    frame dumped before this batch, 34 passes held its 40 draws, most ended by renamed updates written; the 1280 x 720 pass's draws are of
+    6 to 384 indices with pixel shaders of a light loop, a shadow map and a cube map (the game's lit 3D scene).
+  Tests: on the phone `t_vk_be` 31 (a submission held on the GPU by an event: the next one's allocation in the block it used takes 0.0 ms,
+  one entering blocks it used on the last lap waits for it, about 300 ms: `-DDM_TEST_VK_ARENA_WAIT_OPEN`, the old wait, 1 fails, 303 ms).
+  The app 40 s at 60 fps, 4 save commits, its frame 1800 as batch 132's; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host
+  182 / 182 (`t_sleep` alone after the others), sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red
+  lines, its shots as batch 132's; manosaba's as batch 132's.

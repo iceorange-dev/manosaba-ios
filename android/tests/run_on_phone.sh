@@ -1,7 +1,7 @@
 #!/bin/sh
 # run_on_phone.sh <adb serial> "<data files>" <test>...: android/Makefile run-tests. Pushes the data files and build/tests/<test> to
 # /data/local/tmp/dm_tests on the phone and runs each there, in that folder; a test passes when it exits 0. The negative controls (name:failed checks expected) must exit 1 with exactly that many checks failed.
-CONTROLS="t_sha256_63:4 t_hthread_nov:1 t_input_ydown:2 t_movie_uvswap:2 t_vk_be_early:2 t_vk_be_wind:4 t_vk_be_grid:1 t_vk_be_stale:1 t_vk_be_cont:4 t_vk_be_ubsh:1 t_vk_be_shot:1 t_vk_be_ts:1 t_vk_be_pe:2 t_vk_be_bar:2 t_vk_be_ptime:1"
+CONTROLS="t_sha256_63:4 t_hthread_nov:1 t_input_ydown:2 t_movie_uvswap:2 t_vk_be_early:2 t_vk_be_wind:4 t_vk_be_grid:1 t_vk_be_stale:1 t_vk_be_cont:4 t_vk_be_ubsh:1 t_vk_be_shot:1 t_vk_be_ts:1 t_vk_be_pe:2 t_vk_be_bar:2 t_vk_be_ptime:1 t_vk_be_arena:1"
 SERIAL=$1; DATA=$2; shift 2
 [ -n "$SERIAL" ] || { echo "run_on_phone.sh: no phone (adb devices lists none)"; exit 2; }
 D=/data/local/tmp/dm_tests

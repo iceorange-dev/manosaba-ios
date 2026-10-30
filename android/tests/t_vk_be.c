@@ -17,8 +17,9 @@
 // back as a PNG (-DDM_TEST_VK_SHOT_FLIPPED, rows bottom first: 1 fails). The GPU time of the frame a submission was committed in (its timestamps;
 // -DDM_TEST_VK_TS_NONE, not handed on: 1 fails). Why passes end: the backend's own reasons over the op the replay is at (-DDM_TEST_VK_PE_OP_ONLY,
 // only the op: 2 fail). Barriers in a pass: it goes on, ended before a draw after one sampling the pass's attachment and at one after storage
-// written (-DDM_TEST_VK_BAR_NO_SPLIT: 2 fail, the passes timed with it). Each pass's GPU time summed by its targets (DM_VK_PASS_GPU;
-// -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails).
+// written (-DDM_TEST_VK_BAR_NO_SPLIT: 2 fail, the passes timed with it). The argument arena while a submission runs: the next one's allocation
+// beside its own does not wait for it, one entering blocks it used on the last lap does (-DDM_TEST_VK_ARENA_WAIT_OPEN, the old wait: 1 fails). Each
+// pass's GPU time summed by its targets (DM_VK_PASS_GPU; -DDM_TEST_VK_PTIME_FIRST_ONLY, a submission's first pass only: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
@@ -31,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include <zlib.h>
 static int n, fail;
 #define CHECK(c, ...) do { n++; if (c) printf("  ✓ "); else { fail++; printf("  ✗ "); } printf(__VA_ARGS__); printf("\n"); } while (0)
@@ -150,6 +152,20 @@ static void rec_bar(void *a) {
     S.tex[1][3] = 5 | (2ull << 20); S.chmask.mask = m; S.prog = &g_prog4; nvn_be_draw(&dw, NULL); nvn_be_barrier(NULL, &bits);
     g_bar_passes = vk_pass_count() - p0;
     vk_pass_ends(e1); for (int i = 0; i < VK_PE_N; i++) g_bar_pe[i] = e1[i] - e0[i];
+}
+// a submission held on the GPU until the host sets an event 300 ms later (from another thread)
+static VkEvent g_hold;
+static void *release(void *a) { (void)a; usleep(300000); vkSetEvent(V.dev, g_hold); return NULL; }
+static uint64_t held_sub(size_t n1, int k) {   // k allocations of n1 bytes in it
+    mtl_sub_begin(); vkCmdWaitEvents(vk_cb(), 1, &g_hold, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, NULL, 0, NULL, 0, NULL);
+    uint8_t *c; uint64_t g; void *b; for (int i = 0; i < k; i++) nvn_be_arena(n1, &c, &g, &b);
+    return mtl_sub_commit();
+}
+static double next_alloc_ms(size_t n, uint64_t held, int *still) {   // the next submission's allocation of n bytes, timed while held runs
+    pthread_t th; pthread_create(&th, NULL, release, NULL);
+    uint64_t t0 = now_ns(); mtl_sub_begin(); uint8_t *c; uint64_t g; void *b; nvn_be_arena(n, &c, &g, &b); uint64_t t1 = now_ns();
+    *still = mtl_done_fence() < held; uint64_t f = mtl_sub_commit(); pthread_join(th, NULL); mtl_wait(f, UINT64_MAX); vkResetEvent(V.dev, g_hold);
+    return (double)(t1 - t0) / 1e6;
 }
 // two draws of one pass with an inline uniform update between them; the range has a snapshot, as the core makes at the submission's start
 static tex_t g_rtU; static uint8_t *g_ubo3, *g_vb3; static uint64_t g_upd_passes, g_upd_pe[VK_PE_N];
@@ -307,6 +323,12 @@ int main(void) {
     CHECK(g_cont_pe[VK_PE_SAMPLES] == 1 && g_cont_pe[VK_PE_RT] == 1 && g_upd_pe[VK_PE_SUBMIT] == 1 && pe_n == 3,
           "why passes ended: sampling the attachment %llu and SetRenderTargets %llu (the continued pass), the submission %llu (its renamed updates pending; %llu in all)",
           (unsigned long long)g_cont_pe[VK_PE_SAMPLES], (unsigned long long)g_cont_pe[VK_PE_RT], (unsigned long long)g_upd_pe[VK_PE_SUBMIT], (unsigned long long)pe_n);
+    // the argument arena while a submission runs
+    VkEventCreateInfo ei = {VK_STRUCTURE_TYPE_EVENT_CREATE_INFO}; VK(vkCreateEvent(V.dev, &ei, NULL, &g_hold));
+    int still; uint64_t fh = held_sub(256, 1); double ms = next_alloc_ms(256, fh, &still);
+    CHECK(still && ms < 100, "the arena: the next submission's allocation in the block a running one used does not wait for it (%.1f ms; it was running: %d)", ms, still);
+    fh = held_sub(30u << 20, 2); ms = next_alloc_ms(30u << 20, fh, &still);
+    CHECK(ms > 250, "the arena: an allocation entering blocks a running submission used on the ring's last lap waits for it (%.1f ms)", ms);
     // the pool goes: its range is the CPU's again, with the content
     uint8_t keep = P[12345]; mtl_pool_del(P);
     CHECK(P[12345] == keep && !mtl_pool_has((uint64_t)(uintptr_t)P, 16), "after the pool's removal its range holds what it held (and is in no pool)");

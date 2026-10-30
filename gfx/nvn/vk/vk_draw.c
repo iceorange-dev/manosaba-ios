@@ -432,6 +432,8 @@ void nvn_be_draw(const p_draw *dw, const p_draw_idx *di) {
         vkCmdDrawIndexed(cb, (uint32_t)di->count, di->instances ? (uint32_t)di->instances : 1, 0, di->base_vertex, (uint32_t)di->base_instance);
     }
     g_draws++; P.draws++;
+    PD("D %llu vs=%016llx ps=%016llx prim=%d n=%d inst=%d%s", (unsigned long long)g_stat_pass, (unsigned long long)g->vs->key, (unsigned long long)(g->ps ? g->ps->key : 0),
+       prim, dw ? dw->count : di->count, dw ? dw->instances : di->instances, dw ? "" : " indexed");
     if (g_draws == 1) VLOG("first draw: %d attachments %ux%u, program %016llx / %016llx", P.n, P.w, P.h, (unsigned long long)g->vs->key, (unsigned long long)(g->ps ? g->ps->key : 0));
 }
 
