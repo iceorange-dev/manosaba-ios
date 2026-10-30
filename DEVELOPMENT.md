@@ -346,6 +346,8 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   packed by 301d's APK writer): all four, 64 MB read 2.1-2.4 ms through each against 2.3 plain (the app in front: higher clocks than the shell's);
   RW → RX and RWX, x18 kept, `cntpct_el0` trapped, 256 GB of PROT_NONE as in the shell.
   301g the settings panel (the user, 2026-10-30: an interface like the iPhone's for anyone): done in batch 138.
+  301h the game's data for a player without adb (the user, 2026-10-30): manosaba as an APK with its data, like the iPhone's IPA with it (batch
+  139); Tears of the Kingdom's data to be imported by the app instead (a folder the player picks: the system's document picker), not done yet.
   301d2 what the app still lacks, with 301e's drawing: the on-screen controls (`host/front/touchpad.c`, drawn on iOS by UIKit; manosaba plays
   by touch, so they are Tears of the Kingdom's: the user, 2026-10-30) and the
   software keyboard (`front_text_input` says nothing is shown: a NativeActivity without code is no text editor, so the system shows no
@@ -1120,3 +1122,21 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   commits, its frame 1800 as batch 137's; the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 185 / 185, sanitizer, texture,
   audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's
   shots as batch 137's.
+- [x] batch 139 · 301h manosaba's APK with its data, as the iPhone's IPA with it. `make apk-data` writes build/manosaba/manosaba-data.apk
+  (2769 MB, 19 s): `apk.py --data romfs=… --data sysfont=…` stores the player's RomFS and the console's fonts as assets/romfs/ and
+  assets/sysfont/ (each file at a 4-byte boundary) with an index each (assets/<name>.idx, size and path a line: the asset manager lists no
+  subfolders), and the writer now streams into the file (a stored file copied in pieces, its CRC read first; the v2 digest read back in 1 MB
+  chunks) instead of holding the APK whole. On its first start (and after an APK with other data) the app copies them into the external
+  files folder, where adb's push-data puts them too (`android/data_apk.c`): a file already there with its size is kept, so an interrupted
+  copy goes on and an APK with the same data copies nothing; each through <file>.part, renamed when whole; the copy is sendfile from the APK
+  at the asset's offset. It runs on a thread of its own behind a dialog that cannot be dismissed (`Progress.java`), the start going on when
+  it is done (`app_android.c`: `boot_start`). On the phone, the RomFS and fonts set aside: installed (73 s over adb), the first start copied
+  674 files, 2714 MB, in 2.3 s (no Java exception, no red line), the game at 60 fps; every file the same as the original (MD5 of all 667 and
+  7); the next start copied nothing. The data put back as it was. The everyday `make apk` carries no data (the batch's).
+  Tests: `t_apk` 17 (with --data: written in pieces, the same bytes as built whole; the index; each file stored at 4 bytes; the signature:
+  `T_APK_BROKEN=datadeflate` fails 1, `digest` 2, `align` 3); on the phone `t_data_idx` 8 (sizes and paths, a name with spaces; "..", ".",
+  empty components, absolute paths, backslashes, control characters, no tab, a size not a number, too many lines refused:
+  `-DDM_TEST_DATA_IDX_ANY` fails 2). The app 40 s at 60 fps (the everyday APK), 4 save commits, its frame 1800 the title as batch 138's
+  (looked at: the butterflies moved); the headless run 40 s. gfx 156 / 156 on Metal 4 and Metal 3, host 185 / 185, sanitizer, texture, audit
+  and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, frames 1300 and 1800 the same scenes (looked at); manosaba's shots
+  as batch 138's.

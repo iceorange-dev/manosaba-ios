@@ -15,11 +15,14 @@ The APK holds
   lib/arm64-v8a/        the host library, stored and at a 16 KB boundary of the file (extractNativeLibs false: the system maps it from the APK)
   assets/<NAME>         each --asset, deflated (the app reads them with AAssetManager); --product: assets/product/ holds each module's
                         <module>.patched.bin and the files ios/tools/product_files.py lists for it (the loader's fixups and gates, options)
+  assets/<NAME>/        each --data NAME=DIR (the player's RomFS, the console's fonts: an APK with the game's data, for the player's own
+                        devices), its files stored at a 4-byte boundary, and assets/<NAME>.idx, the files' sizes and paths: the app copies
+                        them out on its first start (android/data_apk.c). Written to the file in pieces, never held whole
 signed with APK Signature Scheme v2 (source.android.com/docs/security/features/apksigning/v2): RSASSA-PKCS1-v1_5 with SHA2-256 (0x0103) by a
 self-signed RSA-2048 certificate. The key (--key, default ~/.config/dm-android/apk-key.pem, mode 600) is made on first use and kept: an APK signed
 by another key does not install over this one without uninstalling it, which deletes the app's saves. The attribute resource IDs and enum values
 are AOSP's (core/res/res/values/public-final.xml, attrs_manifest.xml). android/tests/t_apk.py checks the output with a reader of its own."""
-import argparse, hashlib, os, struct, subprocess, sys, tempfile, zlib
+import argparse, hashlib, io, os, struct, subprocess, sys, tempfile, zlib
 
 ANDROID_NS = 'http://schemas.android.com/apk/res/android'
 ATTR = {   # android: attributes (public-final.xml)
@@ -116,46 +119,65 @@ def arsc_icon(pkg):
     return chunk(RES_TABLE, struct.pack('<I', 1), string_pool([ICON_PATH]) + package)
 
 DOS_DATE = (2026 - 1980) << 9 | 1 << 5 | 1   # 2026-01-01 00:00 for every entry: the same inputs give the same APK
-def build_zip(entries):
-    """entries: (name, data, deflate, align). Returns (the entries' section, central directory, end record). An aligned entry is stored and its data
-    starts at a multiple of align in the file, padded by an extra field (id 0xd935, the one zipalign writes)"""
-    out, cd = bytearray(), bytearray()
-    for name, data, deflate, align in entries:
-        nb = name.encode(); crc = zlib.crc32(data) & NONE
-        if deflate: c = zlib.compressobj(9, zlib.DEFLATED, -15); packed = c.compress(data) + c.flush(); method, ver = 8, 20
-        else: packed, method, ver = data, 0, 10
+def build_zip(entries, out):
+    """entries: (name, bytes or a file's path, deflate, align), written to out (a binary file, from its start): a file stored is copied in pieces,
+    its CRC read first (a game's data, gigabytes, never held whole). Returns (the entries' length, central directory, end record). An aligned
+    entry is stored and its data starts at a multiple of align in the file, padded by an extra field (id 0xd935, the one zipalign writes)"""
+    cd, pos = bytearray(), 0
+    for name, src, deflate, align in entries:
+        nb = name.encode(); path = None if isinstance(src, (bytes, bytearray)) else src
+        if path is None or deflate:
+            data = src if path is None else open(path, 'rb').read(); crc, size = zlib.crc32(data) & NONE, len(data)
+            if deflate: c = zlib.compressobj(9, zlib.DEFLATED, -15); packed = c.compress(data) + c.flush()
+            else: packed = data
+        else:
+            crc, size, packed = 0, os.path.getsize(path), None
+            with open(path, 'rb') as f:
+                for b in iter(lambda: f.read(1 << 20), b''): crc = zlib.crc32(b, crc)
+            crc &= NONE
+        method, ver = (8, 20) if deflate else (0, 10); plen = len(packed) if packed is not None else size
         extra = b''
         if align > 1 and os.environ.get('T_APK_BROKEN') != 'align':   # (the broken variant of t_apk.py: none aligned)
             assert not deflate, f'{name}: an aligned entry is stored'
-            pad = -(len(out) + 30 + len(nb)) % align
+            pad = -(pos + 30 + len(nb)) % align
             if pad and pad < 4: pad += align   # an extra field takes at least its 4-byte header
             if pad: extra = struct.pack('<HH', 0xd935, pad - 4) + bytes(pad - 4)
-        off = len(out)
-        out += struct.pack('<IHHHHHIIIHH', 0x04034b50, ver, 0, method, 0, DOS_DATE, crc, len(packed), len(data), len(nb), len(extra)) + nb + extra + packed
-        cd += struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, ver, ver, 0, method, 0, DOS_DATE, crc, len(packed), len(data), len(nb), 0, 0, 0, 0, 0, off) + nb
-    if len(out) + len(cd) >= 1 << 32: raise ValueError('APK past 4 GB (no ZIP64 here)')
-    eocd = struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, len(entries), len(entries), len(cd), len(out), 0)
-    return bytes(out), bytes(cd), eocd
+        off = pos
+        head = struct.pack('<IHHHHHIIIHH', 0x04034b50, ver, 0, method, 0, DOS_DATE, crc, plen, size, len(nb), len(extra)) + nb + extra
+        out.write(head); pos += len(head)
+        if packed is not None: out.write(packed)
+        else:
+            with open(path, 'rb') as f:
+                for b in iter(lambda: f.read(1 << 20), b''): out.write(b)
+        pos += plen
+        cd += struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, ver, ver, 0, method, 0, DOS_DATE, crc, plen, size, len(nb), 0, 0, 0, 0, 0, off) + nb
+    if pos + len(cd) >= 1 << 32: raise ValueError('APK past 4 GB (no ZIP64 here)')
+    eocd = struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, len(entries), len(entries), len(cd), pos, 0)
+    return pos, bytes(cd), eocd
 
 def lp(b): return struct.pack('<I', len(b)) + b   # uint32 length prefix
-def v2_digest(sections):   # 1 MB chunks: 0xa5 + length + chunk each, then 0x5a + count + the chunk digests
+def v2_digest(sections):   # 1 MB chunks: 0xa5 + length + chunk each, then 0x5a + count + the chunk digests; a section is bytes or (file, length)
     ds = []
     for sec in sections:
-        for i in range(0, len(sec), 1 << 20):
-            c = sec[i:i + (1 << 20)]; ds.append(hashlib.sha256(b'\xa5' + struct.pack('<I', len(c)) + c).digest())
+        if isinstance(sec, tuple):
+            f, left = sec; f.seek(0)
+            while left: c = f.read(min(1 << 20, left)); left -= len(c); ds.append(hashlib.sha256(b'\xa5' + struct.pack('<I', len(c)) + c).digest())
+        else:
+            for i in range(0, len(sec), 1 << 20):
+                c = sec[i:i + (1 << 20)]; ds.append(hashlib.sha256(b'\xa5' + struct.pack('<I', len(c)) + c).digest())
     return hashlib.sha256(b'\x5a' + struct.pack('<I', len(ds)) + b''.join(ds)).digest()
 ALG_RSA_PKCS1_SHA256 = 0x0103
 V2_BLOCK_ID = 0x7109871a
-def v2_sign(body, cd, eocd, sign, cert, spki):
-    """The APK with its signing block between the entries and the central directory. The digest covers the entries, the central directory and the
-    end record with its central directory offset taken as the signing block's (= len(body), what eocd already holds)"""
-    digest = v2_digest([body, eocd] if os.environ.get('T_APK_BROKEN') == 'digest' else [body, cd, eocd])   # (the broken variant of t_apk.py: no directory)
+def v2_sign(out, n, cd, eocd, sign, cert, spki):
+    """The signing block written after the entries (out[0:n]), then the central directory and the end record. The digest covers the entries, the
+    central directory and the end record with its central directory offset taken as the signing block's (= n, what eocd already holds)"""
+    digest = v2_digest([(out, n), eocd] if os.environ.get('T_APK_BROKEN') == 'digest' else [(out, n), cd, eocd])   # (the broken variant of t_apk.py: no directory)
     signed = lp(lp(struct.pack('<I', ALG_RSA_PKCS1_SHA256) + lp(digest))) + lp(lp(cert)) + lp(b'')
     signer = lp(signed) + lp(lp(struct.pack('<I', ALG_RSA_PKCS1_SHA256) + lp(sign(signed)))) + lp(spki)
     pair = struct.pack('<QI', 4 + len(lp(lp(signer))), V2_BLOCK_ID) + lp(lp(signer))
     size = len(pair) + 8 + 16
     block = struct.pack('<Q', size) + pair + struct.pack('<Q', size) + b'APK Sig Block 42'
-    return body + block + cd + eocd[:16] + struct.pack('<I', len(body) + len(block)) + eocd[20:]
+    out.seek(n); out.write(block + cd + eocd[:16] + struct.pack('<I', n + len(block)) + eocd[20:]); out.truncate()
 
 def openssl(*args, data=None):
     r = subprocess.run(['openssl', *args], input=data, capture_output=True)
@@ -174,20 +196,35 @@ def signing_key(path):
         openssl('req', '-new', '-x509', '-key', path, '-sha256', '-days', '10000', '-subj', '/CN=dm android', '-outform', 'DER', '-out', crt)
     return (lambda b: openssl('dgst', '-sha256', '-sign', path, data=b)), open(crt, 'rb').read(), openssl('pkey', '-in', path, '-pubout', '-outform', 'DER')
 
-def build(lib, lib_name, pkg, label, version_code, version_name, icon, assets, key, debuggable, dex=None):
+def data_entries(name, d):
+    """A folder of game data (the player's RomFS, the console's fonts) as stored entries assets/<name>/<path>, and its index assets/<name>.idx: one
+    line a file, its size, a tab and its path from the folder (sorted; paths are /-separated, a name may hold spaces)"""
+    files = sorted(os.path.relpath(os.path.join(r, f), d).replace(os.sep, '/') for r, _, fs in os.walk(d, followlinks=True) for f in fs)
+    idx = ''.join(f'{os.path.getsize(os.path.join(d, f))}\t{f}\n' for f in files).encode()
+    stored = os.environ.get('T_APK_BROKEN') != 'datadeflate'   # (the broken variant of t_apk.py: the data deflated)
+    return [(f'assets/{name}.idx', idx, True, 1)] + [(f'assets/{name}/{f}', os.path.join(d, f), not stored, 4 if stored else 1) for f in files]
+
+def build(lib, lib_name, pkg, label, version_code, version_name, icon, assets, key, debuggable, dex=None, data=(), out=None):
+    """The APK, written to out (a path) or returned as bytes; data: (name, folder) pairs carried as data_entries"""
     sign, cert, spki = signing_key(key)
     entries = [('AndroidManifest.xml', axml(manifest(pkg, label, version_code, version_name, lib_name, bool(icon), debuggable, bool(dex))), True, 1)]
     if dex: entries += [('classes.dex', open(dex, 'rb').read(), True, 1)]
     if icon: entries += [('resources.arsc', arsc_icon(pkg), False, 4), (ICON_PATH, open(icon, 'rb').read(), False, 4)]
     entries += [(f'lib/arm64-v8a/lib{lib_name}.so', open(lib, 'rb').read(), False, 16384)]
     entries += [(f'assets/{n}', open(f, 'rb').read(), True, 1) for n, f in assets]
-    return v2_sign(*build_zip(entries), sign, cert, spki)
+    for name, d in data: entries += data_entries(name, d)
+    f = open(out, 'w+b') if out else io.BytesIO()
+    try:
+        n, cd, eocd = build_zip(entries, f); v2_sign(f, n, cd, eocd, sign, cert, spki)
+        if not out: return f.getvalue()
+    finally: f.close()
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     p.add_argument('--lib', required=True); p.add_argument('--out', required=True); p.add_argument('--package', required=True); p.add_argument('--label', required=True)
     p.add_argument('--lib-name', default='dmhost'); p.add_argument('--version-code', type=int, default=1); p.add_argument('--version-name', default='1')
     p.add_argument('--icon'); p.add_argument('--dex'); p.add_argument('--asset', action='append', default=[], metavar='NAME=FILE')
+    p.add_argument('--data', action='append', default=[], metavar='NAME=DIR', help='a folder of game data carried in the APK (data_entries)')
     p.add_argument('--product'); p.add_argument('--modules', default='')
     p.add_argument('--key', default=os.path.expanduser('~/.config/dm-android/apk-key.pem')); p.add_argument('--release', action='store_true', help='not debuggable')
     a = p.parse_args()
@@ -197,8 +234,10 @@ def main():
         mods = a.modules.split(); paths, bad = product_files.files(a.product, mods)
         if bad: sys.exit('apk: ' + ', '.join(f'missing {b}' for b in bad))
         assets += [(f'product/{os.path.basename(f)}', f) for f in [os.path.join(a.product, f'{m}.patched.bin') for m in mods] + paths]
-    apk = build(a.lib, a.lib_name, a.package, a.label, a.version_code, a.version_name, a.icon, assets, a.key, not a.release, a.dex)
-    tmp = a.out + '.tmp'; open(tmp, 'wb').write(apk); os.replace(tmp, a.out)
-    print(f'apk: {a.out} {len(apk) / 1e6:.1f} MB, {a.package} {a.version_name} ({a.version_code}), {len(assets)} assets')
+    data = [tuple(x.split('=', 1)) for x in a.data]
+    tmp = a.out + '.tmp'
+    build(a.lib, a.lib_name, a.package, a.label, a.version_code, a.version_name, a.icon, assets, a.key, not a.release, a.dex, data, tmp); os.replace(tmp, a.out)
+    print(f'apk: {a.out} {os.path.getsize(a.out) / 1e6:.1f} MB, {a.package} {a.version_name} ({a.version_code}), {len(assets)} assets' +
+          ''.join(f', {n} carried' for n, _ in data))
 
 if __name__ == '__main__': main()

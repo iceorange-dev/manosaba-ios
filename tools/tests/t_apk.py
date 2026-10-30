@@ -5,8 +5,8 @@ attribute's resource ID through the resource map as AOSP's public-final.xml give
 resources.arsc (drawable/icon → its path at no density), and APK Signature Scheme v2 as source.android.com describes it (the signing block before
 the central directory, the 1 MB chunk digest with the end record's directory offset taken as the block's, the signature by openssl against the
 block's public key, the certificate's key the same). The same inputs give the same bytes. With --dex, classes.dex and hasCode true. The phone checks what this cannot (android/tests/
-run_on_phone.sh: it installs, and a damaged copy does not). T_APK_BROKEN=digest (the central directory left out of the digest): 1 fails;
-T_APK_BROKEN=align (no alignment): 2 fail."""
+run_on_phone.sh: it installs, and a damaged copy does not). T_APK_BROKEN=digest (the central directory left out of the digest): 2 fail (the data's APK too);
+T_APK_BROKEN=align (no alignment): 2 fail (3 with the data's); T_APK_BROKEN=datadeflate (the data deflated): 1 fails."""
 import hashlib, io, os, struct, subprocess, sys, tempfile, zipfile, zlib
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 sys.path.insert(0, os.path.join(ROOT, 'android', 'tools')); import apk
@@ -154,5 +154,17 @@ with tempfile.TemporaryDirectory() as d:
     z3 = zipfile.ZipFile(io.BytesIO(apk.build(**args))); m3 = read_axml(z3.read('AndroidManifest.xml'))
     check('with --dex: classes.dex as given (deflated), hasCode true (the settings panel, plan item 301g)', z3.read('classes.dex') == dex and
           z3.getinfo('classes.dex').compress_type == 8 and attr(find(m3, 'application')[0], 'hasCode') == (0x12, 0xffffffff), attr(find(m3, 'application')[0], 'hasCode'))
+    rd = f'{d}/RomFS'; os.makedirs(f'{rd}/Data/Resources'); os.makedirs(f'{rd}/a')
+    files = {'Data/Resources/unity default resources': os.urandom(70001), 'a/x.bin': os.urandom(5), 'top.txt': b'top\n'}
+    for k, v in files.items(): open(f'{rd}/{k}', 'wb').write(v)
+    args['data'] = [('romfs', rd)]; mem = apk.build(**args); apk.build(**args, out=f'{d}/s.apk')
+    check('with --data: written to a file in pieces, the same bytes as built whole', open(f'{d}/s.apk', 'rb').read() == mem)
+    z4 = zipfile.ZipFile(io.BytesIO(mem)); i4 = {i.filename: i for i in z4.infolist()}
+    idx = z4.read('assets/romfs.idx').decode(); want_idx = ''.join(f'{len(files[k])}\t{k}\n' for k in sorted(files))
+    check('  assets/romfs.idx: each file\'s size, a tab, its path, sorted (a name with spaces kept)', idx == want_idx, idx)
+    def doff(i): h = struct.unpack_from('<IHHHHHIIIHH', mem, i.header_offset); return i.header_offset + 30 + h[9] + h[10]
+    check('  each file as given, stored at a 4-byte boundary (the app copies it out)', all(z4.read(f'assets/romfs/{k}') == v and i4[f'assets/romfs/{k}'].compress_type == 0 and
+          doff(i4[f'assets/romfs/{k}']) % 4 == 0 for k, v in files.items()), [(k, i4[f'assets/romfs/{k}'].compress_type) for k in files])
+    check('  the signature still verifies', read_v2(mem)[0] is None, read_v2(mem)[0])
 print(f'== {total} checks, {fails} failed ==')
 sys.exit(fails != 0)

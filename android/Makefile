@@ -1,6 +1,8 @@
 # The host for Android (plan item 301): the shared host sources (../host) with this directory's own, built with the NDK for arm64 Android.
 #   make -C android GAME=manosaba      → build/<GAME>/dmhost, run from adb shell with an android product (DM_TARGET=android tools/build_product.sh)
 #   make -C android GAME=manosaba apk  → build/<GAME>/<GAME>.apk: the app (NativeActivity, libdmhost.so) with the product inside (android/run.sh)
+#   make -C android GAME=manosaba apk-data → build/<GAME>/<GAME>-data.apk: the same with the game's data (RomFS, fonts) in it, for the player's
+#                                        own devices (plan item 301h: installed, it plays with nothing pushed)
 #   make -C android test               → the unit tests of this directory, built for the phone (run them with run-tests, the phone connected)
 # Both hosts are linked from the same objects (build/<GAME>/obj): main.c's main is dm_main, called by front_headless.c's main or the app's thread.
 # Graphics run on the null backend (gfx/nvn/null: nothing drawn) until the Vulkan one (301e).
@@ -52,14 +54,14 @@ $(B)/game_profile.c: $(GAMEDIR)/game.json ../tools/gen_game.py
 $(B)/obj/game_profile.c.o: $(B)/game_profile.c $(B)/flags.txt
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
--include $(OBJ:.o=.d) $(NULL_OBJ:.o=.d) $(VK_OBJ:.o=.d) $(B)/obj/android/front_headless.c.d $(B)/obj/android/app_android.c.d $(B)/obj/android/front_android.c.d
+-include $(OBJ:.o=.d) $(NULL_OBJ:.o=.d) $(VK_OBJ:.o=.d) $(B)/obj/android/front_headless.c.d $(B)/obj/android/app_android.c.d $(B)/obj/android/front_android.c.d $(B)/obj/android/data_apk.c.d
 $(B)/dmhost: $(OBJ) $(NULL_OBJ) $(B)/obj/android/front_headless.c.o
 	$(CC) -o $@ $^ -lm -ldl -landroid -laaudio -lmediandk
 
 # The app's library: NativeActivity loads it and calls ANativeActivity_onCreate (app_android.c). -Bsymbolic: the assembly's branches and adrp to
 # the library's own global symbols (dm_hcall, nvn_slot ...) bind inside it, with no PLT stub (one would take x16 / x17, which the thunks pass) and
 # no text relocation; its symbols stay in the dynamic table for dladdr and dlsym (the crash report, the thread dumps)
-APP_OBJ = $(B)/obj/android/app_android.c.o $(B)/obj/android/front_android.c.o
+APP_OBJ = $(B)/obj/android/app_android.c.o $(B)/obj/android/front_android.c.o $(B)/obj/android/data_apk.c.o
 $(B)/libdmhost.so: $(OBJ) $(VK_OBJ) $(APP_OBJ)
 	$(CC) -shared -o $@ $^ -Wl,-soname,libdmhost.so -Wl,-Bsymbolic -Wl,--no-undefined -landroid -llog -laaudio -lmediandk -lvulkan -lz -lm -ldl
 
@@ -95,10 +97,23 @@ $(B)/$(GAME).apk: $(B)/libdmhost.so $(B)/classes.dex tools/apk.py FORCE
 		--version-code $$(git rev-list --count HEAD) --version-name $$(git rev-parse --short HEAD) --product "$(PRODUCT)" --modules "$(MODS)" \
 		--asset "product/shaders.dmvk=$(SHADERS)"
 apk: $(B)/$(GAME).apk
+# The same app with the game's data in it (plan item 301h; the player's own RomFS and the console's fonts, from the workspace: game.json's
+# workspace.romfs / sysfont), for the player's own devices: build/<GAME>/<GAME>-data.apk, about 2.6 GB for manosaba. The app copies the data
+# out on its first start (data_apk.c)
+ROMFS_WS := $(shell python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'].get('romfs', ''))" $(GAMEDIR)/game.json)
+SYSFONT_WS := $(shell python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'].get('sysfont', ''))" $(GAMEDIR)/game.json)
+$(B)/$(GAME)-data.apk: $(B)/libdmhost.so $(B)/classes.dex tools/apk.py FORCE
+	@test -f "$(SHADERS)" || { echo "[red] no shader bundle at $(SHADERS)"; exit 1; }
+	@test -d "$(WS)/$(ROMFS_WS)" -a -d "$(WS)/$(SYSFONT_WS)" || { echo "[red] no RomFS / fonts at $(WS)/$(ROMFS_WS), $(WS)/$(SYSFONT_WS)"; exit 1; }
+	sips -Z 432 -s format png "$(WS)/$(ICON)" --out $(B)/icon.png > /dev/null
+	python3 tools/apk.py --lib $(B)/libdmhost.so --dex $(B)/classes.dex --out $@ --package $(PKG) --label "$(LABEL)" --icon $(B)/icon.png $(if $(filter 1,$(RELEASE)),--release) \
+		--version-code $$(git rev-list --count HEAD) --version-name $$(git rev-parse --short HEAD) --product "$(PRODUCT)" --modules "$(MODS)" \
+		--asset "product/shaders.dmvk=$(SHADERS)" --data "romfs=$(WS)/$(ROMFS_WS)" --data "sysfont=$(WS)/$(SYSFONT_WS)"
+apk-data: $(B)/$(GAME)-data.apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_thermal t_thermal_raw t_settings t_settings_over t_settings_always
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -119,6 +134,10 @@ build/tests/t_settings_over: tests/t_settings.c settings.c settings.h $(H)/envfi
 	$(CC) -O1 -Wall -Werror -DDM_TEST_SETTINGS_OVER_ENV -I$(H) -o $@ tests/t_settings.c settings.c
 build/tests/t_settings_always: tests/t_settings.c settings.c settings.h $(H)/envfile.h $(H)/native_size.h | build/tests
 	$(CC) -O1 -Wall -Werror -DDM_TEST_SETTINGS_ALWAYS -I$(H) -o $@ tests/t_settings.c settings.c
+build/tests/t_data_idx: tests/t_data_idx.c data_apk.c data_apk.h | build/tests
+	$(CC) -O1 -Wall -Werror -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ tests/t_data_idx.c data_apk.c -landroid
+build/tests/t_data_idx_any: tests/t_data_idx.c data_apk.c data_apk.h | build/tests
+	$(CC) -O1 -Wall -Werror -Wno-format -D_GNU_SOURCE -DDM_TEST_DATA_IDX_ANY -I$(H) -Icompat -include compat/darwin.h -o $@ tests/t_data_idx.c data_apk.c -landroid
 build/tests/t_thermal: tests/t_thermal.c diag_android.c | build/tests
 	$(CC) -O1 -Wall -Wno-format -D_GNU_SOURCE -I$(H) -Icompat -include compat/darwin.h -o $@ $^ -landroid
 build/tests/t_thermal_raw: tests/t_thermal.c diag_android.c | build/tests
