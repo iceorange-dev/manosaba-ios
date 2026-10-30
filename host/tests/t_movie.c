@@ -213,10 +213,13 @@ static int probe(const char *file) {   // a real movie: every frame through the 
     return v->errors || !eos;
 }
 
+static void t_clean(void) {   // (the files main writes, and their directory)
+    char f[700]; snprintf(f, sizeof f, "%s/t.webm", t_dir); unlink(f); snprintf(f, sizeof f, "%s/junk.webm", t_dir); unlink(f); rmdir(t_dir);
+}
 int main(int argc, char **argv) {
     if (argc > 1) return probe(argv[1]);
     const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
-    snprintf(t_dir, sizeof t_dir, "%s/t_movie.d", tmp); mkdir(t_dir, 0755);
+    snprintf(t_dir, sizeof t_dir, "%s/t_movie.%d.d", tmp, (int)getpid()); mkdir(t_dir, 0755); atexit(t_clean);   // one per process: its variants (t_movie_evcopy) run beside it
     char file[700]; snprintf(file, sizeof file, "%s/t.webm", t_dir);
     EXPECT("libvpx encodes 12 VP9 frames, key frames 0 and 6", 1, encode() && g_key[0] && g_key[6] && !g_key[1] && !g_key[4]);
     write_webm(file);

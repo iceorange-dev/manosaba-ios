@@ -14,4 +14,5 @@ void vk_bind_init(void);                                  // (once, before the f
 void vk_host_buffer(VkDeviceSize n, VkBufferUsageFlags u, VkBuffer *b, VkDeviceMemory *m, uint8_t **cpu);   // host-visible, coherent, zeroed, mapped
 uint64_t vk_bind_zeros(void);                             // texture slots sampled as zeros so far
 VkBuffer vk_zero_buffer(void);                            // 64 KB of zeros (unbound vertex attributes read it)
+uint64_t vk_bind_tex_serial(const vk_bind *b, int nst);   // the serial of the texture a texture or image binding names now (0: none)
 static inline VkCompareOp vk_compare_op(int f) { return f >= 1 && f <= 8 ? (VkCompareOp)(f - 1) : VK_COMPARE_OP_ALWAYS; }   // NVN NEVER..ALWAYS = 1..8, Vulkan's 0..7 in the same order

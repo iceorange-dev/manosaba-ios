@@ -10,26 +10,58 @@
 #include "vk_bind.h"
 #include "../nvn_hmap.h"
 #include "../core/exec.h"
+#include "../core/pass.h"
 #include "../core/state.h"
+#include "../core/upd.h"
 #include "../core/usnap.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 int exec_draw_dropped(void);   // core/exec.c: rendering off, no program, empty depth bounds
-static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches;
+static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches, g_lines;
 
 // ---------- The pass ----------
 static struct { int open, n; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;
 int vk_pass_is_open(void) { return P.open; }
 int nvn_be_pass_mode(void) { return P.open ? 0 : -1; }
 int vk_pass_attach_index(const vk_img *im) { if (!P.open) return -1; for (int i = 0; i < P.n; i++) if (P.col[i] == im) return i; return P.ds == im ? -2 : -1; }
-void vk_pass_end_now(void) {
+uint64_t vk_pass_count(void) { return g_passes; }
+static void pass_close(void) {   // (the core's continuation mark goes with it, as the Metal backend's rp_end)
     if (P.open) { VkCommandBuffer cb = vk_cb(); vkCmdEndRendering(cb); vk_barrier_all(cb); P.open = 0; }
-    vk_land_clears();
+    g_rt_merged = 0;
 }
+void vk_pass_end_now(void) { pass_close(); vk_land_clears(); }
 void nvn_be_pass_flush(void) { vk_pass_end_now(); }
-void nvn_be_pass_end(void) { if (P.open) { VkCommandBuffer cb = vk_cb(); vkCmdEndRendering(cb); vk_barrier_all(cb); P.open = 0; } }
+void nvn_be_pass_end(void) { pass_close(); }
+// A pass the core continued (the same targets set again) holds the earlier draws' results in its attachments: a draw sampling one of them
+// (or storing to it) needs them written out first, so the pass is ended before it (the Metal backend's draw_samples_rt split)
+static __attribute__((unused)) int samples_attachment(const vk_sh *const *sh, const int *nst, int n) {   // (unused only in t_vk_be's control)
+    for (int i = 0; i < n; i++) if (sh[i]) for (int k = 0; k < sh[i]->nb; k++) {
+        uint64_t ser = vk_bind_tex_serial(&sh[i]->b[k], nst[i]); if (!ser) continue;
+        for (int c = 0; c < P.n; c++) if (P.col[c] && P.col[c]->serial == ser) return 1;
+        if (P.ds && P.ds->serial == ser) return 1;
+    }
+    return 0;
+}
+// Before a draw opens its pass: an updated range it reads other than as a uniform buffer (its indices, vertex streams, storage buffers), or a
+// uniform range with no snapshot, needs the renamed updates in memory first (the Metal backend's upd_guard_draw; texel buffers are not bound yet)
+static void upd_guard(const vk_sh *const *sh, const int *nst, int n, const p_draw_idx *di) {
+    if (!g_nupd) return;
+    int why = -1;
+    if (di) { int isz = di->itype == NVN_INDEX_TYPE_UNSIGNED_INT ? 4 : di->itype == NVN_INDEX_TYPE_UNSIGNED_SHORT ? 2 : 1; if (upd_overlap_seq(di->ibuf, di->ibuf + (uint64_t)di->count * isz)) why = 0; }
+    for (int v = 0; why < 0 && sh[0] && v < sh[0]->nv; v++) {
+        int a = sh[0]->vin[v].loc; if (a >= S.nattr || S.attr[a].stream >= 16) continue;
+        const NVNbufferRange *r = &S.vbuf[S.attr[a].stream]; if (r->address && upd_overlap_seq(r->address, r->address + (r->size ? r->size : 1))) why = 1;
+    }
+    for (int i = 0; i < n && why < 0; i++) if (sh[i]) for (int k = 0; k < sh[i]->nb && why < 0; k++) {
+        const vk_bind *b = &sh[i]->b[k]; if (b->reg < 0 || b->reg >= 16) continue;
+        if (b->kind == VK_K_SBUF) { const p_bind_buf *u = &S.ssbo[nst[i]][b->reg]; if (u->addr && upd_overlap_seq(u->addr, u->addr + (u->size ? u->size : 1))) why = 2; }
+        else if (b->kind == VK_K_CBUF) { const p_bind_buf *u = &S.ubo[nst[i]][b->reg]; if (u->addr && u->size && upd_overlap_seq(u->addr, u->addr + u->size) && !us_find(u->addr, u->size)) why = 4; }
+    }
+    if (why < 0) return;
+    g_ren.guard++; g_ren.g[why]++; vk_upd_flush();
+}
 int nvn_be_layered(void) { return 0; }
 int nvn_be_layer_continue(const p_set_rt *r) { (void)r; return 0; }
 static VkClearColorValue clear_value(VkFormat f, const nvn_rgba *c) {
@@ -316,11 +348,18 @@ void nvn_be_draw(const p_draw *dw, const p_draw_idx *di) {
     int prim = dw ? dw->prim : di->prim; VkPrimitiveTopology topo;
     if (!topology(prim, &topo)) { VRED("primitive %d (line loops, patches) is not drawn yet", prim); g_dropped++; return; }
     vk_prog *g = prog_of(S.prog); if (!g) { g_dropped++; return; }
+    const vk_sh *sh[2] = {g->vs, g->ps}; const int nst[2] = {0, 1};
+    upd_guard(sh, nst, g->ps ? 2 : 1, di);
+#ifndef DM_TEST_VK_CONT_NO_SPLIT   // negative control of t_vk_be only: a continued pass kept open whatever its draws sample
+    if (P.open && g_rt_merged && samples_attachment(sh, nst, g->ps ? 2 : 1)) {
+        static int said; if (!said++) VLOG("same-target continuation: a draw samples the pass's own attachment, the pass ended before it (first case)");
+        vk_pass_end_now();
+    }
+#endif
     if (!pass_open()) { g_dropped++; return; }
     VkPipeline pipe = pipeline(g, topo_class(topo)); if (!pipe) { g_dropped++; return; }
     VkCommandBuffer cb = vk_cb();
     if (!vertex_input(cb, g->vs)) { g_dropped++; return; }
-    const vk_sh *sh[2] = {g->vs, g->ps}; const int nst[2] = {0, 1};
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     vk_bind_resources(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, &g->L, sh, nst, g->ps ? 2 : 1);
     dynamic_state(cb, topo);
@@ -369,7 +408,7 @@ void nvn_be_dispatch(const p_dispatch *d) {
     if (!S.prog) { VRED("a dispatch with no program bound: dropped"); g_dropped++; return; }
     vk_cprog *g = cprog_of(S.prog); if (!g) { g_dropped++; return; }
     if (d->x <= 0 || d->y <= 0 || d->z <= 0) return;   // no workgroups: nothing runs
-    vk_pass_end_now();
+    vk_upd_flush(); vk_pass_end_now();   // (compute reads uniforms from memory: renamed updates are written first)
     VkCommandBuffer cb = vk_cb(); const int nst = 5;
     vk_bind_grid((uint32_t)d->x, (uint32_t)d->y, (uint32_t)d->z);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g->pipe);
@@ -385,4 +424,5 @@ void vk_stats_line(void) {
          (unsigned long long)g_draws, (unsigned long long)g_dispatches, (unsigned long long)g_dropped, (unsigned long long)g_passes, (unsigned long long)g_pipes,
          (unsigned long long)vk_bind_zeros(), (unsigned long long)c.live, c.live_bytes / 1e6, (unsigned long long)c.made, (unsigned long long)c.up_n, c.up_bytes / 1e6,
          (unsigned long long)c.reup_n);
+    ren_report(300 * (++g_lines));   // the core's renamed uniform update line (core/upd.c), since the last
 }

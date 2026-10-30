@@ -100,6 +100,7 @@ void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) { (void)p; (
 // *gpu is the offset in *buf (the core adds the same padding to both). A block is reused once its submission has completed (a wrap waits for it)
 enum { ARENA = 64u << 20 };
 static struct { VkBuffer buf; VkDeviceMemory mem; uint8_t *cpu; size_t at; uint64_t fence_at[64]; } g_ar;   // fence_at[k]: the newest submission using 1 MB block k
+uint64_t vk_arena_size(void) { return ARENA; }
 void nvn_be_arena(size_t n, uint8_t **cpu, uint64_t *gpu, void **buf) {
     if (!g_ar.cpu) {
         vk_init();

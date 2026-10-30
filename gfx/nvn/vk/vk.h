@@ -83,7 +83,9 @@ void vk_tex_stats(vk_tex_counts *c);
 void vk_stats_line(void);                       // vk_draw.c: draws, pipelines, uploads so far (every 600 presents)
 
 // vk_ops.c / vk_draw.c: the render pass
-void vk_pass_end_now(void);                     // end the open pass (vk_draw.c) and land the clears still pending
+void vk_pass_end_now(void); uint64_t vk_pass_count(void);                     // end the open pass (vk_draw.c) and land the clears still pending
+void vk_upd_flush(void);                       // vk_ops.c: the renamed uniform updates into memory (ends the pass)
+uint64_t vk_arena_size(void);                   // vk_pools.c
 int vk_pass_is_open(void);
 void vk_land_clears(void);                      // vk_ops.c: R's pending clears with no pass open
 

@@ -9,9 +9,14 @@
 // (its workgroup counts in c0, a writable storage slot, a texture through an image slot, an image store read back from the texture).
 // -DDM_TEST_VK_EVENT_EARLY (event writes and reports landed when recorded): 2 fail; -DDM_TEST_VK_WINDING_SWAPPED (vk_draw.c's winding
 // turned around): 3 fail; -DDM_TEST_VK_GRID_ZERO (no workgroup counts in c0): 1 fails; -DDM_TEST_VK_SET_STALE (the first set used again
-// unwritten): 1 fails.
+// unwritten): 1 fails. 301e3: a pass the core continued (the same targets set again) goes on through a draw sampling another texture and is
+// ended before a draw sampling its own attachment; its end clears the core's mark (-DDM_TEST_VK_CONT_NO_SPLIT, kept open: 1 fails). An inline
+// uniform update between two draws keeps the pass open, the draw before it reading the old bytes and the one after the new (a private copy over
+// the core's snapshot), and reaches memory when the submission ends (-DDM_TEST_VK_UB_NO_SHADOW, no private copies: 1 fails).
 #include "vk.h"
 #include "../../gfx/nvn/core/state.h"
+#include "../../gfx/nvn/core/pass.h"
+#include "../../gfx/nvn/core/usnap.h"
 #include <android/native_window.h>
 #include "../../tex/nvn_deswizzle.h"
 #include "../nvn_tex.h"
@@ -28,6 +33,7 @@ ANativeWindow *front_android_window(void) { return NULL; }
 void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) { (void)fn; }   // (the host's crash.c; no guarded copies here)
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len)) { (void)fn; }   // (the same: nvn_dirty.c's, no pool is tracked here)
 int exec_draw_dropped(void) { return 0; }   // (core/exec.c's: rendering on)
+int g_rt_merged;   // (core/pass.c's: the core's mark of a continued pass)
 static uint64_t g_ser = 100;
 static tex_t tex2d(uint8_t *mem, uint32_t w, uint32_t h, int fmt) {
     tex_t t; memset(&t, 0, sizeof t); t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = fmt; t.d.width = w; t.d.height = h; t.d.depth = 1; t.d.levels = 1;
@@ -75,6 +81,38 @@ static void rec_draw2(void *a) {
     target(&g_rt3); S.prog = &g_prog3; nvn_be_draw(&dw, NULL); nvn_be_pass_end();
     S.ubo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_ubo2, 256};
     target(&g_rt4); nvn_be_draw(&dw, NULL); nvn_be_pass_end();
+}
+// a pass the core continues: draws 1 and 2 (another texture sampled) in one pass, draw 3 (its own attachment sampled, no channel written) after it
+static tex_t g_rtA; static uint64_t g_cont_passes; static int g_cont_mark;
+static void rec_cont(void *a) {
+    (void)a; st_reset(); memset(&R, 0, sizeof R);
+    S.has_vp = 1; S.vp[0][2] = 64; S.vp[0][3] = 64; S.dr[0] = 0; S.dr[1] = 1;
+    S.attr[0] = (va_st){NVN_FORMAT_RGBA32F, 0, 0}; S.nattr = 1; S.stream[0] = (vs_st){16, 0}; S.nstream = 1;
+    S.vbuf[0].address = (uint64_t)(uintptr_t)g_vb2; S.vbuf[0].size = 64;
+    S.ubo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_ubo, 256}; S.tex[1][3] = 5 | (2ull << 20);
+    target(&g_rtA); S.prog = &g_prog;
+    p_draw dw = {NVN_DRAW_PRIMITIVE_QUADS, 0, 4, 1, 0}; uint64_t p0 = vk_pass_count();
+    nvn_be_draw(&dw, NULL);
+    g_rt_merged = 1;   // (as exec_set_rt does when SetRenderTargets names the open pass's own targets)
+    nvn_be_draw(&dw, NULL);
+    S.tex[1][3] = 9 | (2ull << 20); S.chmask.mask = 0;   // texture ID 9: the pass's colour target
+    nvn_be_draw(&dw, NULL);
+    g_cont_passes = vk_pass_count() - p0; nvn_be_pass_end(); g_cont_mark = g_rt_merged;
+}
+// two draws of one pass with an inline uniform update between them; the range has a snapshot, as the core makes at the submission's start
+static tex_t g_rtU; static uint8_t *g_ubo3, *g_vb3; static uint64_t g_upd_passes;
+static void rec_upd(void *a) {
+    (void)a; st_reset(); memset(&R, 0, sizeof R);
+    g_us.n = 0; g_us.last = 0; us_reserve(1); us_add((uint64_t)(uintptr_t)g_ubo3, (uint64_t)(uintptr_t)g_ubo3 + 256); us_copy_all();
+    S.has_vp = 1; S.vp[0][2] = 64; S.vp[0][3] = 64; S.dr[0] = 0; S.dr[1] = 1;
+    S.attr[0] = (va_st){NVN_FORMAT_RGBA32F, 0, 0}; S.nattr = 1; S.stream[0] = (vs_st){16, 0}; S.nstream = 1;
+    S.ubo[1][0] = (p_bind_buf){1, 0, (uint64_t)(uintptr_t)g_ubo3, 256}; S.tex[1][3] = 5 | (2ull << 20);
+    target(&g_rtU); S.prog = &g_prog;
+    p_draw dw = {NVN_DRAW_PRIMITIVE_QUADS, 0, 4, 1, 0}; uint64_t p0 = vk_pass_count();
+    S.vbuf[0].address = (uint64_t)(uintptr_t)g_vb; S.vbuf[0].size = 64; nvn_be_draw(&dw, NULL);   // the upper half
+    const float y[4] = {1, 0, 1, 1}; nvn_be_update_ub(y, (uint64_t)(uintptr_t)g_ubo3, sizeof y);
+    S.vbuf[0].address = (uint64_t)(uintptr_t)g_vb3; nvn_be_draw(&dw, NULL);   // the lower half
+    g_upd_passes = vk_pass_count() - p0;
 }
 // a dispatch of 2 x 1 x 1 groups of 4
 static tex_t g_img, g_tx7; static prog_t g_cprog; static uint8_t *g_sb;
@@ -160,6 +198,12 @@ int main(void) {
     const uint8_t *c3 = q3 + (32 * 64 + 32) * 4, *c4 = q4 + (32 * 64 + 32) * 4;
     CHECK(c3[1] == 255 && c3[3] == 255 && c4[1] == 0 && c4[2] == 255 && c4[3] == 255,
           "a program with a set of its own (DM_VK_PUSH=0): each draw its own uniform, (%u, %u, %u) then (%u, %u, %u)", c3[0], c3[1], c3[2], c4[0], c4[1], c4[2]);
+    // the same-target continuation
+    g_rtA = tex2d(P + 0x370000, 64, 64, NVN_FORMAT_RGBA8); mtl_reg_tex(9, &g_rtA, NULL);
+    f = run(rec_cont, NULL); mtl_wait(f, UINT64_MAX);
+    CHECK(g_cont_passes == 2, "a continued pass goes on through a draw sampling another texture, and ends before one sampling its own attachment (%llu passes)",
+          (unsigned long long)g_cont_passes);
+    CHECK(g_cont_mark == 0, "the pass's end clears the core's continuation mark");
     // a dispatch: storage slot 0 written, a texture through image slot 0 fetched, image slot 1 stored to
     uint8_t *img_mem = P + 0x360000, *tx7_mem = P + 0x361000; g_sb = P + 0x362000; memset(g_sb, 0, 1024);
     g_img = tex2d(img_mem, 8, 1, NVN_FORMAT_RGBA8); g_img.d.flags |= NVN_TEXTURE_FLAGS_IMAGE; g_tx7 = tex2d(tx7_mem, 4, 4, NVN_FORMAT_RGBA8);
@@ -172,6 +216,17 @@ int main(void) {
     uint8_t ip[8 * 4]; memset(ip, 0x55, sizeof ip); NVNcopyRegion row = {0, 0, 0, 8, 1, 1}; mtl_read_texels(&g_img, 0, 0, &row, ip, 32, 0);
     int img_ok = 1; for (int i = 0; i < 8; i++) img_ok &= ip[4 * i] == 16 * i && ip[4 * i + 3] == 255;
     CHECK(img_ok, "an image store (image slot 1, an IMAGE texture viewed as storage) reaches the texture: red %u %u .. %u", ip[0], ip[4], ip[28]);
+    // an inline uniform update inside a pass
+    g_rtU = tex2d(P + 0x350000, 64, 64, NVN_FORMAT_RGBA8); g_ubo3 = P + 0x3F0300; g_vb3 = P + 0x3F0400;
+    memcpy(g_ubo3, col, sizeof col); const float lower[16] = {-1, -1, 0, 1, 1, -1, 0, 1, 1, 0, 0, 1, -1, 0, 0, 1}; memcpy(g_vb3, lower, sizeof lower);
+    f = run(rec_upd, NULL); mtl_wait(f, UINT64_MAX); g_us.n = 0;
+    uint8_t qu[64 * 64 * 4]; memset(qu, 0x55, sizeof qu); mtl_read_texels(&g_rtU, 0, 0, &all, qu, 256, 0);
+    const uint8_t *ut = qu + (16 * 64 + 32) * 4, *ub = qu + (48 * 64 + 32) * 4;
+    CHECK(g_upd_passes == 1 && ut[1] == 255 && (ut[2] == 127 || ut[2] == 128) && ub[1] == 0 && ub[2] == 255,
+          "an inline uniform update between two draws: the pass goes on (%llu), the draw before it reads the old bytes (%u, %u) and the one after the new (%u, %u)",
+          (unsigned long long)g_upd_passes, ut[1], ut[2], ub[1], ub[2]);
+    float mem[4]; memcpy(mem, g_ubo3, sizeof mem);
+    CHECK(mem[0] == 1 && mem[1] == 0 && mem[2] == 1 && mem[3] == 1, "the update reaches memory when the submission ends (%g %g %g %g)", mem[0], mem[1], mem[2], mem[3]);
     // the pool goes: its range is the CPU's again, with the content
     uint8_t keep = P[12345]; mtl_pool_del(P);
     CHECK(P[12345] == keep && !mtl_pool_has((uint64_t)(uintptr_t)P, 16), "after the pool's removal its range holds what it held (and is in no pool)");

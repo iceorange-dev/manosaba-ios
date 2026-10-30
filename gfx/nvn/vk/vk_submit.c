@@ -6,6 +6,7 @@
 // timestamp half from the guest clock at completion, as the null backend; samples passed a large constant until occlusion queries (301e3; nx2android
 // reports 2^20 the same way). Work outside a submission (uploads before the first, read-backs) has its own command buffers (vk_once_*).
 #include "vk.h"
+#include "../core/upd.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -92,6 +93,7 @@ void vk_post_add(vk_post p) {
 }
 uint64_t mtl_sub_commit(void) {
     slot_t *s = g_cur; if (!s) VDIE("commit without a submission");
+    vk_upd_flush(); upd_sub_end();   // renamed uniform updates reach memory at the end of their submission
     vk_pass_end_now();
     if (s->begun) VK(vkEndCommandBuffer(s->cb));
     pthread_mutex_lock(&g_mu); uint64_t f = g_fence + 1; pthread_mutex_unlock(&g_mu);

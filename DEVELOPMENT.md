@@ -357,10 +357,11 @@ From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 2
   reads that this one does not write (pipeline creation fails), more than about 700 draws in one command buffer (nx2android cuts at 128),
   LRZ across passes, subgroup instructions in called functions (the 750-799 compiler), subgroups (64 lanes, none in vertex shaders on the
   840: the warp32 rewrite), 284's items.
-  301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the TBDR rewrites (the
-  same-target continuation first: without it every SetRenderTargets ends the pass, 12 passes a frame on the title for 12.5 draws) and the
-  write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation, screenshots, the readings; the NVN fence on the game's last
-  own submission (LASRecompAndroid 54686f6) when presents become submissions of their own.
+  301e3 the rest of the set: samples passed by occlusion queries and timestamps by the GPU, layered passes, the other TBDR rewrites (the
+  same-target continuation and renamed uniform updates are on since batch 129: a pass for 2.7 draws in the prologue, 1.5 in the first trial;
+  what still ends the trial's passes to be counted) and the write-back of GPU-written CPU-visible memory, the 5-bit formats, pre-rotation,
+  screenshots (the command channel's shot), the readings; the NVN fence on the game's last own submission (LASRecompAndroid 54686f6) when
+  presents become submissions of their own.
   301f frame rate and heat on the phone (nx2android #8 / #11: pinning to the prime core, the present wait counted as work): plat.h's
   interactive class and deadline declaration (Android's performance hint sessions), its readings (energy, per-core-kind counts) and
   `dm_thermal_now` (`android/diag_android.c`), which say nothing on Android yet.
@@ -935,3 +936,19 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   `tools/tests/t_dmsh_vk.py` 13 (images' dimensions). The app 40 s at 60 fps, 4 save commits, 31757 draws, none dropped; the headless run
   40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182, sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's
   two red lines, its shots near batch 127's; manosaba's as batch 127's.
+- [x] batch 129 · 301e3 part: render passes kept open on Vulkan. In the prologue a pass now holds 2.7 draws (116760 draws in 43121 passes,
+  101723 before), in the first trial 1.5; the same scenes and pictures (shots of both looked at), no red line.
+  - The core's same-target continuation on (`nvn_be_reset`: only TBP_CONT of the TBDR rewrites; DM_NVN_TBDR=0 and DM_NVN_TBDR_OFF=cont still
+    turn it off); a draw in a continued pass that samples the pass's own attachment ends it first (the Metal backend's split), the pass's end
+    clears the core's mark.
+  - Renamed inline uniform updates (core/upd.h): logged with their bytes in the arena, the pass kept open; a draw binding an updated uniform
+    range reads a private copy (upd_shadow_at); the updates reach memory by merged GPU copies when the submission ends and before copies,
+    dispatches and draws that read an updated range otherwise (`vk_upd_flush`, the Metal backend's upd_guard_draw); the core's renamed-update
+    line every 600 presents.
+  - host/tests/t_movie: its files in a directory of each process's own (its broken variant t_movie_evcopy ran beside it and wrote the same
+    t.webm: this batch's host run failed it under load, alone it passed; both then ran three times side by side, and the host suite twice).
+  Tests: on the phone `t_vk_be` 23 (a continued pass split before sampling its own attachment, its mark cleared: `-DDM_TEST_VK_CONT_NO_SPLIT`
+  1 fails; an update between two draws of one pass, each draw its bytes, memory updated at the end: `-DDM_TEST_VK_UB_NO_SHADOW` 1 fails). The
+  app 40 s at 60 fps, 4 save commits; the headless run 40 s. gfx 153 / 153 on Metal 4 and Metal 3, host 182 / 182 (after the fix, twice),
+  sanitizer, texture, audit and tool tests, both IPAs. Smoke: Tears of the Kingdom's two red lines, its shots near batch 128's; manosaba's as
+  batch 128's.

@@ -19,6 +19,7 @@
 #include "vk_bind.h"
 #include "../nvn_hmap.h"
 #include "../core/state.h"
+#include "../core/upd.h"
 #include "../core/usnap.h"
 #include <stdlib.h>
 #include <string.h>
@@ -132,6 +133,10 @@ void nvn_be_set_pool(const uint8_t *p, const void *a) {   // SetTexturePool / Se
 static inline uint32_t h_tid(uint64_t h) { uint32_t t = (uint32_t)(h & 0xfffff); return t ? t + (uint32_t)g_tex_ns : 0; }   // 0: an empty slot
 static inline uint32_t h_sid(uint64_t h) { uint32_t s = (uint32_t)(h >> 20); return s ? s + (uint32_t)g_samp_ns : 0; }
 static int in_pool(uint32_t tid) { return !g_tpool_n || tid - (uint32_t)g_tex_ns < (uint32_t)g_tpool_n; }   // (outside the pool: an empty slot, as the game binds them)
+uint64_t vk_bind_tex_serial(const vk_bind *b, int stage) {
+    uint64_t h = b->kind == VK_K_TEX ? (b->reg >= 0 && b->reg < 128 ? S.tex[stage][b->reg] : 0) : (b->kind == VK_K_TEXI || b->kind == VK_K_IMG) && b->reg >= 0 && b->reg < 32 ? S.img[stage][b->reg] : 0;
+    tex_t t; view_t v; uint32_t tid = h_tid(h); return tid && vk_tex_by_id(tid, &t, &v) ? t.serial : 0;
+}
 static void drv_fill(uint8_t *d, int bank, int stage) {
     memset(d, 0, 0xA00);
     if (bank == 0) {
@@ -148,9 +153,16 @@ static void drv_fill(uint8_t *d, int bank, int stage) {
         for (int r = 0; r < g_c2.nsamp && r < 128; r++) { uint32_t sh = (uint32_t)S.samp[stage][r]; memcpy(d + g_c2.samp + 8 * r, &sh, 4); }
     }
 }
-// A uniform binding: the core's snapshot of the range when it has one, else the pool; 64 KB or to the end of what holds it
-static int ubo_at(uint64_t addr, VkBuffer *b, VkDeviceSize *off, VkDeviceSize *range) {
+// A uniform binding: a private copy when renamed updates of the submission reach it (core/upd.h), else the core's snapshot of the range when it has
+// one, else the pool; 64 KB or to the end of what holds it
+static int ubo_at(uint64_t addr, uint64_t size, VkBuffer *b, VkDeviceSize *off, VkDeviceSize *range) {
     if (!addr) return 0;
+#ifndef DM_TEST_VK_UB_NO_SHADOW   // negative control of t_vk_be only: no private copies (the snapshot or memory as before the updates)
+    if (upd_any()) {
+        void *rb; uint64_t g = upd_shadow_at(addr, size ? size : 16, &rb, vk_cur_fence());
+        if (g) { *b = (VkBuffer)(uintptr_t)rb; *off = g; uint64_t left = vk_arena_size() - g; *range = left < 65536 ? left : 65536; return 1; }
+    }
+#endif
     const us_ent *c = us_find(addr, 16);
     if (c && c->buf) { *b = (VkBuffer)(uintptr_t)c->buf; *off = c->gpu + (addr - c->lo); uint64_t left = c->hi - addr; *range = left < 65536 ? left : 65536; return 1; }
     uint64_t span; if (!vk_addr_span(addr, b, off, &span)) return 0;
@@ -231,7 +243,7 @@ static void stage_resources(writes *p, const vk_sh *s, int stage) {
         const vk_bind *b = &s->b[i]; VkBuffer buf; VkDeviceSize off, range;
         switch (b->kind) {
         case VK_K_CBUF:
-            if (b->reg < 0 || b->reg >= 16 || !ubo_at(S.ubo[stage][b->reg].addr, &buf, &off, &range)) { buf = g_zero.buf; off = 0; range = 65536; }
+            if (b->reg < 0 || b->reg >= 16 || !ubo_at(S.ubo[stage][b->reg].addr, S.ubo[stage][b->reg].size, &buf, &off, &range)) { buf = g_zero.buf; off = 0; range = 65536; }
             else if (off & (V.props.limits.minUniformBufferOffsetAlignment - 1)) { VRED("a uniform buffer at %#llx is not %llu-aligned: zeros", (unsigned long long)S.ubo[stage][b->reg].addr,
                                                                                          (unsigned long long)V.props.limits.minUniformBufferOffsetAlignment); buf = g_zero.buf; off = 0; range = 65536; }
             put_buf(p, b, buf, off, range); break;

@@ -86,7 +86,7 @@ apk: $(B)/$(GAME).apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -119,7 +119,7 @@ build/tests/movie1080.mp4: | build/tests
 build/tests/movie.webm: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=red:s=320x240:r=30:d=1 -c:v libvpx-vp9 -g 10 -pix_fmt yuv420p $@
 # the Vulkan backend without a window, with the core modules it calls (plan item 301e1), and its draws' shaders (301e2)
-VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
+VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c upd.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
 	../gfx/tex/nvn_deswizzle.c
 VKT_FLAGS = -O1 -g -Wall -Wno-format -D_GNU_SOURCE -I$(H) -I../gfx/nvn/include -I../gfx/nvn/vk -Icompat -include compat/darwin.h
 build/tests/t_vk_be: $(VKT_SRC) | build/tests
@@ -132,6 +132,10 @@ build/tests/t_vk_be_grid: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_GRID_ZERO -o $@ $(VKT_SRC) -lvulkan -landroid -lm
 build/tests/t_vk_be_stale: $(VKT_SRC) | build/tests
 	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SET_STALE -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk_be_cont: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_CONT_NO_SPLIT -o $@ $(VKT_SRC) -lvulkan -landroid -lm
+build/tests/t_vk_be_ubsh: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_UB_NO_SHADOW -o $@ $(VKT_SRC) -lvulkan -landroid -lm
 build/tests/t_vk.dmvk: tests/mk_vk_bundle.py ../gfx/tools/dmsh_vk.py ../games/manosaba/game.json | build/tests
 	python3 tests/mk_vk_bundle.py $@
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')

@@ -1,8 +1,9 @@
 // gfx/nvn/vk/vk_ops.c: the execution interface's copies, clears and passes (plan item 301e), and what the replay core asks of a backend besides.
-// The replay keeps its plainest form here: the TBDR rewrites (kept and merged passes, load elision, the attachment ledger; core/tbdr.h) are off, as
-// with DM_NVN_TBDR=0, until the Vulkan backend does what they need of it. Every copy and clear has a full barrier before and after it (all earlier
-// work before, all later after: correct first, narrower barriers with 301f); they end the open pass first (vk_draw.c has the passes). Clears
-// waiting in R (the replay's pending clears) become the next pass's load actions, or are landed here when the replay ends a pass with none open.
+// The replay keeps nearly its plainest form here: of the TBDR rewrites (kept and merged passes, load elision, the attachment ledger; core/tbdr.h)
+// only the same-target continuation is on (nvn_be_reset), the others need more of the backend. Every copy and clear has a full barrier before
+// and after it (all earlier work before, all later after: correct first, narrower barriers with 301f); they end the open pass first (vk_draw.c
+// has the passes). Clears waiting in R (the replay's pending clears) become the next pass's load actions, or are landed here when the replay
+// ends a pass with none open.
 #include "vk.h"
 #include "../nvn_copy_pitch.h"
 #include "../core/state.h"
@@ -11,6 +12,7 @@
 #include "../core/usnap.h"
 #include "../core/fuse.h"
 #include "../core/store_index.h"
+#include "../core/upd.h"
 #include <string.h>
 
 static VkClearColorValue color_of(VkFormat f, const nvn_rgba *c) {
@@ -117,7 +119,7 @@ void nvn_be_clear_ds_quad(const p_clear_ds *c) {
 }
 void nvn_be_clear_tex(const p_clear_tex *c) {
     vk_img *im = vk_tex(c->tex); if (!im || compressed(im)) return;
-    vk_pass_end_now();
+    vk_upd_flush(); vk_pass_end_now();
     VkCommandBuffer cb = vk_cb(); vk_tex_ready(im, cb);
     unsigned level = c->has_view && c->view.set_levels ? c->view.base_level : 0;
     uint32_t lw = im->w >> level ? im->w >> level : 1, lh = im->h >> level ? im->h >> level : 1;
@@ -136,21 +138,53 @@ void nvn_be_clear_tex(const p_clear_tex *c) {
 // ---------- Copies ----------
 void nvn_be_copy_b2b(uint64_t src, uint64_t dst, uint64_t n) {
     if (!n) return;
-    vk_pass_end_now();
+    vk_upd_flush(); vk_pass_end_now();
     pend_add(dst, n, NULL, src, vk_cur_fence()); us_drop_range(dst, n, vk_cur_fence());
     VkBuffer sb, db; VkDeviceSize so, dof;
     if (!vk_addr(src, n, &sb, &so) || !vk_addr(dst, n, &db, &dof)) VDIE("buffer copy outside the memory pools: %#llx → %#llx, %llu bytes", (unsigned long long)src, (unsigned long long)dst, (unsigned long long)n);
     VkCommandBuffer cb = vk_cb(); VkBufferCopy rg = {so, dof, n};
     vkCmdCopyBuffer(cb, sb, db, 1, &rg); vk_barrier_all(cb);
 }
-// Inline uniform update: the bytes copied into the arena now (the game may reuse its command memory once the submission is in), then in GPU order to
-// the destination
+// Inline uniform updates renamed (plan item 301e3; core/upd.h, the Metal backend's uniform_rename.inc): an update's bytes are copied into the arena
+// (the game may reuse its command memory once the submission is in) and logged, the pass kept open; a draw binding an updated uniform range reads a
+// private copy with the updates up to it (vk_bind.c, upd_shadow_at). The logged updates reach memory, merged, by GPU copies from the arena when the
+// submission ends and before any copy, dispatch, or draw reading an updated range other than as a uniform buffer (vk_upd_flush; that ends the
+// pass). DM_NVN_UB_RENAME=0: a GPU copy each, ending the pass
+static int g_upd_flushing;
+void vk_upd_flush(void) {
+    if (!g_nupd || g_upd_flushing) return;
+    g_upd_flushing = 1; vk_pass_end_now();
+    VkCommandBuffer cb = vk_cb(); upd_list *l = &g_upd;
+    for (int i = 0; i < l->n;) {
+        uint64_t lo = l->e[i].lo, hi = l->e[i].hi; int j = i + 1;
+        for (; j < l->n && l->e[j].lo <= hi; j++) if (l->e[j].hi > hi) hi = l->e[j].hi;   // overlapping or touching: covered whole by updates, one copy
+        VkBuffer db; VkDeviceSize dof;
+        if (vk_addr(lo, hi - lo, &db, &dof)) {
+            uint8_t *cpu; uint64_t ao; void *ab; nvn_be_arena((size_t)(hi - lo), &cpu, &ao, &ab); ul_apply(l, lo, cpu, hi - lo, 0);
+            VkBufferCopy rg = {ao, dof, hi - lo}; vkCmdCopyBuffer(cb, (VkBuffer)(uintptr_t)ab, db, 1, &rg);
+        } else {   // touching updates in two pools: each on its own, oldest first, a barrier between
+            const int *ord = ul_by_seq(l, i, j);
+            for (int q = 0; q < j - i; q++) {
+                const upd_ent *e = &l->e[ord[q]]; VkBuffer eb; VkDeviceSize eo;
+                if (!vk_addr(e->lo, e->hi - e->lo, &eb, &eo)) VDIE("renamed uniform update %#llx+%#llx is no longer in a memory pool", (unsigned long long)e->lo, (unsigned long long)(e->hi - e->lo));
+                uint8_t *cpu; uint64_t ao; void *ab; nvn_be_arena((size_t)(e->hi - e->lo), &cpu, &ao, &ab); memcpy(cpu, e->data, e->hi - e->lo);
+                VkBufferCopy rg = {ao, eo, e->hi - e->lo}; vkCmdCopyBuffer(cb, (VkBuffer)(uintptr_t)ab, eb, 1, &rg); vk_barrier_all(cb);
+            }
+        }
+        if (us_on()) us_gw_note(lo, hi - lo, vk_cur_fence());   // a GPU write for the next submissions' snapshots (this one's copies add every update)
+        i = j;
+    }
+    vk_barrier_all(cb);
+    ul_clear(l); g_nupd = 0; g_ren.flushes++;
+    g_upd_flushing = 0;
+}
 void nvn_be_update_ub(const void *data, uint64_t dst, uint64_t n) {
     if (!n) return;
-    vk_pass_end_now();
     VkBuffer db; VkDeviceSize dof;
     if (!vk_addr(dst, n, &db, &dof)) VDIE("uniform update outside the memory pools: %#llx, %llu bytes", (unsigned long long)dst, (unsigned long long)n);
     uint8_t *cpu; uint64_t off; void *ab; nvn_be_arena((size_t)n, &cpu, &off, &ab); memcpy(cpu, data, n);
+    if (ub_rename_on()) { pend_add(dst, n, cpu, 0, vk_cur_fence()); upd_add(dst, dst + n, cpu); return; }
+    vk_pass_end_now();
     us_drop_range(dst, n, vk_cur_fence()); pend_add(dst, n, cpu, 0, vk_cur_fence());
     VkCommandBuffer cb = vk_cb(); VkBufferCopy rg = {off, dof, n};
     vkCmdCopyBuffer(cb, (VkBuffer)(uintptr_t)ab, db, 1, &rg); vk_barrier_all(cb);
@@ -169,7 +203,7 @@ static int region_of(const p_copy_b2t *c, vk_img *im, VkBufferImageCopy *rg, VkD
 }
 void nvn_be_copy_b2t(const p_copy_b2t *c) {
     vk_img *im = vk_tex(c->tex); if (!im) return;
-    vk_pass_end_now();
+    vk_upd_flush(); vk_pass_end_now();
     VkBufferImageCopy rg; VkDeviceSize ext;
     if (!region_of(c, im, &rg, &ext)) { VRED("buffer→texture copy with strides it cannot take (row %lld, image %lld)", (long long)S.copy_stride, (long long)S.copy_image_stride); return; }
     VkBuffer sb; VkDeviceSize so;
@@ -181,7 +215,7 @@ void nvn_be_copy_b2t(const p_copy_b2t *c) {
 }
 void nvn_be_copy_t2b(const p_copy_b2t *c) {
     vk_img *im = vk_tex(c->tex); if (!im) return;
-    vk_pass_end_now();
+    vk_upd_flush(); vk_pass_end_now();
     VkBufferImageCopy rg; VkDeviceSize ext;
     if (!region_of(c, im, &rg, &ext)) { VRED("texture→buffer copy with strides it cannot take (row %lld, image %lld)", (long long)S.copy_stride, (long long)S.copy_image_stride); return; }
     VkBuffer db; VkDeviceSize dof;
@@ -193,7 +227,7 @@ void nvn_be_copy_t2b(const p_copy_b2t *c) {
 }
 void nvn_be_copy_t2t(const p_copy_t2t *c) {
     vk_img *s = vk_tex(c->src), *d = vk_tex(c->dst); if (!s || !d) return;
-    vk_pass_end_now();
+    vk_upd_flush(); vk_pass_end_now();
     VkCommandBuffer cb = vk_cb(); vk_tex_ready(s, cb); vk_tex_ready(d, cb);
     unsigned sl = c->has_sv && c->sv.set_levels ? c->sv.base_level : 0, dl = c->has_dv && c->dv.set_levels ? c->dv.base_level : 0;
     unsigned sy = c->has_sv && c->sv.set_layers ? c->sv.min_layer : 0, dy = c->has_dv && c->dv.set_layers ? c->dv.min_layer : 0;
@@ -220,7 +254,18 @@ void nvn_be_copy_t2t(const p_copy_t2t *c) {
 }
 void nvn_be_barrier(const uint8_t *p, const void *a) { (void)p; (void)a; vk_pass_end_now(); vk_barrier_all(vk_cb()); }
 
-void nvn_be_reset(void) { g_tbdr = 0; }
+// Of the core's TBDR rewrites only the same-target continuation (plan item 301e3: SetRenderTargets of the open pass's own targets leaves it open,
+// its tiles on the chip; the title drew 12.5 draws in 12 passes a frame without it); the others need what the Metal backend does with them
+// (store and load decisions, fused and deferred passes) and stay off. DM_NVN_TBDR=0 and DM_NVN_TBDR_OFF=cont turn it off too
+void nvn_be_reset(void) {
+    if (g_tbdr < 0) tbdr_read();
+    if (g_tbdr_off < 0) tbdr_read_off();
+#ifndef DM_TEST_VK_CONT_OFF   // (the batch's comparison build only: every part off, as before)
+    g_tbdr_off |= (TBP_RTHEAP * 2 - 1) & ~TBP_CONT;
+#else
+    g_tbdr_off |= TBP_RTHEAP * 2 - 1;
+#endif
+}
 void nvn_be_state(uint32_t op, const void *a, int c) { (void)op; (void)a; (void)c; }   // (the draw reads S as the core keeps it)
 
 // ---------- What the core asks of a backend besides ----------
