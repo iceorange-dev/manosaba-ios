@@ -7,7 +7,10 @@
 //   a negative volume kept as given and played as silence
 //   FlushAudioOutBuffers stopped: false, nothing moved; started: true, the third (part played) released unplayed after the two played, the count 0
 //   started again with nothing queued: played 0 (since this StartAudioOut)
-// Volume not applied (-DDM_TEST_AUDIO_VOLUME_IGNORED): 3 fail; the played count not started again (-DDM_TEST_AUDIO_PLAYED_KEPT): 1 fails.
+//   StopAudioOut with two buffers queued (plan item 302: Unity's FMOD output stops it, then waits for its output thread, which waits for the
+//   event): both released unplayed in order, the count 0, the game's event signalled within a second
+// Volume not applied (-DDM_TEST_AUDIO_VOLUME_IGNORED): 3 fail; the played count not started again (-DDM_TEST_AUDIO_PLAYED_KEPT): 1 fails; Stop leaving
+// the queue as it is (-DDM_TEST_AUDIO_STOP_KEEPS): 1 fails.
 // The output is in the registry the lifecycle and the watchdog read only once it is made (plan item 296; nxnative ce99604): in it first, as
 // before (-DDM_TEST_AUDIO_PUBLISH_EARLY): 1 fails.
 #include "../hle/hle_audio.c"
@@ -17,7 +20,8 @@ static struct { const void *k; void *v; } om[8];
 void *objmap_get(const void *k) { for (int i = 0; i < 8; i++) if (om[i].k == k) return om[i].v; return NULL; }
 void objmap_put(const void *k, void *v) { for (int i = 0; i < 8; i++) if (!om[i].k) { om[i].k = k; om[i].v = v; return; } }
 void *objmap_del(const void *k) { for (int i = 0; i < 8; i++) if (om[i].k == k) { om[i].k = 0; return om[i].v; } return NULL; }
-void hle_signal_system_event(void *g) { (void)g; }
+static _Atomic int g_signals;   // the game's buffer event signalled
+void hle_signal_system_event(void *g) { (void)g; atomic_fetch_add(&g_signals, 1); }
 void hle_bind_system_event(void *g, int autoclear) { (void)g; (void)autoclear; }
 static int n, fail;
 static int g_built_when_registered = -1;
@@ -55,6 +59,13 @@ int main(void) {
           !f0 && c0 == 1 && f1 && r0 == &b[0] && r1 == &b[1] && r2 == &b[2] && !r3 && h_au_Count(out) == 0 && a->pos == 0);
     atomic_store(&a->state, STATE_STOPPED); h_au_Start(out);
     check("started again with nothing queued: played 0 (since this StartAudioOut)", h_au_Played(out) == 0);
+    h_au_Stop(out);   // the silent sink Start ran stopped; then two queued on an output started without a consumer
+    h_au_Append(out, &b[0]); h_au_Append(out, &b[1]); atomic_store(&a->state, STATE_STARTED);
+    int sig0 = atomic_load(&g_signals); h_au_Stop(out);
+    for (int i = 0; i < 100 && atomic_load(&g_signals) == sig0; i++) usleep(10000);
+    gbuf *s0 = h_au_Released(out), *s1 = h_au_Released(out), *s2 = h_au_Released(out);
+    check("StopAudioOut with two queued: both released unplayed in order, count 0, the game's event signalled within a second",
+          s0 == &b[0] && s1 == &b[1] && !s2 && h_au_Count(out) == 0 && atomic_load(&g_signals) > sig0 && h_au_State(out) == STATE_STOPPED);
     h_au_Close(out);
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;

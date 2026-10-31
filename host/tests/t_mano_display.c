@@ -8,6 +8,7 @@
 #include "dm.h"
 module_t g_mod[MAX_MOD]; int g_nmod;
 void dm_host_call_register(int num, int (*fn)(uint64_t *regs)) { (void)num; (void)fn; }
+void gate_obs_set(int id, void (*fn)(const uint64_t *regs)) { (void)id; (void)fn; }
 #include "../../games/manosaba/graphics.c"
 int main(int argc, char **argv) {
     if (argc != 3) { fprintf(stderr, "usage: t_mano_display <width> <height>\n"); return 2; }

@@ -12,6 +12,7 @@ run: \
 	$(B)/t_audio_extras_early \
 	$(B)/t_audio_extras_vol \
 	$(B)/t_audio_extras_kept \
+	$(B)/t_audio_extras_stopkeeps \
 	$(B)/t_audren \
 	$(B)/t_audren_void \
 	$(B)/t_audren_unbounded \
@@ -47,6 +48,7 @@ run: \
 	$(B)/t_envfile \
 	$(B)/t_native_size \
 	$(B)/t_native_size_long \
+	$(B)/t_native_size_unclamped \
 	$(B)/t_freeze \
 	$(B)/t_freeze_none \
 	$(B)/t_fs \
@@ -123,6 +125,8 @@ run: \
 	$(B)/t_lang \
 	$(B)/t_mano_display \
 	$(B)/t_mano_display_const \
+	$(B)/t_mano_follow \
+	$(B)/t_mano_follow_boot \
 	$(B)/t_lang_region \
 	$(B)/t_lang_regfirst \
 	$(B)/t_guest_as \
@@ -207,7 +211,7 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_early.log)" -ne 1 ]; then \
 	   cat $(B)/t_audio_extras_early.log; echo "t_audio_extras_early: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audio_extras_early: an output in the registry before it is made fails 1, as expected"
-	@for v in vol:3 kept:1; do t=$${v%%:*}; want=$${v##*:}; status=0; $(B)/t_audio_extras_$$t > $(B)/t_audio_extras_$$t.log 2>/dev/null || status=$$?; \
+	@for v in vol:3 kept:1 stopkeeps:1; do t=$${v%%:*}; want=$${v##*:}; status=0; $(B)/t_audio_extras_$$t > $(B)/t_audio_extras_$$t.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_$$t.log)" -ne "$$want" ]; then \
 	   cat $(B)/t_audio_extras_$$t.log; echo "t_audio_extras_$$t: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audio_extras_$$t: $$want fail, as expected"; done
@@ -292,6 +296,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_native_size_long.log)" -ne 3 ]; then \
 	   cat $(B)/t_native_size_long.log; echo "t_native_size_long: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_native_size_long: the long side's 9/16 alone fails 3, as expected"
+	@status=0; $(B)/t_native_size_unclamped > $(B)/t_native_size_unclamped.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_native_size_unclamped.log)" -ne 2 ]; then \
+	   cat $(B)/t_native_size_unclamped.log; echo "t_native_size_unclamped: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_native_size_unclamped: the screen's size whatever the window textures hold fails 2, as expected"
 	$(B)/t_freeze
 	@status=0; $(B)/t_freeze_none > $(B)/t_freeze_none.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ freeze: one dump" $(B)/t_freeze_none.log; then \
@@ -619,6 +627,12 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ DM_DISPLAY_SIZE=2241x1261" $(B)/t_mano_display_const.log; then \
 	   cat $(B)/t_mano_display_const.log; echo "t_mano_display_const: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_mano_display_const: the constant reported whatever is asked, as expected"
+	$(B)/t_mano_follow 2>/dev/null
+	$(B)/t_mano_follow 720 2>/dev/null
+	@status=0; $(B)/t_mano_follow_boot > $(B)/t_mano_follow_boot.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_mano_follow_boot.log)" -ne 1 ]; then \
+	   cat $(B)/t_mano_follow_boot.log; echo "t_mano_follow_boot: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_mano_follow_boot: the game's own call at the boot's height fails 1, as expected"
 	@status=0; $(B)/t_codesig_broken $(B)/t_codesig_true $(B)/t_codesig_false $(B)/t_codesig > $(B)/t_codesig_broken.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ signed with it false" $(B)/t_codesig_broken.log; then \
 	   cat $(B)/t_codesig_broken.log; echo "t_codesig_broken: unexpected negative-control result ($$status)"; exit 1; \
@@ -771,6 +785,8 @@ $(B)/t_audio_extras_vol: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ..
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_VOLUME_IGNORED -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_kept: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_PLAYED_KEPT -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_extras_stopkeeps: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_STOP_KEEPS -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_spsc: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)
@@ -871,6 +887,10 @@ $(B)/t_codesig: t_codesig.c ../../ios/Sources/codesig.h | $(B)
 	cp $@ $(B)/t_codesig_false && codesign -s - -f --entitlements $(B)/ent_false.plist $(B)/t_codesig_false 2>/dev/null
 $(B)/t_mano_display: t_mano_display.c ../../games/manosaba/graphics.c ../dm.h ../game.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_mano_display.c
+$(B)/t_mano_follow: t_mano_follow.c ../../games/manosaba/graphics.c ../native_size.h ../dm.h ../game.h ../hle.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_mano_follow.c
+$(B)/t_mano_follow_boot: t_mano_follow.c ../../games/manosaba/graphics.c ../native_size.h ../dm.h ../game.h ../hle.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_FOLLOW_BOOT_HEIGHT -I.. -o $@ t_mano_follow.c
 $(B)/t_mano_display_const: t_mano_display.c ../../games/manosaba/graphics.c ../dm.h ../game.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_DISPLAY_CONST -I.. -o $@ t_mano_display.c
 $(B)/t_codesig_broken: t_codesig.c ../../ios/Sources/codesig.h | $(B)
@@ -887,6 +907,8 @@ $(B)/t_native_size: t_native_size.c ../native_size.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_native_size.c
 $(B)/t_native_size_long: t_native_size.c ../native_size.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_NATIVE_LONG_SIDE -I.. -o $@ t_native_size.c
+$(B)/t_native_size_unclamped: t_native_size.c ../native_size.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_NATIVE_FIT_UNCLAMPED -I.. -o $@ t_native_size.c
 $(B)/t_gameslot: t_gameslot.c ../game/game_slot.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-result -I.. -o $@ t_gameslot.c ../game/game_slot.c
 $(B)/t_ktrace: t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

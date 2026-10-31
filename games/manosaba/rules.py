@@ -36,5 +36,10 @@ CUTS = {
         (0x14fc5c, '09fca752', '097ca052', 'AddressRegionManager constructor: the node area registered as occupied, mov w9, #0x3fe00000 → mov w9, #0x3e00000'),
     ],
 }
-OBS = {}
+# The main loop (main+0x41367c, the player's endless loop) calls its steps through a pointer; main+0x71bcc0 is the one that does a frame's work: on
+# the main thread, once a frame (gate counted against the frames presented, plan item 302). graphics.c's step_gate sets the resolution there for
+# the screen the window moved to (the setting "Native" on the iPhone Duo); the entry's sub sp, sp, #0xa0 runs after the gate
+OBS = {
+    'd81467ff90dcee10ab82759d16731cc1': [(0x71bcc0, 1, 'd10283ff', 'main loop step that does a frame\'s work: the resolution for the screen the window moved to (graphics.c step_gate)')],
+}
 PARAMS = {}

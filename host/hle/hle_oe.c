@@ -217,8 +217,12 @@ HLE_FORCE_OPT("_ZN2nn6applet23GetAppletResourceUserIdEv", "no am: a fixed non-ze
 HLE_FORCE_OPT("_ZN2nn2oe25GetProgramTotalActiveTimeEv", "total active time (nn::TimeSpan, ns) from the guest clock", int64_t, h_oe_ActiveTime, void) { return (int64_t)guest_ns(); }
 // bool arguments: Switch callers do not extend them, only the low 8 bits count
 HLE_FORCE("_ZN2nn2oe28SetResumeNotificationEnabledEb", "resume is expressed by the focus notification", void, h_oe_SetResumeNtf, unsigned on) { (void)on; }
-HLE_FORCE("_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb", "operation mode notification switch", void, h_oe_SetOpModeNtf, unsigned on) { g_ntf_opmode = on & 0xff; }
-HLE_FORCE("_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb", "performance mode notification switch", void, h_oe_SetPerfModeNtf, unsigned on) { g_ntf_perfmode = on & 0xff; }
+HLE_FORCE("_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb", "operation mode notification switch", void, h_oe_SetOpModeNtf, unsigned on) {
+    g_ntf_opmode = on & 0xff; LOG("oe::SetOperationModeChangedNotificationEnabled %d", g_ntf_opmode);
+}
+HLE_FORCE("_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb", "performance mode notification switch", void, h_oe_SetPerfModeNtf, unsigned on) {
+    g_ntf_perfmode = on & 0xff; LOG("oe::SetPerformanceModeChangedNotificationEnabled %d", g_ntf_perfmode);
+}
 
 // nn::settings::LanguageCode = struct { char string[8]; }, returned by value in x0
 HLE_FORCE("_ZN2nn2oe18GetDesiredLanguageEv", "system language from DM_LANG / the game profile", uint64_t, h_oe_GetLang, void) {

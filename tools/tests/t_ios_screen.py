@@ -26,7 +26,7 @@ td, fr = code(src[TEXDUMP]), code(src[FRONT])
 ios_branch = td.split('int mtl_display_hz(void) {', 1)[-1].split('#else', 1)[-1].split('#endif', 1)[0]
 check('mtl_display_hz on iOS returns front_ios_screen_hz(), which front_ios.m defines; noted at the view\'s creation and on each layout',
       'return front_ios_screen_hz();' in ios_branch and re.search(r'int front_ios_screen_hz\(void\) \{ return atomic_load\(&g_screen_hz\); \}', fr) is not None
-      and 'screen_note(screen);' in fr and 'screen_note(self.window.windowScene.screen);' in fr, ios_branch.strip()[:200])
+      and 'screen_note(screen);' in fr and re.search(r'UIScreen \*s = self\.window\.windowScene\.screen; screen_note\(s\);', fr) is not None, ios_branch.strip()[:200])
 check('the frame rate hint asks the game view\'s window scene\'s screen for 120 Hz', 'g_view.window.windowScene.screen.maximumFramesPerSecond >= 120' in fr)
 print(f'{total} checks, {fails} failed')
 sys.exit(1 if fails else 0)

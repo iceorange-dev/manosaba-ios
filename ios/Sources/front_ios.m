@@ -13,6 +13,7 @@
 #include "dm_input.h"
 #include "front.h"
 #include "game.h"
+#include "native_size.h"
 #include "hle.h"
 #include "touchpad.h"
 
@@ -45,6 +46,24 @@ static CGRect letterbox_rect(CGRect f) {
 static _Atomic int g_screen_hz;
 int front_ios_screen_hz(void) { return atomic_load(&g_screen_hz); }
 static void screen_note(UIScreen *s) { if (s) atomic_store(&g_screen_hz, (int)s.maximumFramesPerSecond); }
+// The setting "Native" (plan item 302): the screen the game's window is on is reported to the game when it changes (the iPhone Duo opened or
+// closed moves the window between its displays; games/manosaba/graphics.c renders at that screen's size from a later frame). The largest screen
+// seen is kept as dm.native_screen_max for the next launch's window textures (ios/Sources/main.m)
+static int g_follow; static unsigned g_follow_w, g_follow_h;
+static void native_remember(unsigned w, unsigned h) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults; NSString *mx = [d stringForKey:@"dm.native_screen_max"]; unsigned a, b, W, H, MW, MH;
+    if (!dm_native_size(w, h, &W, &H)) return;
+    if (mx && sscanf(mx.UTF8String, "%ux%u", &a, &b) == 2 && dm_native_size(a, b, &MW, &MH) && MH >= H) return;
+    [d setObject:[NSString stringWithFormat:@"%ux%u", w, h] forKey:@"dm.native_screen_max"];
+}
+void front_ios_native_follow(unsigned w, unsigned h) { g_follow = 1; g_follow_w = w; g_follow_h = h; native_remember(w, h); }   // main thread
+static void native_follow(UIScreen *s) {
+    unsigned w = (unsigned)s.nativeBounds.size.width, h = (unsigned)s.nativeBounds.size.height;
+    if (!g_follow || !w || !h || (w == g_follow_w && h == g_follow_h)) return;
+    g_follow_w = w; g_follow_h = h; native_remember(w, h);
+    LOG("front: the window is now on a screen of %ux%u pixels: reported to the game (Native)", w, h);
+    dm_game_native_screen(w, h);
+}
 // The window, its screen and the game view, logged when they change (the iPhone Duo opened or closed, a turn), a hundred times at most. The
 // interface orientation is only logged: the side its safe area insets name is the side of the outer display's front camera (plan item 302)
 static void layout_note(UIView *v, CGRect g) {
@@ -116,7 +135,7 @@ static __weak DmMetalView *g_view;
 @end
 @implementation DmLetterboxView
 - (void)layoutSubviews {
-    [super layoutSubviews]; screen_note(self.window.windowScene.screen);
+    [super layoutSubviews]; UIScreen *s = self.window.windowScene.screen; screen_note(s); if (s) native_follow(s);
     if (self.bounds.size.width > 0 && self.bounds.size.height > 0) { self.game.frame = letterbox_rect(self.bounds); layout_note(self, self.game.frame); }
 }
 @end

@@ -400,12 +400,22 @@ HLE_FORCE("_ZN2nn5audio13StartAudioOutEPNS0_8AudioOutE", "start playback", Resul
     pthread_mutex_unlock(&g_aos_lock);
     return RES_OK;
 }
-HLE_FORCE("_ZN2nn5audio12StopAudioOutEPNS0_8AudioOutE", "stop playback", void, h_au_Stop, void *g) {
+// The buffers still queued are released unplayed and the event signalled, as Ryujinx's AudioDeviceSession.Stop does (MIT, written anew; the SDK
+// reference keeps them appended, and its event may be signalled whenever a buffer may have been released). Unity's FMOD output stops the output
+// and then waits for its output thread, which waits for that event: on an operation mode change (plan item 302) the game hung there for good
+static int release_pending(aout *a);
+HLE_FORCE("_ZN2nn5audio12StopAudioOutEPNS0_8AudioOutE", "stop playback: the queued buffers released", void, h_au_Stop, void *g) {
     aout *a = ao(g);
     pthread_mutex_lock(&g_aos_lock);
     atomic_store_explicit(&a->state, STATE_STOPPED, memory_order_release);
     backend_stop(a);   // the AudioUnit, or the silent sink (including one that took over during suspension)
+#ifndef DM_TEST_AUDIO_STOP_KEEPS   // negative control of t_audio_extras only: the queue left as it is, nothing signalled
+    int moved = release_pending(a);
+#else
+    int moved = 0;
+#endif
     pthread_mutex_unlock(&g_aos_lock);
+    if (moved) notify_release(a);
 }
 HLE_FORCE("_ZN2nn5audio13CloseAudioOutEPNS0_8AudioOutE", "close the audio output", void, h_au_Close, void *g) {
     h_au_Stop(g);
@@ -465,6 +475,16 @@ HLE_FORCE_OPT("_ZN2nn5audio22ContainsAudioOutBufferEPKNS0_8AudioOutEPKNS0_14Audi
     pthread_mutex_unlock(&a->m);
     return found;
 }
+// Every pending buffer moved to the released queue unplayed (Flush, Stop; under g_aos_lock with the output's consumer stopped, so the queue has one
+// writer); 1 when any was there. The caller signals the release after unlocking
+static int release_pending(aout *a) {
+    pthread_mutex_lock(&a->m);
+    uint32_t h = atomic_load_explicit(&a->q_head, memory_order_relaxed), t = atomic_load_explicit(&a->q_tail, memory_order_acquire), rt = atomic_load_explicit(&a->rel_tail, memory_order_relaxed);
+    for (uint32_t i = h; i != t; i++) a->rel[rt++ & (RELMAX - 1)] = a->q[i & (QMAX - 1)];   // pending + released never exceed QMAX (Append and the release move keep it)
+    atomic_store_explicit(&a->rel_tail, rt, memory_order_release); atomic_store_explicit(&a->q_head, t, memory_order_release); a->pos = 0;
+    pthread_mutex_unlock(&a->m);
+    return t != h;
+}
 // Every pending buffer released at once, unplayed, and the event signalled: only while started (false otherwise, as yuzu). The output's consumer is
 // held off by g_aos_lock's backend stop and start around the move, so the queue has one writer
 HLE_FORCE_OPT("_ZN2nn5audio20FlushAudioOutBuffersEPNS0_8AudioOutE", "pending buffers released unplayed (started outputs only)", bool, h_au_Flush, void *g) {
@@ -472,14 +492,10 @@ HLE_FORCE_OPT("_ZN2nn5audio20FlushAudioOutBuffersEPNS0_8AudioOutE", "pending buf
     pthread_mutex_lock(&g_aos_lock);
     if (atomic_load_explicit(&a->state, memory_order_acquire) != STATE_STARTED) { pthread_mutex_unlock(&g_aos_lock); return false; }
     int was = a->backend; backend_stop(a);
-    pthread_mutex_lock(&a->m);
-    uint32_t h = atomic_load_explicit(&a->q_head, memory_order_relaxed), t = atomic_load_explicit(&a->q_tail, memory_order_acquire), rt = atomic_load_explicit(&a->rel_tail, memory_order_relaxed);
-    for (uint32_t i = h; i != t; i++) a->rel[rt++ & (RELMAX - 1)] = a->q[i & (QMAX - 1)];   // pending + released never exceed QMAX (Append and the release move keep it)
-    atomic_store_explicit(&a->rel_tail, rt, memory_order_release); atomic_store_explicit(&a->q_head, t, memory_order_release); a->pos = 0;
-    pthread_mutex_unlock(&a->m);
+    int moved = release_pending(a);
     if (was != BK_NONE) { if (was == BK_AU && a->au && !g_suspended) au_go(a, now_ns()); else null_start(a); }
     pthread_mutex_unlock(&g_aos_lock);
-    if (t != h) notify_release(a);
+    if (moved) notify_release(a);
     return true;
 }
 HLE_FORCE("_ZN2nn5audio25GetReleasedAudioOutBufferEPNS0_8AudioOutE", "next played buffer, NULL if none", gbuf *, h_au_Released, void *g) {

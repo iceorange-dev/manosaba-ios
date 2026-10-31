@@ -65,6 +65,10 @@ int dm_game_inactivity_fps(int on, uint64_t ra);
 // A command channel line the host does not know (host/front/cmdchan.c): 0 not the game's, 1 the game's (run = 0: only checked when the line is read;
 // run = 1: run, the game logs the outcome). Tears of the Kingdom's survey (games/totk/survey.c, plan item 167)
 int dm_game_command(const char *line, int run);
+// The setting "Native" is on and the front end's window is now on a screen of w x h pixels (plan item 302: the iPhone Duo's window moves between its
+// two displays while the game runs). Any thread; weak default: nothing. A game that can change its resolution while it runs renders at that screen's
+// native size (host/native_size.h) from a later frame: manosaba (games/manosaba/graphics.c)
+void dm_game_native_screen(unsigned w, unsigned h);
 // On the game's thread right after it waited for its window image (nvnSyncWait on the sync of the last nvnWindowAcquireTexture, gfx/nvn/hle_nvn.c,
 // whose weak default this is): between two frames, where a game may act on its own objects
 void dm_game_frame_sync(void);

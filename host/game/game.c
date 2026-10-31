@@ -5,6 +5,7 @@ __attribute__((weak)) void dm_game_mount_save(const char *dir) { (void)dir; }
 __attribute__((weak)) void dm_game_save_precommit(const char *workdir) { (void)workdir; }
 __attribute__((weak)) int dm_game_inactivity_fps(int on, uint64_t ra) { (void)on; (void)ra; return 0; }
 __attribute__((weak)) int dm_game_command(const char *line, int run) { (void)line; (void)run; return 0; }
+__attribute__((weak)) void dm_game_native_screen(unsigned w, unsigned h) { (void)w; (void)h; }
 
 #include <stdio.h>
 #include <stdlib.h>

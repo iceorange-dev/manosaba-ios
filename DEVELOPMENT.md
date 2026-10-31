@@ -382,12 +382,6 @@ and 297 in batch 142, the user's order: 301 next):
   recycling the memory would need the placed range unmapped without the driver's reservation, which batch 135's lost range makes a thing to
   stress-test first), and the game's own work on its main thread (a frame of 140 ms with the render thread waiting for it). The frame of
   about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
-- 302 the iPhone Duo (the user's main phone since 2026-11; batch 143 did what follows from its measurements): the setting "Native" kept on both
-  displays (the user, 2026-11-01). It is read once at the start: started closed, the game renders the outer display's 16:9 (2034x1144 by
-  `dm_native_size`) and opened it is scaled to the inner one's (2852x1604). The game's window textures take the size the host reports (host
-  call 0x81, `games/manosaba/graphics.c`) and it calls Screen.SetResolution once, when it loads its settings; first whether the operation
-  mode notifications (30 / 31) make it ask again, else the window textures at the larger display's size from the start and SetResolution
-  called again from a function the game runs every frame on its main thread (a rules.py hook), the presenter showing the part rendered.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -1231,3 +1225,28 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   tests, both IPAs; the Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes at
   other moments (looked at); manosaba no red line, its four shots looked at (batch 142's were lost with /private/tmp at the macOS 27.2
   update's restart).
+- [x] batch 144 · 302: the setting "Native" kept on both of the iPhone Duo's displays (the user, 2026-11-01: started closed, the game rendered the
+  outer display's 2034x1144 and opened it was scaled to the inner one's 2852x1604). The operation mode notifications first (30 / 31, as docking
+  on the console, `DM_OE_SCRIPT`): the game asked neither for the display's size nor for a resolution again, but stopped its audio output and
+  then waited for FMOD's output thread, which waited for the buffer event: hung for good. StopAudioOut now releases the queued buffers and
+  signals the event (Ryujinx's AudioDeviceSession.Stop, MIT, written anew; the SDK reference keeps them appended and lets the event come whenever a
+  buffer may have been released; Flush and Stop share `release_pending`), and the game opens its output again and goes on. Then the game's own
+  path: the main loop (main+0x41367c) calls its steps through a pointer, and main+0x71bcc0 does a frame's work on the main thread, once a frame
+  (a sample of the main thread, `DM_SAMPLE`, then an observation gate counted against the frames presented). `rules.py`'s observation gate 1 is
+  there; `games/manosaba/graphics.c` `step_gate` calls Screen.SetResolution's four-argument overload for the screen the front end reported last
+  (`dm_game_native_screen`, a game hook with a weak default; the iOS front end reports it when the window changes screens), the game renders at
+  it from the next frame and sets its window's crop to it (nvnWindowSetCrop), which the presenter shows. Its window textures take the display
+  reported at boot: the largest screen this device showed the game on (`dm.native_screen_max`, kept by the front end), or for the iPhone Duo's
+  first launch closed its inner display as measured (`dm_native_other_screen`: closed, `UIScreen.screens` lists only the outer one). The height
+  also above the game's 2560x1440, within the display (the inner display's native is 2852x1604; an iPad's Native now renders 2730x1536 where it
+  rendered 2560x1440), and the game's own later call keeps the height applied (seen on the device when the title screen went on into the game).
+  On the device: opened 2852x1604, closed 2034x1144, the change two frames after the window moved (17 to 30 ms) both ways, many times; GPU 6.1
+  to 6.5 ms a frame on the title at 2852x1604 against 4.2 to 4.6 at 2034x1144, 60 fps; a first launch closed (`DM_TEST_NATIVE_FORGET=1` at the
+  launch: the remembered screen ignored) holds the inner display's size. `DM_TEST_NATIVE_SCREEN=<step>:<w>x<h>[,...]` reports screens at main
+  loop steps (the Mac, end to end: 2034x1144 → 2852x1604 → 2034x1144 with the crop, no red line). Both products built again (the rewriter stamp;
+  the old ones kept as `.prev302`; main gains the gate, nothing else differs), `verify/regress.sh --fuzz` OK for the Apple and the Android one.
+  Also logged: the game turning the operation and performance mode notifications on. Tests: host `t_native_size` 12 (`-DDM_TEST_NATIVE_FIT_UNCLAMPED`
+  2 fail), `t_mano_follow` 8 and the other settings' 1 (`-DDM_TEST_FOLLOW_BOOT_HEIGHT` 1), `t_audio_extras` 10 (`-DDM_TEST_AUDIO_STOP_KEEPS` 1),
+  tools `t_ios_screen` 3 as batch 143's. gfx 173 / 173 on Metal 4 and Metal 3, host 198 / 198, sanitizer, texture, audit and tool tests, both
+  IPAs; the Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes at other moments;
+  manosaba no red line, its title frame (s600) the same picture at another moment of its light (looked at), the other three as batch 143's.

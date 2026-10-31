@@ -41,6 +41,7 @@
 
 int dm_main(int argc, char **argv);   // host/runtime/main.c, compiled with -Dmain=dm_main
 UIView *front_ios_view(CGRect frame, UIScreen *screen);   // the screen the scene is on (its native scale and refresh rate)
+void front_ios_native_follow(unsigned w, unsigned h);   // the setting "Native": the screen the game starts on, w x h pixels (plan item 302)
 void front_ios_lifecycle_install(void);
 void front_ios_focus_event(int ev);
 unsigned long long mtl_gpu_allocated_mb(void);
@@ -299,10 +300,21 @@ static void gfx_settings_boot(void) {
     if (g_gfx_fps == 30) setenv("DM_FPS", "30", 0);
     if (h == -1) {   // "Native" (plan item 281): the 16:9 picture the screen's pixels hold, reported as the display (DM_DISPLAY_SIZE) and rendered
                      // at (DM_RENDER_HEIGHT). manosaba renders it (games/manosaba/graphics.c; the width as Screen.SetResolution's hook scales 2560x1440);
-                     // Tears of the Kingdom goes docked and renders the largest 16:9 its heap holds, 1920x1080 (games/totk/frame_step.c)
+                     // Tears of the Kingdom goes docked and renders the largest 16:9 its heap holds, 1920x1080 (games/totk/frame_step.c).
+                     // Plan item 302 (the iPhone Duo, two displays): the display reported is the largest screen this device showed the game on
+                     // (dm.native_screen_max, kept by the front end), so the window textures hold it; the front end reports the screen the window
+                     // moves to, and manosaba renders at that screen's size while it runs
         UIWindowScene *ws = nil; for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) if ([sc isKindOfClass:UIWindowScene.class]) { ws = (UIWindowScene *)sc; break; }
-        CGSize nb = ws ? ws.screen.nativeBounds.size : CGSizeZero; unsigned W, H;
-        if (dm_native_size((unsigned)nb.width, (unsigned)nb.height, &W, &H)) { char b[32]; snprintf(b, sizeof b, "%ux%u", W, H); setenv("DM_DISPLAY_SIZE", b, 0); snprintf(b, sizeof b, "%u", H); setenv("DM_RENDER_HEIGHT", b, 0); }
+        CGSize nb = ws ? ws.screen.nativeBounds.size : CGSizeZero; unsigned sw = (unsigned)nb.width, sh = (unsigned)nb.height, W, H, MW, MH, a, b2;
+        if (dm_native_size(sw, sh, &W, &H)) {
+            MW = W; MH = H; NSString *mx = getenv("DM_TEST_NATIVE_FORGET") ? nil : [d stringForKey:@"dm.native_screen_max"];   // (the test switch: a first launch)
+            if (mx && sscanf(mx.UTF8String, "%ux%u", &a, &b2) == 2 && dm_native_size(a, b2, &a, &b2) && b2 > MH) { MW = a; MH = b2; }
+            // The device's other screen when it is known (the iPhone Duo's inner display: closed, the system lists only the outer one)
+            char hw[64] = ""; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0);
+            if (dm_native_other_screen(hw, &a, &b2) && dm_native_size(a, b2, &a, &b2) && b2 > MH) { plog("boot: %s's other screen holds %ux%u (Native)", hw, a, b2); MW = a; MH = b2; }
+            char b[32]; snprintf(b, sizeof b, "%ux%u", MW, MH); setenv("DM_DISPLAY_SIZE", b, 0); snprintf(b, sizeof b, "%u", H); setenv("DM_RENDER_HEIGHT", b, 0);
+            front_ios_native_follow(sw, sh);
+        }
     } else if (h > 0) { char b[16]; snprintf(b, sizeof b, "%ld", (long)h); setenv("DM_RENDER_HEIGHT", b, 0); }
     if (g_gfx_fx) setenv("DM_UPSCALE", "metalfx", 0);
     plog("boot: graphics settings: %ld fps (%s), render height %s%s%s, MetalFX %s, hold 30 fps when hot %s", (long)g_gfx_fps, why, getenv("DM_RENDER_HEIGHT") ?: "the game's",
