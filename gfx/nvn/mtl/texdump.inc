@@ -155,7 +155,7 @@ int mtl_display_hz(void) {
     double hz = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
     return (int)(hz + 0.5);
 #else
-    Class c = NSClassFromString(@"UIScreen"); id s = c ? [c valueForKey:@"mainScreen"] : nil;
-    return s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0;
+    int front_ios_screen_hz(void);   // ios/Sources/front_ios.m: the screen the game's window is on (the iPhone Duo has two; plan item 302), kept there on the main thread
+    return front_ios_screen_hz();
 #endif
 }

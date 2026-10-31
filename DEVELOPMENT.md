@@ -382,6 +382,12 @@ and 297 in batch 142, the user's order: 301 next):
   recycling the memory would need the placed range unmapped without the driver's reservation, which batch 135's lost range makes a thing to
   stress-test first), and the game's own work on its main thread (a frame of 140 ms with the render thread waiting for it). The frame of
   about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
+- 302 the iPhone Duo (the user's main phone since 2026-11; batch 143 did what follows from its measurements): the setting "Native" kept on both
+  displays (the user, 2026-11-01). It is read once at the start: started closed, the game renders the outer display's 16:9 (2034x1144 by
+  `dm_native_size`) and opened it is scaled to the inner one's (2852x1604). The game's window textures take the size the host reports (host
+  call 0x81, `games/manosaba/graphics.c`) and it calls Screen.SetResolution once, when it loads its settings; first whether the operation
+  mode notifications (30 / 31) make it ask again, else the window textures at the larger display's size from the start and SetResolution
+  called again from a function the game runs every frame on its main thread (a rules.py hook), the presenter showing the part rendered.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
@@ -1206,3 +1212,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   `t_fs_core` 2 (`-DDM_TEST_FS_KEEPS_CORE` 2). gfx 173 / 173 on Metal 4 and Metal 3, host 194 / 194, sanitizer, texture, audit and tool
   tests, the phone's tests, both IPAs, the app and headless runs 40 s at 60 fps; smoke as batch 141's (looked at), no draw reading past a
   stream's bound size in the three runs.
+- [x] batch 143 · 302 part: manosaba on the iPhone Duo (the user's main phone; the user, 2026-11-01), measured on one (iOS 27.1 24A94425) with
+  Xcode 27.1's iOS 27.1 SDK: closed, the outer display 678x466 points (1398x2034 pixels, up to 120 Hz), the 16:9 picture 678x381 between
+  42-point bars; open, the inner display 951x669 (2007x2853, 120 Hz), the picture 951x534 between 67-point bars; partially open (26 to 175
+  degrees) the window stays the inner display's. The app already follows the window between the displays (the scene's window, the layout on
+  every resize). The outer display's front camera: an 84-point safe area on its side (left in interface orientation 3, right in 4), its
+  cutout over the picture's top-left corner (bottom-right in 4); left as it is (the user: keeping clear of it costs more of the picture than
+  it covers). `reservedRegionsOfKind:` gave nothing on the device (occlusion and division, inactive ones included, the view's and the window's,
+  asked again 0.5 s and 2 s after a resize; corner adaptation moves only the display's rounded corners, 17 / 2 points), while the iOS 27.1
+  Simulator gave the camera's corner (37x37 at (29, 29) and 84x82 at (0, 0)); a layout around such regions was written, tested and left out.
+  In: the refresh rate comes from the screen the game's window is on, not UIScreen.mainScreen (Apple's app-resizability skill, Xcode 27.1:
+  ambiguous on a device with two displays): `mtl_display_hz` through `front_ios_screen_hz`, noted on the main thread at the view's creation and
+  on each layout, and the frame rate hint; the window, its screen, the safe area and the hinge's state (iOS 27.1 `UIHingeInteraction`) logged
+  when they change. Upstream d2r-mobile's iPhone Duo support (v2.0 b811b90, MIT) resizes D2R's output with the window; the camera is not
+  handled there. Skills for the work, outside the repository: Apple's app-resizability (`xcrun agent skills export`, Xcode 27.1) and
+  d-date/iphone-duo-skill (MIT, 31bdab9). Tests: tools `t_ios_screen` 3 (`T_IOS_SCREEN_OLD=1` puts the old lines back: 3 fail); on the
+  device and the iPhone Duo Simulator by the log. gfx 173 / 173 on Metal 4 and Metal 3, host 194 / 194, sanitizer, texture, audit and tool
+  tests, both IPAs; the Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes at
+  other moments (looked at); manosaba no red line, its four shots looked at (batch 142's were lost with /private/tmp at the macOS 27.2
+  update's restart).

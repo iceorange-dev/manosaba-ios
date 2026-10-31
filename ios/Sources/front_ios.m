@@ -8,6 +8,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include "cloud.h"
 #include "dm_input.h"
 #include "front.h"
@@ -38,6 +39,22 @@ static CGRect letterbox_rect(CGRect f) {
     CGFloat w = f.size.width, h = f.size.height;
     if (wa > ga) w = floor(h * ga); else h = floor(w / ga);
     return CGRectMake(f.origin.x + floor((f.size.width - w) / 2), f.origin.y + floor((f.size.height - h) / 2), w, h);
+}
+// The screen the game's window is on (plan item 302: the iPhone Duo has two, the outer and the inner display): its maximum refresh rate, kept on
+// the main thread for mtl_display_hz (gfx/nvn/mtl/texdump.inc, read on the game thread), which read UIScreen.mainScreen before
+static _Atomic int g_screen_hz;
+int front_ios_screen_hz(void) { return atomic_load(&g_screen_hz); }
+static void screen_note(UIScreen *s) { if (s) atomic_store(&g_screen_hz, (int)s.maximumFramesPerSecond); }
+// The window, its screen and the game view, logged when they change (the iPhone Duo opened or closed, a turn), a hundred times at most. The
+// interface orientation is only logged: the side its safe area insets name is the side of the outer display's front camera (plan item 302)
+static void layout_note(UIView *v, CGRect g) {
+    static char last[512]; static int logged; if (logged >= 100) return;
+    UIWindowScene *ws = v.window.windowScene; UIScreen *s = ws.screen; UIEdgeInsets in = v.safeAreaInsets; CGSize b = v.bounds.size; long ori = 0; char line[512];
+    if (@available(iOS 26.0, *)) ori = (long)ws.effectiveGeometry.interfaceOrientation;
+    snprintf(line, sizeof line, "window %.0fx%.0f on a screen of %.0fx%.0f pixels up to %ld Hz (interface orientation %ld, safe area top %.0f left %.0f bottom %.0f right %.0f); "
+             "game view %.0fx%.0f at (%.0f, %.0f)", b.width, b.height, s.nativeBounds.size.width, s.nativeBounds.size.height, (long)s.maximumFramesPerSecond, ori,
+             in.top, in.left, in.bottom, in.right, g.size.width, g.size.height, g.origin.x, g.origin.y);
+    if (strcmp(line, last)) { strlcpy(last, line, sizeof last); logged++; LOG("front: %s", line); }
 }
 
 // The drawable's size: the view's pixels, or with DM_IOS_DRAWABLE_H=<rows> that many rows at the view's shape, so the system compositor scales
@@ -90,12 +107,18 @@ static CGSize drawable_size(CGSize pt, CGFloat scale) {
 @end
 static __weak DmMetalView *g_view;
 
-// Black container that keeps the game view at the game's aspect ratio, centered
+// Black container that keeps the game view at the game's aspect ratio, centered. Laid out again when its size changes: the iPhone Duo opened or
+// closed moves the window between its displays (plan item 302). The picture is not moved off the outer display's front camera: its cutout covers
+// a small part of one corner of the picture, and keeping clear of it would cost more of the picture (the user, 2026-11-01); the device reports no
+// camera region to lay out around (reservedRegionsOfKind: empty on iOS 27.1 24A94425, while its Simulator reports the corner)
 @interface DmLetterboxView : UIView
 @property (nonatomic, strong) UIView *game;
 @end
 @implementation DmLetterboxView
-- (void)layoutSubviews { [super layoutSubviews]; if (self.bounds.size.width > 0 && self.bounds.size.height > 0) self.game.frame = letterbox_rect(self.bounds); }
+- (void)layoutSubviews {
+    [super layoutSubviews]; screen_note(self.window.windowScene.screen);
+    if (self.bounds.size.width > 0 && self.bounds.size.height > 0) { self.game.frame = letterbox_rect(self.bounds); layout_note(self, self.game.frame); }
+}
 @end
 
 // ---------- On-screen controls (host/front/touchpad.c) ----------
@@ -388,7 +411,7 @@ int dm_game_realtime_step(void);
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
     static int last = -1; int f = mtl_fps_target();
-    int pro = f != 30 && UIScreen.mainScreen.maximumFramesPerSecond >= 120 && dm_game_realtime_step() && !getenv("DM_PRESENT_HZ") && !(getenv("DM_PROMOTION") && !strcmp(getenv("DM_PROMOTION"), "0"));
+    int pro = f != 30 && g_view.window.windowScene.screen.maximumFramesPerSecond >= 120 && dm_game_realtime_step() && !getenv("DM_PRESENT_HZ") && !(getenv("DM_PROMOTION") && !strcmp(getenv("DM_PROMOTION"), "0"));
     int want = pro ? 120 : f;
     if (want != last) { last = want; l.preferredFrameRateRange = want == 120 ? CAFrameRateRangeMake(80, 120, 120) : want == 30 ? CAFrameRateRangeMake(30, 30, 30) : CAFrameRateRangeMake(60, 60, 60); }
     if (pro) { double d = l.targetTimestamp - l.timestamp; if (d > 0) nvn_display_rate_now((int)lround(1.0 / d)); }
@@ -396,9 +419,17 @@ int dm_game_realtime_step(void);
 @end
 static CADisplayLink *g_rate_link;
 
-UIView *front_ios_view(CGRect frame, CGFloat scale) {
+UIView *front_ios_view(CGRect frame, UIScreen *screen) {
+    CGFloat scale = screen.nativeScale; screen_note(screen);
     DmLetterboxView *box = [[DmLetterboxView alloc] initWithFrame:frame];
     box.backgroundColor = UIColor.blackColor;
+    if (@available(iOS 27.1, *))   // the hinge's state (the iPhone Duo; a device without one never calls back with a hinge): logged when it changes
+        [box addInteraction:[[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction *i, UIHingeInteractionUpdate *u) {
+            (void)i; static long last = -2; UIHinge *h = u.hinge; long st = h ? (long)h.status : -1;
+            static const char *name[] = {"unknown", "closed", "partially open", "fully open"};
+            if (st == last || st < -1 || st > 3) return;
+            last = st;
+            if (h) LOG("front: hinge %s, %.0f degrees", name[st], h.angle * 180 / M_PI); else LOG("front: no hinge updates (the view left a hierarchy that has them)"); }]];
     DmMetalView *v = [[DmMetalView alloc] initWithFrame:letterbox_rect(frame)];
     box.game = v; [box addSubview:v]; g_view = v;
     if (pad_wanted()) {

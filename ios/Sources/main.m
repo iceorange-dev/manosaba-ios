@@ -40,7 +40,7 @@
 #include "native_size.h"   // dm_native_size (the setting "Native")
 
 int dm_main(int argc, char **argv);   // host/runtime/main.c, compiled with -Dmain=dm_main
-UIView *front_ios_view(CGRect frame, CGFloat scale);   // scale = the screen's native scale
+UIView *front_ios_view(CGRect frame, UIScreen *screen);   // the screen the scene is on (its native scale and refresh rate)
 void front_ios_lifecycle_install(void);
 void front_ios_focus_event(int ev);
 unsigned long long mtl_gpu_allocated_mb(void);
@@ -435,7 +435,7 @@ static int gpu_supported(char *why, size_t n) {
             bounds = ws.coordinateSpace.bounds;
 #pragma clang diagnostic pop
         }
-        DmGameVC *vc = [DmGameVC new]; vc.view = front_ios_view(bounds, ws.screen.nativeScale);
+        DmGameVC *vc = [DmGameVC new]; vc.view = front_ios_view(bounds, ws.screen);
         self.window.rootViewController = vc;
         dm_log_overlay_attach(vc.view);
         // In the foreground already (the usual case: locating outlasts the launch): start now; otherwise sceneWillEnterForeground starts it. Not
