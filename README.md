@@ -16,6 +16,10 @@ has been removed here.
 **No game content is in this repository.** You dump your own copy from your own console; everything derived from it (rewritten modules,
 translated shaders, the app icon) is generated on your machine and stays out of git.
 
+**Own the Steam version instead?** [steam/manosaba](steam/manosaba/README.md) builds an iPad and iPhone app from the Steam macOS version
+(1.1.2). The game's IL2CPP code runs on the matching Unity iOS player, with no console, keys or HLE layer. It is independent of the Switch
+path: nothing outside `steam/` uses it, and it uses nothing outside `steam/`.
+
 ## Status (manosaba 2.0.4b)
 
 Verified on a Mac (Apple silicon, macOS 26) and on an iPhone 17 Pro (iOS 26), including the reorganized iOS app:

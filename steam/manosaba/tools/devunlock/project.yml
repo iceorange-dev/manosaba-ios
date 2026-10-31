@@ -1,0 +1,16 @@
+name: DevUnlock
+options:
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  DevUnlock:
+    type: application
+    platform: iOS
+    sources: [App]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${MANOSABA_BUNDLE_ID}
+      PRODUCT_NAME: manosaba
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
+      MARKETING_VERSION: "0.0.1"
+      CURRENT_PROJECT_VERSION: "1"
