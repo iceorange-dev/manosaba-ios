@@ -1250,3 +1250,16 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   tools `t_ios_screen` 3 as batch 143's. gfx 173 / 173 on Metal 4 and Metal 3, host 198 / 198, sanitizer, texture, audit and tool tests, both
   IPAs; the Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes at other moments;
   manosaba no red line, its title frame (s600) the same picture at another moment of its light (looked at), the other three as batch 143's.
+- [x] batch 145 · 302: the picture clear of the iPhone Duo's outer front camera (the user, 2026-11-01: the 16:9 picture sits between bars, and
+  moved within them it keeps its size and more of it shows; batch 143 had left it under the cutout). `host/fit_rect.h` `dm_fit_rect` (written in
+  batch 143 and left out then): the largest picture of the game's ratio clear of the regions, moved as little as possible from the centered place,
+  within the bars at its size when that clears them. The regions: the system's (reservedRegionsOfKind: occlusion), or where it reports none the
+  measured cutout (`dm_known_cutout`: iPhone19,4's outer display, 1398x2034 pixels, 84x82 points with its margins as its Simulator gives them, on
+  the side the safe area names: the top of the left side in interface orientation 3, the bottom of the right side in 4, as the user saw it).
+  Closed in orientation 3 the picture goes down to y 82 (bars 82 and 3 points), in 4 up to y 3. Laid out again when the safe area changes (a turn
+  by 180 degrees keeps the size). In the iPhone Duo Simulator the measured cutout (its model from `SIMULATOR_MODEL_IDENTIFIER`;
+  `DM_TEST_NO_RESERVED=1` ignores the system's regions) and the system's give the same place, (0, 82), and the outer display's screenshot (simctl
+  `--display`: the default one is now the inner display) shows the cutout in the top bar. Tests: host `t_fit_rect` 13 (`-DDM_TEST_FIT_IGNORE_AVOID`
+  6 fail). gfx 173 / 173 on Metal 4 and Metal 3, host 200 / 200, sanitizer, texture, audit and tool tests, both IPAs; the Android phone was not
+  connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes at other moments (looked at); manosaba no red line,
+  its four shots as batch 144's.

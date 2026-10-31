@@ -9,8 +9,10 @@
 #import <QuartzCore/CAMetalLayer.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <sys/sysctl.h>
 #include "cloud.h"
 #include "dm_input.h"
+#include "fit_rect.h"
 #include "front.h"
 #include "game.h"
 #include "native_size.h"
@@ -31,15 +33,33 @@ static void game_size(double *w, double *h) {
     }
     *w = gw; *h = gh;
 }
-// The largest rectangle of the game's aspect ratio centered in f (a difference under 1% fills f)
+// The largest rectangle of the game's aspect ratio centered in f (a difference under 1% fills f; host/fit_rect.h)
 static CGRect letterbox_rect(CGRect f) {
     double gw, gh; game_size(&gw, &gh);
-    if (f.size.width <= 0 || f.size.height <= 0) return f;
-    double ga = gw / gh, wa = f.size.width / f.size.height;
-    if (fabs(wa / ga - 1) < 0.01) return f;
-    CGFloat w = f.size.width, h = f.size.height;
-    if (wa > ga) w = floor(h * ga); else h = floor(w / ga);
-    return CGRectMake(f.origin.x + floor((f.size.width - w) / 2), f.origin.y + floor((f.size.height - h) / 2), w, h);
+    dm_rect r = dm_fit_center((dm_rect){f.origin.x, f.origin.y, f.size.width, f.size.height}, gw / gh);
+    return CGRectMake(r.x, r.y, r.w, r.h);
+}
+// Where the game view goes in the black container v (plan item 302): centered as letterbox_rect, or clear of the front camera's cutout, moved within
+// the bars at its size (made smaller only when no place there clears it; host/fit_rect.h): the picture keeps its size and more of it shows. The
+// cutout: the regions the system reserves for a camera (iOS 27.1 reservedRegionsOfKind: occlusion), or where it reports none the measured one
+// (dm_known_cutout: the iPhone Duo's outer display, whose cutout is over the picture's corner and which reported none). *how: 0 centered, 1 moved,
+// 2 smaller; *src: "the system's" or "measured" (the log). The hinge's fold (division) is not avoided: the picture crosses it like an open book
+static CGRect picture_rect(UIView *v, int *how, const char **src) {
+    double gw, gh; game_size(&gw, &gh); CGRect b = v.bounds; dm_rect av[8]; int n = 0; *src = "";
+    if (@available(iOS 27.1, *)) if (!getenv("DM_TEST_NO_RESERVED"))   // (the test switch: the measured cutout where the system reports one too)
+        for (UIViewReservedRegion *r in [v reservedRegionsOfKind:[UIViewReservedRegionKind occlusionRegionKind]])
+            if (r.active && n < 8) { CGRect f = r.frame; av[n++] = (dm_rect){f.origin.x, f.origin.y, f.size.width, f.size.height}; *src = "the system's"; }
+    if (!n) {
+        static char hw[64]; if (!hw[0]) { size_t hn = sizeof hw; if (sysctlbyname("hw.machine", hw, &hn, NULL, 0)) strlcpy(hw, "?", sizeof hw);
+#if TARGET_OS_SIMULATOR   // the Simulator's machine is the Mac's: the device it stands in for
+            const char *sm = getenv("SIMULATOR_MODEL_IDENTIFIER"); if (sm) strlcpy(hw, sm, sizeof hw);
+#endif
+        }
+        CGSize px = v.window.windowScene.screen.nativeBounds.size; UIEdgeInsets in = v.safeAreaInsets;
+        if (dm_known_cutout(hw, (unsigned)px.width, (unsigned)px.height, b.size.width, b.size.height, in.left, in.right, &av[0])) { n = 1; *src = "measured"; }
+    }
+    dm_rect o; *how = dm_fit_rect((dm_rect){b.origin.x, b.origin.y, b.size.width, b.size.height}, gw / gh, av, n, &o);
+    return CGRectMake(o.x, o.y, o.w, o.h);
 }
 // The screen the game's window is on (plan item 302: the iPhone Duo has two, the outer and the inner display): its maximum refresh rate, kept on
 // the main thread for mtl_display_hz (gfx/nvn/mtl/texdump.inc, read on the game thread), which read UIScreen.mainScreen before
@@ -66,13 +86,14 @@ static void native_follow(UIScreen *s) {
 }
 // The window, its screen and the game view, logged when they change (the iPhone Duo opened or closed, a turn), a hundred times at most. The
 // interface orientation is only logged: the side its safe area insets name is the side of the outer display's front camera (plan item 302)
-static void layout_note(UIView *v, CGRect g) {
+static void layout_note(UIView *v, CGRect g, int how, const char *src) {
     static char last[512]; static int logged; if (logged >= 100) return;
     UIWindowScene *ws = v.window.windowScene; UIScreen *s = ws.screen; UIEdgeInsets in = v.safeAreaInsets; CGSize b = v.bounds.size; long ori = 0; char line[512];
     if (@available(iOS 26.0, *)) ori = (long)ws.effectiveGeometry.interfaceOrientation;
     snprintf(line, sizeof line, "window %.0fx%.0f on a screen of %.0fx%.0f pixels up to %ld Hz (interface orientation %ld, safe area top %.0f left %.0f bottom %.0f right %.0f); "
-             "game view %.0fx%.0f at (%.0f, %.0f)", b.width, b.height, s.nativeBounds.size.width, s.nativeBounds.size.height, (long)s.maximumFramesPerSecond, ori,
-             in.top, in.left, in.bottom, in.right, g.size.width, g.size.height, g.origin.x, g.origin.y);
+             "game view %.0fx%.0f at (%.0f, %.0f)%s%s%s", b.width, b.height, s.nativeBounds.size.width, s.nativeBounds.size.height, (long)s.maximumFramesPerSecond, ori,
+             in.top, in.left, in.bottom, in.right, g.size.width, g.size.height, g.origin.x, g.origin.y,
+             how == 1 ? ", moved clear of the camera (" : how == 2 ? ", made smaller to clear the camera (" : "", how ? src : "", how ? " cutout)" : "");
     if (strcmp(line, last)) { strlcpy(last, line, sizeof last); logged++; LOG("front: %s", line); }
 }
 
@@ -126,18 +147,19 @@ static CGSize drawable_size(CGSize pt, CGFloat scale) {
 @end
 static __weak DmMetalView *g_view;
 
-// Black container that keeps the game view at the game's aspect ratio, centered. Laid out again when its size changes: the iPhone Duo opened or
-// closed moves the window between its displays (plan item 302). The picture is not moved off the outer display's front camera: its cutout covers
-// a small part of one corner of the picture, and keeping clear of it would cost more of the picture (the user, 2026-11-01); the device reports no
-// camera region to lay out around (reservedRegionsOfKind: empty on iOS 27.1 24A94425, while its Simulator reports the corner)
+// Black container that keeps the game view at the game's aspect ratio, centered or clear of the front camera's cutout (picture_rect; the user,
+// 2026-11-01: moved within the bars it keeps its size and shows more). Laid out again when its size changes (the iPhone Duo opened or closed moves
+// the window between its displays, plan item 302) and when its safe area does (a turn by 180 degrees keeps the size and takes the cutout to the
+// other corner)
 @interface DmLetterboxView : UIView
 @property (nonatomic, strong) UIView *game;
 @end
 @implementation DmLetterboxView
 - (void)layoutSubviews {
     [super layoutSubviews]; UIScreen *s = self.window.windowScene.screen; screen_note(s); if (s) native_follow(s);
-    if (self.bounds.size.width > 0 && self.bounds.size.height > 0) { self.game.frame = letterbox_rect(self.bounds); layout_note(self, self.game.frame); }
+    if (self.bounds.size.width > 0 && self.bounds.size.height > 0) { int how; const char *src; self.game.frame = picture_rect(self, &how, &src); layout_note(self, self.game.frame, how, src); }
 }
+- (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsLayout]; }
 @end
 
 // ---------- On-screen controls (host/front/touchpad.c) ----------

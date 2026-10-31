@@ -46,6 +46,8 @@ run: \
 	$(B)/t_il2cpp_obj \
 	$(B)/t_il2cpp_obj_nocheck \
 	$(B)/t_envfile \
+	$(B)/t_fit_rect \
+	$(B)/t_fit_rect_ignore \
 	$(B)/t_native_size \
 	$(B)/t_native_size_long \
 	$(B)/t_native_size_unclamped \
@@ -292,6 +294,11 @@ run: \
 	 fi; echo "t_il2cpp_obj_nocheck: any string taken for a class name names a binary one, as expected"
 	TMPDIR="$(abspath $(B))" $(B)/t_envfile
 	$(B)/t_native_size
+	$(B)/t_fit_rect
+	@status=0; $(B)/t_fit_rect_ignore > $(B)/t_fit_rect_ignore.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_fit_rect_ignore.log)" -ne 6 ]; then \
+	   cat $(B)/t_fit_rect_ignore.log; echo "t_fit_rect_ignore: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_fit_rect_ignore: the picture left centered over the camera fails 6, as expected"
 	@status=0; $(B)/t_native_size_long > $(B)/t_native_size_long.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_native_size_long.log)" -ne 3 ]; then \
 	   cat $(B)/t_native_size_long.log; echo "t_native_size_long: unexpected negative-control result ($$status)"; exit 1; \
@@ -905,6 +912,10 @@ $(B)/t_envfile: t_envfile.c ../envfile.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_envfile.c
 $(B)/t_native_size: t_native_size.c ../native_size.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_native_size.c
+$(B)/t_fit_rect: t_fit_rect.c ../fit_rect.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_fit_rect.c
+$(B)/t_fit_rect_ignore: t_fit_rect.c ../fit_rect.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_FIT_IGNORE_AVOID -I.. -o $@ t_fit_rect.c
 $(B)/t_native_size_long: t_native_size.c ../native_size.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_NATIVE_LONG_SIDE -I.. -o $@ t_native_size.c
 $(B)/t_native_size_unclamped: t_native_size.c ../native_size.h | $(B)
