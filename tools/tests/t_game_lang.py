@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory() as d:
     out = os.path.join(d, 'p.yml')
     r = subprocess.run([sys.executable, '-I', PL, os.path.join(ROOT, 'ios', 'project.yml'), out, 'zh-Hans', 'zh-Hant'], capture_output=True, text=True)
     y = open(out).read() if r.returncode == 0 else ''
-    check('project_lang.py: CFBundleLocalizations after CFBundleDisplayName', r.returncode == 0 and '        CFBundleDisplayName: $(DM_GAME_TITLE)\n        CFBundleLocalizations: ["zh-Hans", "zh-Hant"]\n' in y, r.stderr)
+    check('project_lang.py: CFBundleLocalizations after CFBundleDisplayName', r.returncode == 0 and '        CFBundleDisplayName: $(DM_GAME_NAME)   # the game\'s id in ASCII (sideloading tools build the App ID from it); the title: Gen/Names\n        CFBundleLocalizations: ["zh-Hans", "zh-Hant"]\n' in y, r.stderr)
     r = subprocess.run([sys.executable, '-I', PL, os.path.join(ROOT, 'ios', 'project.yml'), out, 'zh Hans'], capture_output=True, text=True)
     check('... a malformed tag: refused', r.returncode != 0)
     langs = {g: json.load(open(os.path.join(ROOT, 'games', g, 'game.json'))).get('languages') for g in ('manosaba', 'totk')}

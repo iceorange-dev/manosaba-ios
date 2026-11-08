@@ -18,6 +18,8 @@ t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_race.c $(CRASH)
 t_dirty_stamp: t_dirty_stamp.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_stamp.c $(CRASH)
+t_dirty_mpfail: t_dirty_mpfail.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
+	clang $(CFLAGS) -o $@ t_dirty_mpfail.c $(CRASH)
 t_dirty_retire: t_dirty_retire.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_retire.c $(CRASH)
 t_deswz_gpu: t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../tex/nvn_deswizzle.h ../tex/nvn_deswizzle_gpu.h ../nvn/nvn_tex.c ../nvn/nvn_tex.h
@@ -289,6 +291,8 @@ t_fbx: t_fbx.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_fbx.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_shmap: t_shmap.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_shmap.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_arglen: t_arglen.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_arglen.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_cmdalloc: t_cmdalloc.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_cmdalloc.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_extent: t_extent.m $(CRASH) $(GFX) $(GFX_H)
@@ -357,6 +361,7 @@ run: \
 	t_deswz_gpu \
 	t_dirty_race \
 	t_dirty_stamp \
+	t_dirty_mpfail \
 	t_dirty_retire \
 	t_dirty_slots \
 	t_esfilter \
@@ -373,6 +378,7 @@ run: \
 	t_fout \
 	t_fbx \
 	t_shmap \
+	t_arglen \
 	t_cmdalloc \
 	t_upsoak \
 	t_rt_continue \
@@ -476,6 +482,7 @@ run: \
 	./t_dirty_slots
 	./t_dirty_race
 	./t_dirty_stamp
+	./t_dirty_mpfail
 	./t_dirty_retire
 	./t_dirty_shared
 	./t_deswz_gpu
@@ -565,6 +572,7 @@ run: \
 	./t_feedback_pool
 	MTL_DEBUG_LAYER=1 ./t_border
 	TMPDIR=. ./t_shmap
+	./t_arglen
 	TMPDIR=. ./t_cmdalloc
 	./t_upsoak
 	MTL_DEBUG_LAYER=1 ./t_rt_continue

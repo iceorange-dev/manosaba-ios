@@ -111,7 +111,9 @@ static void hap_phone(float peak, uint64_t now) {
     if (!(p > 0) || g_phone_off || NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateSerious) return;
     if (!g_phone) {   // made here, in focus (haptics_map.h dm_phone_engine_due): iOS stops it in the background and refuses a start there
         if (!dm_phone_engine_due(&g_peng, p, dm_focus_now(), now)) return;
-        NSError *err = nil; CHHapticEngine *eng = [[CHHapticEngine alloc] initAndReturnError:&err];
+        // haptics only, as the controllers' engines (plan item 314e): the phone's engine plays no audio events, and S2Arm 4c0bec5 measured a
+        // 2,049 ms stall of the game's sound when CoreHaptics started an engine without it (none seen in ours: no pulse in the runs looked at)
+        NSError *err = nil; CHHapticEngine *eng = [[CHHapticEngine alloc] initAndReturnError:&err]; eng.playsHapticsOnly = YES;
         if (!eng || ![eng startAndReturnError:&err]) {
             dm_phone_engine_failed(&g_peng, now);
             if (g_peng.fails <= 3) LOG("[red] haptics: the phone's engine did not start in focus (%s): tried again in %.0f s", err.localizedDescription.UTF8String ?: "?", (g_peng.retry_at - now) / 1e9);

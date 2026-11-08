@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <mach/mach_time.h>
 #include <sched.h>
+#include <errno.h>
 
 // Order of page state and mprotect (the side changing protection first sets the state to BUSY and sets the final state only after mprotect has landed; other threads wait when they see BUSY):
 //   set read-only: NONE -> BUSY -> mprotect(read-only) -> PROT; unprotect: PROT -> BUSY -> mprotect(writable) -> NONE.
@@ -47,10 +48,25 @@ void nvn_dirty_stat(int *live, int *peak, int *cap) { *live = atomic_load(&g_liv
 static _Atomic int g_overflow_logged;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // Pool creation, destruction and protection (guest threads, the render thread) hold it, so a range stays live from protection's lookup to its last mprotect; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
-static void mp(uintptr_t a, size_t len, int prot) {
-    uint64_t t = mach_absolute_time(); mprotect((void *)a, len, prot);
+// mprotect can fail (ENOMEM once a process has too many map entries: per-page protection splits them, S2Arm counted a 32 MiB mapping going from 1
+// to 65 on Android). Its result is checked (plan item 314a, after S2Arm 4c0bec5, Apache-2.0, written anew): a page that did not become writable
+// stays PROT and its fault is not claimed (it faulted for ever: marked writable, the fault claimed, the store run again on a read-only page); a page
+// that did not become read-only is marked written at an unknown time (gen UNKNOWN: written for any stamp) until a protection succeeds (it was
+// marked PROT while writable, so its writes were missed). 0 = done. Failures are counted (signal-safe) and logged outside the fault path
+#define GEN_UNKNOWN UINT64_MAX
+static _Atomic uint64_t g_mp_fail; static _Atomic int g_mp_errno;
+static int g_test_mp_fail;   // tests only (t_dirty_mpfail): the next n calls fail with ENOMEM
+static int mp(uintptr_t a, size_t len, int prot) {
+    uint64_t t = mach_absolute_time(); int rc;
+    if (g_test_mp_fail > 0) { g_test_mp_fail--; errno = ENOMEM; rc = -1; } else rc = mprotect((void *)a, len, prot);
     atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
+    if (rc) { atomic_store(&g_mp_errno, errno); atomic_fetch_add(&g_mp_fail, 1); }
+#ifdef DM_TEST_DIRTY_MP_IGNORED   // negative control of t_dirty_mpfail only: the result dropped, as before
+    rc = 0;
+#endif
+    return rc;
 }
+uint64_t nvn_dirty_mp_failures(int *err) { if (err) *err = atomic_load(&g_mp_errno); return atomic_load(&g_mp_fail); }
 
 static mach_timebase_info_data_t g_tb;   // Obtained when a pool is first registered (the fault path only multiplies and divides)
 static _Atomic int g_busy_red;
@@ -96,11 +112,12 @@ static void stamp_shared(range_t *r, uintptr_t p, uint64_t g) {
 #ifndef DM_DIRTY_AFTER_CLOCK
 #define DM_DIRTY_AFTER_CLOCK()   // t_dirty_stamp stages a release paused here: its generation taken, the page still BUSY
 #endif
-static void unprotect_page(range_t *r, uintptr_t p) {   // The caller has already changed the state from PROT to BUSY
-    mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
+static int unprotect_page(range_t *r, uintptr_t p) {   // The caller has already changed the state from PROT to BUSY. 1 = writable now
+    if (mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE)) { atomic_store(&r->state[p], PG_PROT); return 0; }   // still read-only
     uint64_t g = atomic_fetch_add(&g_now, 1) + 1; DM_DIRTY_AFTER_CLOCK();
     atomic_store(&r->gen[p], g); stamp_shared(r, p, g);
     atomic_store(&r->state[p], PG_NONE);
+    return 1;
 }
 // Release one page of a range: if protected, unprotect and stamp it; if another thread is changing its protection, wait for it to finish and look
 // again (the other side may have been setting read-only: the page is then PROT after the wait and still has to be released; a pre-write never
@@ -108,7 +125,7 @@ static void unprotect_page(range_t *r, uintptr_t p) {   // The caller has alread
 static int release_page(range_t *r, uintptr_t p, _Atomic uint64_t *count) {
     for (;;) {
         uint8_t st = PG_PROT;
-        if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); if (count) atomic_fetch_add(count, 1); return 1; }
+        if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { if (!unprotect_page(r, p)) return 0; if (count) atomic_fetch_add(count, 1); return 1; }
         if (st != PG_BUSY) return atomic_load(&r->gen[p]) != 0;   // already NONE: just released by another thread (re-execute); pages never protected are not ours
         if (!busy_wait(r, p)) return 0;
     }
@@ -120,6 +137,10 @@ static int on_fault(void *addr, int is_write, void *uc) {
     for (int i = 0; i < n; i++)   // every range sharing the page: releasing only one leaves the other's state "protected", and its later writes are missed
         { range_t *r = rg(i); if (live_at(i) && a >= r->base && a < r->end) ours |= release_page(r, (a - r->base) >> g_shift, &g_faults); }
     return ours;
+}
+static void mp_failed_log(const char *what) {   // not in the fault path
+    int e = 0; uint64_t n = nvn_dirty_mp_failures(&e); static _Atomic uint64_t said;
+    if (n != atomic_exchange(&said, n)) LOG("[red] dirty-page tracking: mprotect failed (%s; errno %d, %llu failures so far): those pages keep their protection, or count as written until protected again", what, e, (unsigned long long)n);
 }
 // Before a host write: the protected pages it covers become writable, consecutive ones in one mprotect (nxnative e06a8ec's release_pages, MIT;
 // a large host write used to take one call per page). Pages another thread is changing (BUSY) go through release_page, which waits for it
@@ -134,10 +155,14 @@ static void prep_write(void *addr, size_t len) {
             uint8_t st = PG_NONE; int took = p <= q && (st = PG_PROT, atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY));
             if (took) { if (!open) { run = p; open = 1; } continue; }
             if (open) {   // pages [run, p) are ours (BUSY): one mprotect, then each stamped and released
-                mp(r->base + (run << g_shift), (p - run) << g_shift, PROT_READ | PROT_WRITE);
-                uint64_t g = atomic_fetch_add(&g_now, 1) + 1; DM_DIRTY_AFTER_CLOCK();
-                for (uintptr_t k = run; k < p; k++) { atomic_store(&r->gen[k], g); stamp_shared(r, k, g); atomic_store(&r->state[k], PG_NONE); }
-                atomic_fetch_add(&g_preps, p - run); open = 0;
+                if (mp(r->base + (run << g_shift), (p - run) << g_shift, PROT_READ | PROT_WRITE)) {   // still read-only: PROT again (the host write faults)
+                    for (uintptr_t k = run; k < p; k++) atomic_store(&r->state[k], PG_PROT);
+                    open = 0; mp_failed_log("a host write");
+                } else {
+                    uint64_t g = atomic_fetch_add(&g_now, 1) + 1; DM_DIRTY_AFTER_CLOCK();
+                    for (uintptr_t k = run; k < p; k++) { atomic_store(&r->gen[k], g); stamp_shared(r, k, g); atomic_store(&r->state[k], PG_NONE); }
+                    atomic_fetch_add(&g_preps, p - run); open = 0;
+                }
             }
             if (p <= q && st == PG_BUSY) release_page(r, p, &g_preps);
         }
@@ -224,7 +249,16 @@ static void protect_in(range_t *r, const void *addr, size_t len) {
         uint8_t st = PG_NONE;
         int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
-        if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0; }
+        if (!took && open) {
+            if (mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ)) {   // still writable: written at an unknown time, not PROT
+                for (uintptr_t k = run; k < i; k++) { atomic_store(&r->gen[k], GEN_UNKNOWN); atomic_store(&r->state[k], PG_NONE); }
+                mp_failed_log("a protection");
+            } else for (uintptr_t k = run; k < i; k++) {   // protected: a page of unknown writes counts as written now, once
+                uint64_t u = GEN_UNKNOWN; if (atomic_load(&r->gen[k]) == u) atomic_compare_exchange_strong(&r->gen[k], &u, atomic_fetch_add(&g_now, 1) + 1);
+                atomic_store(&r->state[k], PG_PROT);
+            }
+            open = 0;
+        }
 #ifndef DM_TEST_DIRTY_SKIP_BUSY   // negative control of t_dirty_stamp only: a BUSY page left alone, as before
         if (!took && i <= q && st == PG_BUSY && busy_wait(r, i)) i--;   // NONE or PROT now: look at it again
 #endif

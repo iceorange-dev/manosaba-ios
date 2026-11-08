@@ -406,17 +406,9 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   by pool page, reset outside passes, a dropped command buffer's queries never waited on), the SampledCubeArray capability (61 of its shaders bind
   cube arrays).
 From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); the user: a full review):
-- 314 correctness, each with a unit test and a broken variant (S2Arm 4c0bec5, Apache-2.0: written anew from what it does): 314a the dirty tracking's
-  `mprotect` results (`nvn_dirty.c` `mp()` drops them: a failed unprotect still marks the page writable and claims the fault, so the write faults
-  for ever; a failed protect leaves a writable page marked protected and its writes are missed; S2Arm `nvn_dirty.c` puts the state back, leaves the
-  fault unclaimed and from then on counts every range as changed); 314b the argument buffer's length from the reflection, Metal's argument encoder
-  only as a check (`shaders.inc` asks Metal at every shader load and aborts on a mismatch; S2Arm saw `newArgumentEncoderWithBufferIndex` assert and
-  the game abort once the Mac's Metal compiler service was killed under memory pressure); 314c the Vulkan vertex formats checked for VERTEX_BUFFER
-  support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and the swapchain acquire bounded (100 ms, the present
-  skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the window goes); 314d the app's display name in ASCII
-  with the game's title in `<lang>.lproj/InfoPlist.strings` (AltServer for Windows builds the App ID from `CFBundleDisplayName` and refuses a
-  Chinese one); 314e the phone's rumble engine haptics-only (`playsHapticsOnly`, as our controllers' are; S2Arm measured a 2,049 ms audio stall at
-  CoreHaptics' first start: look for ours around the first pulse first).
+- 314c the Vulkan vertex formats checked for VERTEX_BUFFER support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and
+  the swapchain acquire bounded (100 ms, the present skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the
+  window goes; S2Arm 4c0bec5): on the K100 when it is connected again (314a, b, d, e: batch 153).
 - 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: 315a the store of loaded attachments the pass
   does not write dropped with the TBDR rewrites off (`core/pass.c` keeps every store unless `tbdr_part(TBP_STORE)`, which needs TBDR on, so on the
   Mac and the iPhone the rule never acts: the Air's log has 324-361 MB stored and 285-320 MB loaded a frame, "0.0 MB a frame of stores saved";
@@ -1485,3 +1477,19 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   woke, not counted). gfx 178 / 178 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the hosts
   and the APK built, the phone not connected (its tests and runs not run). Smoke: Tears of the Kingdom's two red lines as before, manosaba none, the
   shots as batch 151's.
+- [x] batch 153 · 314a, b, d, e: correctness from the twelfth review (S2Arm 4c0bec5, Apache-2.0, written anew). 314a the dirty tracking checks
+  `mprotect`'s result: a page that did not become writable stays PROT and its fault is not claimed (it was marked writable and the fault claimed, so
+  the store faulted for ever); a page that did not become read-only counts as written at an unknown time until a protection succeeds, then as
+  written once for that stamp (it was marked PROT while writable, so its writes were missed); failures are counted and logged outside the fault path
+  (`gfx/tests/t_dirty_mpfail.c` 9 with each failure injected, `-DDM_TEST_DIRTY_MP_IGNORED` 7 fail). 314b the argument buffer's length from the
+  reflection, 8 bytes an id up to the highest (`shaders.inc` `shader_arg_len`); Metal is asked only with `DM_NVN_ARGCHECK=1`: a function Metal gives
+  no argument buffer makes `newArgumentEncoderWithBufferIndex` assert "bufferIndex 0 does not identify an argument buffer", S2Arm's words, which
+  stopped the game at the shader's load (`gfx/tests/t_arglen.m` 3 in child processes, `-DDM_TEST_ARGLEN_FROM_METAL` 1 fails). 314d the app's
+  `CFBundleDisplayName` is the game's id in ASCII and the title the home screen shows is in `<loc>.lproj/InfoPlist.strings` for each of the game's
+  localizations and en (`ios/tools/app_names.py`, `Gen/Names`; the batch's manosaba IPA: "manosaba" in Info.plist, 魔法少女ノ魔女裁判 in en, zh-Hans and
+  zh-Hant; `tools/tests/t_app_names.py` 6, `T_APP_NAMES_BROKEN=noen` 1 fails). 314e the phone's CoreHaptics engine plays haptics only, as the
+  controllers' do (`tools/tests/t_haptics_only.py` 2, its broken copy caught); S2Arm's 2,049 ms sound stall at an engine's start was not seen here:
+  a Tears of the Kingdom run on the Air with `DM_PAD_LOG=1` had no pulse. On the way, a lesson kept: that run was started while Tears of the Kingdom
+  was already running on the phone, maybe the user's own session, and the script ended it; a running app is now asked about before any launch. gfx
+  180 / 180 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
+  Smoke: Tears of the Kingdom's two red lines as before, manosaba none, the shots as batch 152's.

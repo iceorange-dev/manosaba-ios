@@ -54,7 +54,8 @@ if [ "$CMD" = build ] || [ "$CMD" = ipa ] || [ "$CMD" = sim-build ]; then
   if [ "$CMD" = sim-build ]; then t "Simulator: no libvpx (the iOS one is built for the device): VP8 / VP9 movies will not play"
   elif [ -f "$VPX/lib/libvpx.a" ]; then python3 tools/vpx_check.py "$VPX/lib/libvpx.a" 18.0 || exit 1; VPXL="\"$VPX/lib/libvpx.a\""; VPXI="\"$VPX/include\""
   else t "no iOS libvpx in $VPX: VP8 / VP9 movies will not play (ios/tools/build_libvpx.sh builds it)"; fi
-  { echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $VPXL"; echo "DM_VPX_INC = $VPXI"; echo "DM_GAME_TITLE = $TITLE"; } >> Gen/dm.xcconfig
+  { echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $VPXL"; echo "DM_VPX_INC = $VPXI"; echo "DM_GAME_NAME = $GAME"; } >> Gen/dm.xcconfig
+  python3 tools/app_names.py Gen/Names "$GAME" "$TITLE" $(get apple_localizations) > /dev/null || exit 1   # the title per language (plan item 314d)
   PF=$(python3 tools/product_files.py "$OUT" $MODS) || { t "[red] the product's module lists are incomplete"; exit 1; }   # fixups, gates, option lists
   while IFS= read -r f; do cp "$f" Gen/dm/ || exit 1; done <<< "$PF"   # one path a line: the workspace path may hold a space
   cp "$(ws shader_map)" Gen/dm/shader_map.tsv || { t "[red] no shader stage map"; exit 1; }

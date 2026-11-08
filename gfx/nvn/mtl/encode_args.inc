@@ -43,7 +43,7 @@ static id<MTLTexture> fbx_sub(id<MTLTexture> t, uint64_t *rid) {
 #define ARGS_PASS_GONE() do { } while (0)
 #endif
 static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, int metal_vertex) {
-    if (!sh->ae) return 1;
+    if (!sh->arg_len && !sh->ae) return 1;   // no argument buffer (ae: tests that build a shader by hand, its length from Metal below)
     uint64_t slots[NVN_REFL_MAXB] = {0};
     args_sync_dirty();
     if (!passdump() && !g_args_dirty[nvn_stage] && sh->ab_buf && sh->ab_pass == g_pass.serial && nvn_stage != 5 && !sh->rf.ubo_addr) {   // ubo_addr: an address read from uniform data can change without a binding change

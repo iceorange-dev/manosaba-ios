@@ -1,5 +1,5 @@
 # xcodegen project for the iOS app. run.sh build generates Gen/ first (host sources from host/Makefile, the game's modules embedded as code,
-# the product tables, shaders, the app icon) and Gen/dm.xcconfig (header paths, frameworks, link flags, DM_GAME_TITLE).
+# the product tables, shaders, the app icon, the title per language) and Gen/dm.xcconfig (header paths, frameworks, link flags, DM_GAME_NAME).
 name: DmIOS
 options:
   bundleIdPrefix: ${DM_BUNDLE_ID}
@@ -25,12 +25,14 @@ targets:
         type: folder
         buildPhase: resources
       - path: Gen/src                 # host sources from host/Makefile (tools/gen_build.py)
+      - path: Gen/Names               # <loc>.lproj/InfoPlist.strings: the title the home screen shows (tools/app_names.py, plan item 314d)
+        buildPhase: resources
       - path: Gen/main/main.c
         compilerFlags: "-Dmain=dm_main"
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: $(DM_GAME_TITLE)
+        CFBundleDisplayName: $(DM_GAME_NAME)   # the game's id in ASCII (sideloading tools build the App ID from it); the title: Gen/Names
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         UILaunchScreen: {}                         # a declared launch screen: without one iPhones may run the app at a legacy compatibility size (d2r-mobile 21cf97b)

@@ -211,6 +211,22 @@ static id<MTLLibrary> lib_from_file(NSString *path, NSError **err) {
     dispatch_data_t d = dispatch_data_create(m, len, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ munmap(m, len); });
     return [g_dev newLibraryWithData:d error:err];
 }
+// The argument buffer's length from the reflection: 8 bytes an id, up to the highest (plan item 314b, after S2Arm 4c0bec5, Apache-2.0, written
+// anew; no binding is an array: none of the 31,415 reflections has one). Asking Metal at every load (newArgumentEncoderWithBufferIndex) stopped the
+// game whenever its answer differed, and S2Arm saw that call assert "bufferIndex 0 does not identify an argument buffer" once the Mac's Metal
+// compiler service had been killed under memory pressure. DM_NVN_ARGCHECK=1 still asks and stops on a mismatch (a diagnostic; the two agreed for
+// every shader so far). gfx/tests/t_arglen.m
+static NSUInteger shader_arg_len(NvShader *o) {
+    int max_aid = -1; for (int i = 0; i < o->rf.nb; i++) max_aid = MAX(max_aid, o->rf.b[i].aid);
+    NSUInteger n = (NSUInteger)(8 * (max_aid + 1));
+#ifndef DM_TEST_ARGLEN_FROM_METAL   // negative control of t_arglen only: Metal asked at every load, as before
+    static int chk = -1; if (chk < 0) { const char *e = getenv("DM_NVN_ARGCHECK"); chk = e && atoi(e) > 0; }
+    if (!chk) return n;
+#endif
+    id<MTLArgumentEncoder> ae = [o->fn newArgumentEncoderWithBufferIndex:o->rf.abi];
+    if (ae.encodedLength != n) MDIE("shader %s argument buffer layout anomaly: encodedLength=%lu maxAid=%d", o->key, (unsigned long)ae.encodedLength, max_aid);
+    return n;
+}
 static NvShader *shader_load(NSString *pc, int stage) {
     NSError *e = nil;
     NSString *lp = msl_lib_path([pc stringByAppendingString:@".metallib"]);
@@ -226,14 +242,7 @@ static NvShader *shader_load(NSString *pc, int stage) {
     if (stage == 1 && [j[@"alpha_test"] boolValue]) { o->alib = lib; o->fn = alpha_plain(lib, j[@"entry"]); }   // the alpha test epilogue: specialized with ALWAYS (alpha_fn)
     if (!o->fn) { MLOG("[red] shader %s: no function %s", pc.UTF8String, [[j[@"entry"] description] UTF8String]); return nil; }
     if ([j[@"vi_entry"] isKindOfClass:NSString.class]) { o->vi_lib = lib; o->vi_entry = j[@"vi_entry"]; for (NSNumber *l in j[@"vi_int"]) if (l.intValue >= 0 && l.intValue < 16) o->vi_mask |= 1u << l.intValue; }
-    if (o->rf.nb) {
-        o->ae = [o->fn newArgumentEncoderWithBufferIndex:o->rf.abi];
-        int max_aid = -1;
-        for (int i = 0; i < o->rf.nb; i++) max_aid = MAX(max_aid, o->rf.b[i].aid);
-        o->arg_len = o->ae.encodedLength;
-        if (o->arg_len != (NSUInteger)(8 * (max_aid + 1)) || (o->arg_len & 7))
-            MDIE("shader %s argument buffer layout anomaly: encodedLength=%lu maxAid=%d", o->key, (unsigned long)o->arg_len, max_aid);
-    }
+    if (o->rf.nb) o->arg_len = shader_arg_len(o);
     if (o->rf.has_c1) c1_store(o);
     return o;
 }
