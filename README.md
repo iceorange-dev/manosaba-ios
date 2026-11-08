@@ -157,7 +157,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   by interval arithmetic, the yield back-off start, the guest CPU power line and the BAHS shader entries; later Maxwell's min / max / clamp results for a NaN operand on
   every GPU (`precise::`), and the SDK's address-region node area cut and two SDK return types; then the store-decision records for ten
   attachments, page protection under the pool-slot lock, an ID's cached view dropped with its texture, the AudioOut notifier's disarm and Game
-  Mode off on the Mac; WaitSynchronization ended by the signal that woke it, credited in the code.
+  Mode off on the Mac; WaitSynchronization ended by the signal that woke it, credited in the code; the translator's split storage words read
+  whole.
 - **[tomodachi-native](https://github.com/kuosuko/tomodachi-native)** ([kuosuko](https://github.com/kuosuko), MIT), a fork of nxnative: the
   variant of the duplicated colour slot handling that keeps the slot the pass writes, the memory snapshots (`DM_MEMSNAP`), the FMZ multiply in
   the shader translator, the attachment copies for draws that sample what their pass draws and code options applied at load.
@@ -170,12 +171,13 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   the GPU memory budget and pool range checks, and the RomFS overlay findings for 60 fps; then the fault guard around snapshot copies, read-only
   rodata, waiting for a save at quit and one game at a time on the Mac, host calls on a per-thread host stack with the frame record back to
   the guest, the live command channel, the sead heap walk and list watch and the soak measurement; then no blending on integer colour outputs,
-  empty memory pools, virtual cores handed over by moving their owner and fewer pipeline guesses, ported by hand and credited in the code; and
-  the Mac shader libraries' minimum system version.
+  empty memory pools, virtual cores handed over by moving their owner and fewer pipeline guesses, ported by hand and credited in the code; the
+  Mac shader libraries' minimum system version; and shaders that differ only in control bytes the translator does not read translated and
+  packed once.
 - **[LASRecomp](https://github.com/peiikai/LASRecomp)** ([Peiikai](https://github.com/peiikai), MIT), a static recompilation of Link's Awakening:
   its rule that a texture is uploaded from guest memory until the GPU renders into it, behind the CPU-filled textures of Tears of the Kingdom,
   and the order of WaitSynchronization's checks; GPU time as the union of command buffers; the ring of lock / condition variable calls, the late
-  condition variable wait and the layout of its CI checks; its SHF / I2I instruction vectors.
+  condition variable wait and the layout of its CI checks; its SHF / I2I instruction vectors; HSETP2 `.H_AND`'s rule and its vectors.
 - **Single fixes from other ports**, credited in the code: [Kamisorara/d2r-mobile](https://github.com/Kamisorara/d2r-mobile) (controller face
   buttons by the printed letter, also upstream's), [jiangjifeng/nxnative](https://github.com/jiangjifeng/nxnative) (scaled vertex formats),
   [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) and [lordran-native](https://github.com/Nishikori-Yui/lordran-native) (sampler LOD

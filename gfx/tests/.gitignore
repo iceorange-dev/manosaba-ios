@@ -5,3 +5,4 @@ t_*
 *.dSYM/
 !t_*.py
 !t_fpcontract.metal
+!t_wide_loads.metal

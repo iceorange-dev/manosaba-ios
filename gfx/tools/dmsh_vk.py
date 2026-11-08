@@ -10,12 +10,14 @@ kept as SPIR-V (Vulkan takes it as the translator writes it for TargetApi.Vulkan
   - every module checked by spirv-val from the NDK (Vulkan 1.3).
 Usage: DM_GAME=<id> dmsh_vk.py <capture dir> <out bundle> [key...]     (DM_ROOT the workspace; XLATE the translator; J jobs)
 Bundle (read by gfx/nvn/vk/vk_shader.c): "DMVK", u32 version 1, u32 count, then count entries {u64 key, u32 stage (0 vs, 1 ps, 5 cs), u32 spv_off,
-u32 spv_len, u32 refl_off, u32 refl_len} sorted by key, then the blobs, each at a 4-byte boundary. refl: u16 nb, u16 nv, u16 nout, u16 c1_len,
+u32 spv_len, u32 refl_off, u32 refl_len} sorted by key, then the blobs, each at a 4-byte boundary and each stored once (entries of shaders the
+translator cannot tell apart point at the same bytes; plan item 311b). refl: u16 nb, u16 nv, u16 nout, u16 c1_len,
 u16 local[3], u16 flags, then nb × {u8 kind, u8 dtype, u16 binding, u16 count, i16 reg, i16 sreg, u8 rw, u8 ty, u16 off}, nv × {u8 loc, u8 ct},
 nout × {u8 loc, u8 ct}, c1 bytes (a texture's off: its declared dimension, dim_of). Kinds: 1 cbuf, 2 support, 3 c1, 4 c0, 5 c2, 6 sbuf, 7 tex, 8 img, 9 tbuf, 10 a texture sampled through
 image slot reg; dtype: VkDescriptorType."""
-import ast, concurrent.futures as cf, json, os, re, struct, subprocess, sys, tempfile, hashlib, collections
+import ast, concurrent.futures as cf, json, os, re, shutil, struct, subprocess, sys, tempfile, hashlib, collections
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE); import dmsh_chain   # (its XLATE_DEBUG refusal, through job_for)
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 NDK = os.environ.get('NDK', '/opt/homebrew/share/android-ndk')
 SPIRV_VAL = os.path.join(NDK, 'shader-tools', 'darwin-x86_64', 'spirv-val')
@@ -141,10 +143,10 @@ def pack_refl(binds, vin, vout, c1, local):
 def game_ns(gid):
     """dmsh_build.py's job_for and decode_tex, with the game's c[2] layout and depth mode (and img_slot's image table set)"""
     C2, DEPTH = load_game(gid)
-    ns = {'os': os, 'struct': struct, 're': re, 'C2': C2, 'DEPTH': DEPTH, 'stage_of': {},
+    ns = {'os': os, 'struct': struct, 're': re, 'sys': sys, 'json': json, 'hashlib': hashlib, 'shutil': shutil, 'dmsh_chain': dmsh_chain, 'C2': C2, 'DEPTH': DEPTH, 'stage_of': {},
           'TEX_BASE': C2['tex'][0], 'TEX_END': C2['tex'][0] + 8 * C2['tex'][1], 'SAMP_BASE': C2['samp'][0], 'SAMP_END': C2['samp'][0] + 8 * C2['samp'][1],
           'IMG_BASE': C2['img'][0], 'IMG_END': C2['img'][0] + 8 * C2['img'][1]}
-    from_dmsh_build(['job_for', 'decode_tex'], ns)
+    from_dmsh_build(['job_for', 'decode_tex', 'xlate_identity', 'xlate_share'], ns)
     IMG[:] = [ns['IMG_BASE'], ns['IMG_END']]
     return ns
 
@@ -153,11 +155,14 @@ def pack_bundle(shaders):
     """[(key, stage, spv, refl)] → the bundle's bytes (sorted by key)"""
     shaders = sorted(shaders)
     stride = 32 if os.environ.get('T_DMVK_BROKEN') == 'stride' else struct.calcsize(ENT)   # (the broken variant of t_dmsh_vk.py: the first writer's 32)
-    head = b'DMVK' + struct.pack('<II', 1, len(shaders)); at = len(head) + stride * len(shaders); ents, blobs = b'', b''
+    head = b'DMVK' + struct.pack('<II', 1, len(shaders)); at = len(head) + stride * len(shaders); ents, blobs, seen = b'', bytearray(), {}
+    def put(b):   # a blob's offset; one the bundle holds already is not stored again (plan item 311b: twins' modules and reflections)
+        if b in seen and os.environ.get('T_DMVK_BROKEN') != 'dup': return seen[b]
+        seen[b] = at + len(blobs); blobs.extend(b + bytes(-len(b) % 4)); return seen[b]
     for k, st, spv, refl in shaders:
-        so = at + len(blobs); blobs += spv + bytes(-len(spv) % 4); ro = at + len(blobs); blobs += refl + bytes(-len(refl) % 4)
+        so = put(spv); ro = put(refl)
         ents += struct.pack(ENT, k, st, so, len(spv), ro, len(refl))
-    return head + ents + blobs
+    return head + ents + bytes(blobs)
 
 def read_bundle(b):
     """The bundle's bytes → {key: (stage, spv, refl)}, as vk_shader.c reads them"""
@@ -181,16 +186,18 @@ def main():
         for k, (st, rec) in recs.items():
             jobs[k], c1s[k] = ns['job_for'](k, rec, w)
             jobs[k]['subgroup'] = SUBGROUP; jobs[k]['gather_bias'] = GATHER_BIAS   # (Program.cs; the Metal chain's jobs carry neither)
-        keys = sorted(jobs); chunks = [keys[i::nj] for i in range(nj)]
+        keys = sorted(jobs); errs = {}
+        tl, spread = ns['xlate_share'](keys, jobs, w, errs)   # one translation per identity (dmsh_build.py xlate_identity, plan item 311b)
+        chunks = [tl[i::nj] for i in range(nj)]
         def xl(ch):
             jp = os.path.join(w, f'job_{abs(hash(ch[0]))}.json'); json.dump([jobs[k] for k in ch], open(jp, 'w'))
             return subprocess.run([XLATE, jp, w], capture_output=True, text=True, env=env)
-        errs = {}
         with cf.ThreadPoolExecutor(nj) as ex:
             for r in ex.map(xl, [c for c in chunks if c]):
                 for ln in r.stderr.splitlines():
                     m = re.match(r'\[red\] (\w+): (.*)', ln)
                     if m: errs[m.group(1)] = m.group(2)[:160]
+        shared = spread()
         def fin(k):
             st = recs[k][0]; sp = os.path.join(w, k + '.spv')
             if not os.path.exists(sp): return k, 'translation failed', errs.get(k, 'no spv'), None
@@ -204,7 +211,7 @@ def main():
     ok = sorted((r[0], r[3]) for r in res if r[1] == 'ok')
     tmp = out + '.tmp'; open(tmp, 'wb').write(pack_bundle([(int(k, 16), STAGE_NO[st], spv, refl) for k, (st, spv, refl) in ok])); os.replace(tmp, out)
     stc = collections.Counter(r[1] for r in res)
-    print(f'{out}: {len(ok)} shaders, {os.path.getsize(out) / 1e6:.1f} MB' + ''.join(f'; {k} {v}' for k, v in stc.items() if k != 'ok'))
+    print(f'{out}: {len(ok)} shaders ({shared} with a twin\'s translation), {os.path.getsize(out) / 1e6:.1f} MB' + ''.join(f'; {k} {v}' for k, v in stc.items() if k != 'ok'))
     for lvl in [k for k in stc if k != 'ok']:
         for e, n in collections.Counter(r[2] for r in res if r[1] == lvl).most_common(6): print(f'  [{lvl}] {n:5d}  {e}')
     return 0 if ok else 1

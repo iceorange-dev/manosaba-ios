@@ -3,6 +3,16 @@
 static NSMutableDictionary<NSString *, NSString *> *g_shmap;
 static NSString *g_shmap_path, *g_msl_dir;
 static NSMutableDictionary<NSString *, NSString *> *g_fmap;   // functional key → the first key of the map with it (the map's third column, plan item 169)
+// Libraries an app packs once (gfx/tools/shader_pack.py, plan item 311b): <library>\t<the library of the same bytes packed in its place>, the
+// directory's twins.tsv (none on the Mac, whose build directory has every file). A library is opened by msl_lib_path
+static NSMutableDictionary<NSString *, NSString *> *g_twins;
+static NSString *msl_lib_path(NSString *name) {
+    NSString *t = nil;
+#ifndef DM_TEST_TWINS_IGNORED   // negative control of t_shmap only: the table not read
+    t = g_twins[name];
+#endif
+    return [g_msl_dir stringByAppendingPathComponent:t ?: name];
+}
 // Shader stage map (gfx/tools/shmap_from_capture.py): Switch shader key → stage; the shaders themselves are translations of the game's own
 // Switch shaders built offline by gfx/tools/dmsh_build.py (<key>_b.metallib + reflection JSON)
 static void shmap_load(void) {
@@ -23,6 +33,11 @@ static void shmap_load(void) {
     const char *m = getenv("DM_MSL_DIR");
     // Library directory = <DM_MSL_DIR or default cache>/b-<translation chain version>: the version comes from this source tree's dmsh_chain.h (tools/dmsh_chain.py); a host built from an old source tree only accepts libraries of the old version
     g_msl_dir = [NSString stringWithFormat:@"%@/b-%s", m ? @(m) : [@(getenv("DM_ROOT") ?: getenv("HOME")) stringByAppendingPathComponent:getenv("DM_ROOT") ? @"build/cache/metal_shader_cache" : @"dm-work/build/cache/metal_shader_cache"], DMSH_CHAIN];
+    NSString *tw = [NSString stringWithContentsOfFile:[g_msl_dir stringByAppendingPathComponent:@"twins.tsv"] encoding:NSUTF8StringEncoding error:nil];
+    for (NSString *ln in tw ? [tw componentsSeparatedByString:@"\n"] : @[]) {
+        NSArray *c = ln.length && ![ln hasPrefix:@"#"] ? [ln componentsSeparatedByString:@"\t"] : nil;
+        if (c.count == 2) { if (!g_twins) g_twins = [NSMutableDictionary dictionary]; g_twins[c[0]] = c[1]; }
+    }
     if (![NSFileManager.defaultManager fileExistsAtPath:g_msl_dir]) MLOG("[red] shader library directory %s does not exist: translation chain version %s of this source tree has not been packaged yet (gfx/tools/dmsh_build.py)", g_msl_dir.UTF8String, DMSH_CHAIN);
     NSString *cp = [[path stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"c1_full.tsv"];   // Same directory as the mapping table (Mac: gfx/nvn; iOS: dm/ inside the App, copied along by run.sh)
     NSString *ct = cp ? [NSString stringWithContentsOfFile:cp encoding:NSUTF8StringEncoding error:nil] : nil;
@@ -34,7 +49,8 @@ static void shmap_load(void) {
         g_c1_full_valid = 1; g_c1_full = [NSMutableSet set];
         for (NSString *line in [ct componentsSeparatedByString:@"\n"]) if (line.length && ![line hasPrefix:@"#"]) [g_c1_full addObject:[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]];
     }
-    MLOG("shader route B (translated from the original Switch shaders): map has %lu entries (%s), metallib directory %s", (unsigned long)g_shmap.count, path.UTF8String, g_msl_dir.UTF8String);
+    MLOG("shader route B (translated from the original Switch shaders): map has %lu entries (%s), metallib directory %s%s", (unsigned long)g_shmap.count, path.UTF8String, g_msl_dir.UTF8String,
+         g_twins.count ? [NSString stringWithFormat:@" (%lu libraries packed once, twins.tsv)", (unsigned long)g_twins.count].UTF8String : "");
     warm_start();
 }
 
@@ -197,7 +213,7 @@ static id<MTLLibrary> lib_from_file(NSString *path, NSError **err) {
 }
 static NvShader *shader_load(NSString *pc, int stage) {
     NSError *e = nil;
-    NSString *lp = [NSString stringWithFormat:@"%@/%@.metallib", g_msl_dir, pc];
+    NSString *lp = msl_lib_path([pc stringByAppendingString:@".metallib"]);
     id<MTLLibrary> lib = lib_from_file(lp, &e);
     NSData *jd = [NSData dataWithContentsOfFile:[NSString stringWithFormat:@"%@/%@.json", g_msl_dir, pc]];
     NSDictionary *j = jd ? [NSJSONSerialization JSONObjectWithData:jd options:0 error:nil] : nil;

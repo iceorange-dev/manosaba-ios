@@ -144,7 +144,7 @@ static NvShader *warm_shader(NSMutableDictionary<NSString *, NvShader *> *dict, 
     // The player's list is kept across translation chain versions: a row whose library this one does not have (Tears of the Kingdom's list has 240
     // such shaders from its first runs) is skipped and counted, not reported in red like a shader the game asks for
     if ([g_warm_missing containsObject:key]) return nil;
-    if (access([NSString stringWithFormat:@"%@/%@.metallib", g_msl_dir, key].fileSystemRepresentation, F_OK)) {
+    if (access(msl_lib_path([key stringByAppendingString:@".metallib"]).fileSystemRepresentation, F_OK)) {
         if (!g_warm_missing) g_warm_missing = [NSMutableSet set];
         [g_warm_missing addObject:key]; return nil;
     }

@@ -5,7 +5,9 @@ storage-image capabilities added only when it has an image of no declared format
 it, the c[2] handles of manosaba's layout decoded (dmsh_build.py's decode_tex, as the bundle tool takes it) to a texture slot and a separate
 sampler slot, the declared dimensions. When the workspace has the game's bundle, every entry of it is a SPIR-V module with a reflection that
 reads, and the bindings of a sample of its modules (40 of each stage) are their reflection's. T_DMVK_BROKEN=stride (the first writer: offsets
-counted with 32-byte entries): 2 fail; T_DMVK_BROKEN=shift2 (a pixel shader's bindings moved again in its reflection, as at first): 1 fails."""
+counted with 32-byte entries): 2 fail; T_DMVK_BROKEN=shift2 (a pixel shader's bindings moved again in its reflection, as at first): 1 fails.
+Twins (plan item 311b: shaders the translator cannot tell apart, the same module and reflection under two keys) are stored once, each key reading
+its bytes; T_DMVK_BROKEN=dup (each stored again): 1 fails."""
 import json, os, struct, sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 sys.path.insert(0, os.path.join(ROOT, 'gfx', 'tools')); import dmsh_vk as dv
@@ -28,6 +30,11 @@ check('the bundle reads back: each shader\'s SPIR-V and reflection where its ent
 check('entries of 28 bytes (vk_shader.c\'s packed ent): the first blob right after them', struct.calcsize(dv.ENT) == 28 and ents[0][2] == 12 + 28 * 3, f'first blob at {ents[0][2]}')
 check('entries sorted by key (vk_shader.c searches them by halves), every blob at a 4-byte boundary',
       [e[0] for e in ents] == [0x10, 0x20, 0x30] and all(e[2] % 4 == 0 and e[4] % 4 == 0 for e in ents))
+tw = shaders + [(0x40, 1, module(ins(17, 1)), b'\x01\x02\x03'), (0x50, 0, module(ins(17, 1), ins(17, 2)), b'\x09' * 17)]   # twins of 0x30 and 0x10
+bt = dv.pack_bundle(tw); rt = dv.read_bundle(bt); et = {e[0]: e for e in (struct.unpack_from(dv.ENT, bt, 12 + 28 * i) for i in range(5))}
+check('twins stored once: their entries point at the first one\'s bytes, each key reading its module and reflection [T_DMVK_BROKEN=dup]',
+      all(rt.get(k) == (st, spv, refl) for k, st, spv, refl in tw) and et[0x40][2:] == et[0x30][2:] and et[0x50][2:] == et[0x10][2:] and len(bt) == len(b) + 2 * 28,
+      f'{len(bt)} bytes against {len(b)} + 56')
 
 # ---- patch_module ----
 OP_DECORATE, DEC_BINDING, OP_TYPE_IMAGE, OP_CAPABILITY = 71, 33, 25, 17

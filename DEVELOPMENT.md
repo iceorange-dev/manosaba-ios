@@ -348,8 +348,8 @@ and 297 in batch 142, the user's order: 301 next):
   docs/sources.md) none keeps pools at their addresses on Qualcomm's driver; the 840's has `VK_EXT_map_memory_placed`, so ours does, as on Metal.
   301e2c what neither manosaba's title, prologue nor first trial needed (each a red line when met; for the next game and Tears of the
   Kingdom): texel buffers (null descriptors now), line loops, clears with a channel mask (all channels now), storage buffers off 64-byte
-  alignment (bound from the boundary below: needs the translator told 64 and HasUnalignedStorageBuffer, a change of the chain version, with
-  64g), storage buffers addressed from a uniform slot (the Metal backend's SBUFU); the Adreno findings to check for: a varying the next stage
+  alignment (bound from the boundary below: needs the translator told 64 and HasUnalignedStorageBuffer, a change of the chain version),
+  storage buffers addressed from a uniform slot (the Metal backend's SBUFU); the Adreno findings to check for: a varying the next stage
   reads that this one does not write (pipeline creation fails), more than about 700 draws in one command buffer (nx2android cuts at 128),
   LRZ across passes, subgroup instructions in called functions (the 750-799 compiler), subgroups (64 lanes, none in vertex shaders on the
   840: the warp32 rewrite), 284's items.
@@ -392,8 +392,6 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
   (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
   the on-screen pad's redraw (upstream 7b62d9c).
-- 311b the next change of the translation chain after batch 149's (with 64g; every shader built again): split storage-word loads as one packed
-  load (nxnative 1b9fbea), one translation for shaders that differ only in control bytes the translator does not read (MacNativeGames fb9b734).
 - 313 decisions to measure again: the 1 GiB pool buffer cap (its reason, MacNativeGames' kernel-panic theory, was withdrawn in b3bb2c0), early
   fragment tests on Tears of the Kingdom's 8f470f5ce5864df7 (nxnative 9ced2c3: replays differ with the attribute), the pass-end barrier (187
   removed only the encoder-start one; nxnative PR #1572), the spin before short waits on Android (mleo2003 77f6586), pre-rotation on portrait
@@ -404,9 +402,8 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   view-depth sites (main+0x1ee8424 and copies), far plane main+0x628c30, FOV load main+0x628c3c, sun shadow map size main+0x683604.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
-64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
-its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN. Also [docs/sources.md § Port when a game needs
-it](docs/sources.md#port-when-a-game-needs-it).
+64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
+Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
 
 ## Plan items from 260
 
@@ -1369,3 +1366,28 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   same scene as batch 148's (the differences within two runs of one chain). `work/scripts/batch_fast.sh` and `run_pro.sh` now hold a power
   assertion while they run (`caffeinate -i -s -w`; the headless host takes none, the windowed one holds App Nap off, 127). manosaba's s3300 was
   dark in the batch for the same reason: run again awake, its four shots as batch 148's (s3300 identical).
+- [x] batch 150 · 311b and 64g: the translation chain's next change from the eleventh review, chain 5285ca7bad0f → ce89a37d8939, every shader
+  translated again. Split storage words read whole (`gfx/tools/msl_helpers.py` `wide_loads`, run by `dmsh_build.py` finish; nxnative 1b9fbea, MIT,
+  written anew): neighbouring 32-bit reads of one read-only storage buffer from one root, starting on its 16-byte base, become one `packed_uint2` /
+  `packed_uint3` / `packed_uint4` read, never across a store, a texture write, a barrier, an atomic, a block's edge, a jump or an assignment of a
+  variable the offsets come from; 614 of Tears of the Kingdom's shaders and 17 of manosaba's (nxnative counted 613 in Tears of the Kingdom), every
+  other MSL file as the chain before's (`gfx/tests/t_wide_loads.m` 5 on the GPU, bit for bit; `msl_helpers.py --wide-across`, runs reaching across
+  writes and assignments, 3 fail). One translation for shaders that differ only in control bytes the translator does not read (MacNativeGames
+  fb9b734, facts): a job's translation identity is its code and every field but the key (`dmsh_build.py` `xlate_identity` / `xlate_share`, also
+  `gfx/tools/dmsh_vk.py`): of the 28,675 + 2,740 jobs 25,347 + 1,299 translated, 3,328 + 1,441 taking a twin's; their libraries come out byte for
+  byte the same but one of Tears of the Kingdom's (its per-key padding), and the Vulkan bundle stores identical blobs once: 50.8 → 32.5 MB, built in
+  13 s instead of 24 (`tools/tests/t_dmsh_vk.py` 14, `T_DMVK_BROKEN=dup` 1 fails). An app now carries only its game's libraries
+  (`gfx/tools/shader_pack.py`, `ios/run.sh`, `tools/mac_app.sh`): both games' profiles name one chain directory, 72,531 files / 615.5 MB, and
+  manosaba's IPA carried Tears of the Kingdom's 28,652 libraries (447 MB); now its map's 4,842 files, 24.1 MB, a library of the same bytes as
+  another packed once (1,534; `twins.tsv`, read by the host's `msl_lib_path` in `shaders.inc`, `border_warm.inc`, `tile_merge.inc`), 59 MB as an IPA
+  (Tears of the Kingdom's 61,702 files, 536.0 MB, 4,453 once). `ios/tools/shader_check.py` takes a twin as present (`tools/tests/t_shader_pack.py`
+  6, `T_SHADER_PACK_BROKEN=all` 3 fail; `gfx/tests/t_shmap.m` 7, `-DDM_TEST_TWINS_IGNORED` 1 fails). manosaba headless on the Mac from its packed
+  directory: no red line, its four shots as the batch's; the same directory without `twins.tsv`: 43 red lines (shaders that do not load). 64g:
+  HSETP2 `.H_AND` combines each half with the predicate first, then ANDs the two, the second result its complement (`InstEmitFloatComparison.cs`;
+  LASRecomp d4c2ff6, MIT; yuzu's rule; `gfx/tests/t_xlate_ops.py` 57, the translator before fails 2); no shader of either game changed. 200:
+  `Program.cs`'s comment corrected and `XLATE_DEBUG=0` refused (`dmsh_build.py`, `dmsh_chain.py`). Fixed on the way: `work/scripts/batch_fast.sh`
+  waited for its own caffeinate, which waits for the script (the batch's first run stood still 77 minutes); the Metal 3 test directory gets
+  `t_wide_loads.metal`. gfx 177 / 177 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the
+  phone's tests, manosaba headless 40 s (no red line, 60 fps from frame 600) and the app 40 s (no red line, 60 fps, s1800 as batch 148's). Smoke:
+  Tears of the Kingdom's two red lines as before, its shots the same scenes as batch 148's (s1300 a moment apart), GPU p50 7.0 ms against batch
+  148's 7.1 (frames 1500-2100; within two runs' spread); manosaba no red line, its shots as batch 148's.

@@ -244,7 +244,9 @@ def job_for(key, rec, w):
     c1 = rec[0x38 + c1o:0x38 + c1t]
     if stage != 'cs': code = code[0x30:]
     cp = os.path.join(w, key + '.bin'); open(cp, 'wb').write(code)
-    # Translation options (dmsh_xlate/Program.cs); relaxed precision is on by default (last-bit GPU float differences do not reach game state)
+    # Translation options (dmsh_xlate/Program.cs); relaxed precision is on by default (last-bit GPU float differences do not reach game state).
+    # XLATE_DEBUG=0 is refused here too, where the Vulkan bundle (dmsh_vk.py) takes its jobs (dmsh_chain.py, plan item 200)
+    if os.environ.get('XLATE_DEBUG', '1') == '0': sys.exit(dmsh_chain.XLATE_DEBUG_REFUSED)
     j = {'key': key, 'stage': stage, 'code': cp, 'tex': {}, 'img': {}, 'attr': {}, 'fout': {}, 'c1': c1.hex(), 'c2': {'tex': C2['tex'], 'img': C2['img']}, 'depth': DEPTH,
          'debug': os.environ.get('XLATE_DEBUG', '1') != '0', 'reduced': os.environ.get('XLATE_REDUCED', '1') == '1'}
     # Compute thread group size: control section +0x748 / +0x74c / +0x750 (u32 x / y / z; matches Unity's threadGroupSize metadata for every kernel checked)
@@ -256,6 +258,29 @@ def job_for(key, rec, w):
     if stage == 'ps': j['early_z'] = bool(rec[ci + 0x718] & 1)
     j['pc_missing'] = True   # texture / attribute / output type queries are answered with the translator's defaults
     return j, c1
+
+def xlate_identity(job):
+    """What the translator reads of a job (plan item 311b, after MacNativeGames fb9b734's finding, facts: 3,416 of Tears of the Kingdom 1.4.3's 28,771
+    shaders differ from another only in control bytes no translation reads, nearly all at +0x7d0..+0x7df): its code and every field but the key, the
+    code file's name and the padding (applied after the translation, per key). Jobs with one identity get one translation (wave, dmsh_vk.py)"""
+    h = hashlib.sha256(open(job['code'], 'rb').read())
+    h.update(json.dumps({k: v for k, v in job.items() if k not in ('key', 'code', 'pad_want')}, sort_keys=True).encode())
+    return h.hexdigest()
+
+def xlate_share(keys, jobs, w, xerr):
+    """keys → (the keys to translate, a function that gives each other key its first twin's output under its own name, after the translation)"""
+    first, twin = {}, {}
+    for k in keys:
+        i = xlate_identity(jobs[k])
+        if i in first: twin[k] = first[i]
+        else: first[i] = k
+    def spread():
+        for k, c in twin.items():
+            if c in xerr: xerr[k] = xerr[c]
+            for ext in ('.spv', '.res.json'):
+                if os.path.exists(os.path.join(w, c + ext)): shutil.copyfile(os.path.join(w, c + ext), os.path.join(w, k + ext))
+        return len(twin)
+    return [k for k in keys if k not in twin], spread
 
 def raster_facts(stage, src):
     """Static facts needed for the runtime proof that the load can be skipped (full-coverage first draw) (nvn_mtl.m first_draw_covers):
@@ -548,6 +573,8 @@ def finish(key, w, j, c1):
     if inl != src: res['notes'].append('NoContraction helpers inlined')
     inl, nprec = msl_helpers.precise_minmax(inl)   # min / max / clamp with Maxwell's results for a NaN operand (msl_helpers.py, plan item 260)
     if nprec: res['notes'].append(f'fast:: min / max / clamp as precise:: ({nprec})')
+    inl, nwide = msl_helpers.wide_loads(inl)   # the translator's split storage words read whole (msl_helpers.py, plan item 311b)
+    if nwide: res['notes'].append(f'storage words read whole ({nwide})')
     if iq or inl != src: src = inl; open(msl, 'w').write(src)
     pad = []
     if j['stage'] == 'vs' and j.get('pad_want'):   # outputs the paired pixel shaders read but this one does not write get (0, 0, 0, 1) (see vs_pad)
@@ -599,6 +626,7 @@ for _spec in [cache_root + ('=' + os.path.dirname(IOSOUT) if IOSOUT else '')] + 
             for _ln in MTL.fill(os.path.join(_mac, _b), os.path.join(_ios, _b) if _ios else None): print(_ln, flush=True)
 jobs, c1s = {}, {}
 digests, rule_fps, cache_reasons, cache_hits = {}, {}, {}, set()
+XL_STATS = collections.Counter()
 xerr = {}
 def wave(wkeys):
     """Look up, translate and finish one set of keys. Vertex shaders go in a second wave, after the pixel shaders they are padded for (vs_pad)
@@ -618,7 +646,8 @@ def wave(wkeys):
             if pw: jobs[key]['pad_want'] = pw
             if fo: jobs[key]['fout'] = dict(fo)
     misses = [key for key in wkeys if key not in cache_hits]
-    chunks = [misses[i::NJ] for i in range(NJ)]
+    tl, spread = xlate_share(misses, jobs, w, xerr)   # one translation per identity (xlate_identity); each key is finished on its own
+    chunks = [tl[i::NJ] for i in range(NJ)]
     def xl(ch):
         jp = os.path.join(w, f'job_{abs(hash(ch[0]))}.json'); json.dump([{k_: v for k_, v in jobs[k].items() if k_ != 'pad_want'} for k in ch], open(jp, 'w'))
         return subprocess.run([XLATE, jp, w], capture_output=True, text=True)
@@ -627,6 +656,7 @@ def wave(wkeys):
         for ln in r.stderr.splitlines():
             m = re.match(r'\[red\] (\w+): (.*)', ln)
             if m: xerr[m.group(1)] = m.group(2)[:160]
+    XL_STATS['shared'] += spread(); XL_STATS['translated'] += len(tl)
     def fin(key):
         if key in cache_hits:
             refl = json.load(open(os.path.join(out, key + '_b.json')))
@@ -643,7 +673,7 @@ shutil.rmtree(w, ignore_errors=True)
 st = collections.Counter(r[1] for r in res)
 print(f'shaders {len(res)}: ok {st["ok"]}' + ''.join(f', {k} {v}' for k, v in st.items() if k != 'ok'))
 print(MTL.summary())
-print(f'shader cache: {PRE_STATS["hit"]} hits, {PRE_STATS["miss"]} rebuilt')
+print(f'shader cache: {PRE_STATS["hit"]} hits, {PRE_STATS["miss"]} rebuilt; translated {XL_STATS["translated"]}, {XL_STATS["shared"]} taking a twin\'s translation (xlate_identity)')
 for reason in ('new key', 'rule changed', 'code fingerprint changed: everything rebuilt'):
     if PRE_STATS[reason]: print(f'  {reason} {PRE_STATS[reason]}')
 print(f'variant cache: {BF_STATS["generated"]} generated, {BF_STATS["hit"]} hits, {BF_STATS["miss"]} rebuilt, {BF_STATS["compile"]} compiled')

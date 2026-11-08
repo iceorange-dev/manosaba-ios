@@ -8,7 +8,8 @@
 #        dmsh_chain.py --header        rewrite nvn/dmsh_chain.h (after changing any file above)
 #        dmsh_chain.py --check-tools   check the installed tools against the lock file; exit 1 on a mismatch
 #        dmsh_chain.py --update-lock   rewrite the lock file from the installed tools (after changing Ryujinx / spirv-cross / Xcode; commit it)
-# Environment: XLATE_DEBUG / XLATE_REDUCED (as in dmsh_build.py, default 1 / 1; other options give another V, which the host does not load)
+# Environment: XLATE_DEBUG / XLATE_REDUCED (as in dmsh_build.py, default 1 / 1; other options give another V, which the host does not load).
+# XLATE_DEBUG=0 is refused (plan items 200 and 64g): the translator's optimizer then loses call arguments and else-if bodies (Program.cs)
 import os, sys, hashlib, subprocess
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # Workspace root (game files, build outputs and run artifacts are all under it)
 HERE = os.path.dirname(os.path.abspath(__file__)); GFX = os.path.dirname(HERE); HOME = os.path.expanduser('~')
@@ -17,7 +18,11 @@ FILES = ['tools/dmsh_chain.py', 'tools/dmsh_build.py', 'tools/dmsh_fetch.py', 't
 LOCK = os.path.join(HERE, 'dmsh_chain.lock'); HEADER = os.path.join(GFX, 'nvn/dmsh_chain.h')
 XLATE_DIR = os.path.dirname(os.environ.get('XLATE', f'{DM_ROOT}/build/gfx/dmsh_xlate/dmsh_xlate'))
 
+XLATE_DEBUG_REFUSED = ('[red] XLATE_DEBUG=0 is refused: without the translator\'s debug mode its optimizer gives Tears of the Kingdom 306 failures '
+                       '(call arguments) and 4,175 modules with unreachable else-if bodies (plan item 200)')
+
 def options():
+    if os.environ.get('XLATE_DEBUG', '1') == '0': sys.exit(XLATE_DEBUG_REFUSED)
     return 'debug=%s reduced=%s' % (os.environ.get('XLATE_DEBUG', '1') != '0', os.environ.get('XLATE_REDUCED', '1') == '1')
 
 def version():

@@ -622,9 +622,10 @@ Tier 4, large:
   - [ ] 64f tessellation through a Metal 3 command buffer between Metal 4 submissions. With the next game that tessellates: neither has a
     tessellation stage (control +0x714 of every capture is 0, 1 or 5: TotK 28,652 + 24,371, manosaba 2,740), ProgramSetShaders already reports one
     red, and it needs the translator's hull / domain stages as well
-  - [ ] 64g HSETP2 `.H_AND` as LASRecomp and yuzu (5 vectors); translator call arguments kept local. With the next change of the translation
-    chain: both are translator changes, so the chain version moves and every shader of both games is translated again (Tears of the Kingdom's
-    25,320 and manosaba's 1,299, and the iOS libraries), while neither game has the instruction (the review counted 0 uses)
+  - [x] batch 150 · 64g HSETP2 `.H_AND` as LASRecomp and yuzu: each half combined with the predicate first, then the two ANDed, the second
+    result its complement (`InstEmitFloatComparison.cs`; `gfx/tests/t_xlate_ops.py` 5 vectors, the translator before fails 2); translator call
+    arguments: `XLATE_DEBUG=0` refused (item 200). With 311b's change of the translation chain; neither game has the instruction (no shader of
+    either changed)
   - [x] batch 54 · 64h symbol resolution as Horizon's rtld (the SystemEvent: 64h2), by the ISC-licensed oss-rtld's rules: hidden / protected
     references bind in their own module, default ones to the first module in the order main, subsdk0-9, sdk that defines the name non-locally
     (`bind_sym`; it differs from ours only in the sdk's typeinfo and vtables: 801 manosaba, 782 TotK). Both games ran the same, so it is the
@@ -898,7 +899,8 @@ Correctness, small:
   Any change there gives a new chain version (dmsh_chain.py hashes dmsh_build.py, Program.cs and the translator), and such a chain is not loaded:
   the host loads only the default options' version (dmsh_chain.py: "other options give another V, which the host does not load"), so the
   trap takes a change in two places. The comment's correction and a refusal of XLATE_DEBUG=0 (or nxport's 0001 / 0002) wait for the next chain
-  rebuild made for another reason
+  rebuild made for another reason. Batch 150 (311b's chain change): `Program.cs`'s comment corrected, `XLATE_DEBUG=0` refused by `dmsh_build.py`
+  and `dmsh_chain.py` (exit with the reason; the translator's tests may still send the option)
 - [x] batch 71 · 201 the rewriter's red zone: for a post-index pop larger than 16, `site_plain`'s save at −112 lies past Apple's 128 bytes below
   the new sp until the restore (`ldp x18, x19, [sp], #0x40`: −176; upstream 373b402 is the Android form, no save below sp at all). None of our
   modules has one (the games' sdk pops by 16: −128). `verify/equiv.py` now refuses a patched side that touches memory more than 128 bytes below

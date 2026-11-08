@@ -107,7 +107,7 @@ static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const 
     NSString *base = [NSString stringWithFormat:@"%.*s", (int)(kl > 2 ? kl - 2 : kl), fs->key];
     id<MTLLibrary> lib = g_bf_lib_cache[base];
     if (!lib) {
-        NSError *e = nil; NSString *path = [NSString stringWithFormat:@"%@/%@_bf.metallib", g_msl_dir, base];
+        NSError *e = nil; NSString *path = msl_lib_path([base stringByAppendingString:@"_bf.metallib"]);
         lib = lib_from_file(path, &e);
         if (!lib) MLOG("[red] failed to load readable tile version %s: %s", path.UTF8String, e.localizedDescription.UTF8String);
         else g_bf_lib_cache[base] = lib;

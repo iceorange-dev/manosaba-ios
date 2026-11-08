@@ -36,7 +36,7 @@ if [ -n "$M3" ]; then
 fi
 [ -d "$MSLROOT/b-$V" ] || { echo "[red] no shaders at $MSLROOT/b-$V"; exit 2; }
 if [ -n "$LINK" ]; then echo "msl=$MSLROOT" >> "$RES/paths.txt"
-else mkdir -p "$RES/msl/b-$V"; rsync -a --include='*.metallib' --include='*.json' --exclude='*' "$MSLROOT/b-$V/" "$RES/msl/b-$V/"; fi
+else python3 "$DM/gfx/tools/shader_pack.py" "$(ws shader_map)" "$MSLROOT/b-$V" "$RES/msl/b-$V" "$DM/games/$GAME/fout.tsv" > /dev/null || exit 2; fi   # the game's libraries only (plan item 311b)
 [ -s "$RES/paths.txt" ] || rm -f "$RES/paths.txt"
 VER=${DM_MAC_VERSION:-1.0}; BUILD=${DM_MAC_BUILD:-$(date +%m%d%H%M)}
 echo "version $VER build $BUILD product $(basename "$P") commit $(git -C "$DM" rev-parse --short HEAD 2>/dev/null || echo unknown)" > "$RES/build.txt"

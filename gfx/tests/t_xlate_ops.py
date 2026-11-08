@@ -11,6 +11,9 @@ t_xlate_run.m and compared with the value worked out from the instruction's defi
   Kingdom's shaders use the form): both words come from the address as it was. Bank 3 holds 8, 0x11111111, 0x22222222, 4, 0x44444444 at words 0-4,
   so c[3][8 + 4] is 4 and the high word 0x44444444; a translation that overwrote the address first would read the high word at 4 + 4 + 4: 4 again.
   DM_TEST_LDC_BUG=1 runs that wrong order instead (two 32-bit loads, the second from the address register after the first wrote it): 1 fails.
+  HSETP2 .H_AND: LASRecomp d4c2ff6's five vectors (MIT; yuzu's rule, plan item 64g): each half is combined with the predicate, then the two are
+  ANDed, the second result its complement; R0 is 1 where the predicate read is set. The translator before batch 150 (the halves ANDed first, the
+  predicate after): 2 fail.
 Usage: t_xlate_ops.py [work dir]; XLATE = the translator (default $DM_ROOT/build/gfx/dmsh_xlate/dmsh_xlate; DOTNET_ROOT defaults to Homebrew's),
 needs spirv-cross, clang and a Metal GPU."""
 import os, re, struct, subprocess, sys, tempfile, json
@@ -33,6 +36,10 @@ def fmul32i(d, a, imm, fmz=0): return 0x1E00000000000000 | PT | d | a << 8 | imm
 def ffma32i(d, a, imm, fmz=0): return 0x0C00000000000000 | PT | d | a << 8 | imm << 20 | fmz << 53   # C is Rd
 def i2i(d, b, dsz, dsg, ssz, ssg, sat=False, abs_=False, neg=False):
     return 0x5CE0000000000000 | PT | d | dsz << 8 | ssz << 10 | dsg << 12 | ssg << 13 | b << 20 | neg << 45 | abs_ << 49 | sat << 50
+def hsetp2(pa, pb, a, b, cmp, p, pneg, bop, hand):   # HSETP2 Pa, Pb, Ra, Rb (both halves), compare cmp, combined with predicate p (pneg: !p) by bop
+    return 0x5D20000000000000 | PT | pb | pa << 3 | a << 8 | b << 20 | cmp << 35 | p << 39 | pneg << 42 | bop << 45 | hand << 49
+def mov_if(d, b, p): return 0x5C98000000000000 | 0xF << 39 | b << 20 | p << 16 | d   # @Pp MOV Rd, Rb
+GT, LT, AND, OR = 4, 1, 0, 1
 def shf(right, d, a, sreg, imm, c, width, wrap):   # SHF.{L,R} Rd, Ra (low), shift (Rs or imm6), Rc (high); width 0 32-bit, 2 .U64, 3 .S64; wrap = .W
     w = ((0x5CF8 if right else 0x5BF8) << 48 | sreg << 20) if sreg >= 0 else ((0x38F8 if right else 0x36F8) << 48 | (imm & 63) << 20)
     return w | PT | d | a << 8 | width << 37 | c << 39 | wrap << 50
@@ -98,6 +105,11 @@ CASES = [
     ('LDC.64 R0, c[3][R1+4] (low)', LDCB, [*ldc64(0, 1, 3, 4)], 4),
     ('LDC.64 R0, c[3][R1+4] (high, address in Rd+1)', LDCB, [*ldc64(0, 1, 3, 4), mov_r(0, 1)], 0x44444444),
     ('LDC R0, c[3][R0+4]', LDCB, [mov_r(0, 1), ldc(0, 0, 3, 4, 4)], 4),
+    ('HSETP2.GT.H_AND.AND !PT (first)', [0x3C003C00, 0, 1], [mov_r(0, 2), hsetp2(0, 1, 1, 2, GT, 7, True, AND, True), mov_if(0, 3, 0)], 0),
+    ('HSETP2.GT.H_AND.AND !PT (second)', [0x3C003C00, 0, 1], [mov_r(0, 2), hsetp2(0, 1, 1, 2, GT, 7, True, AND, True), mov_if(0, 3, 1)], 1),
+    ('HSETP2.GT.H_AND.OR PT (first)', [0x00003C00, 0, 1], [mov_r(0, 2), hsetp2(0, 1, 1, 2, GT, 7, False, OR, True), mov_if(0, 3, 0)], 1),
+    ('HSETP2.GT.H_AND.OR PT (second)', [0x00003C00, 0, 1], [mov_r(0, 2), hsetp2(0, 1, 1, 2, GT, 7, False, OR, True), mov_if(0, 3, 1)], 0),
+    ('HSETP2.LT.AND PT (per half)', [0xBC000000, 0, 1], [mov_r(0, 2), hsetp2(0, 1, 1, 2, LT, 7, False, AND, False), mov_if(0, 3, 1)], 1),
 ]
 
 def program(inputs, insns):

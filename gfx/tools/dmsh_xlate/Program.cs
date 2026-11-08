@@ -151,7 +151,9 @@ static class SwshXlate
             {
                 byte[] code = File.ReadAllBytes((string)job["code"]);
                 var acc = new Accessor(code, job);
-                // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and the output is full of temporaries; semantics unchanged)
+                // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and its expression propagation; the output is full of temporaries).
+                // Not the same semantics: without it Tears of the Kingdom's shaders give 306 failures (call arguments) and 4,175 modules whose else-if
+                // bodies are never branched to (plan item 200), so the build refuses XLATE_DEBUG=0 (dmsh_chain.py, dmsh_build.py job_for). Tests may send it
                 var flags = (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] == "cs" ? TranslationFlags.Compute : 0);
                 var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
                 ShaderProgram p = ctx.Translate();

@@ -105,6 +105,8 @@ t_retry: t_retry.m ../nvn/nvn_retry.h
 	clang -O1 -Wall -fobjc-arc -o $@ t_retry.m -framework Foundation
 t_fpcontract: t_fpcontract.m
 	clang -O1 -Wall -fobjc-arc -o $@ t_fpcontract.m -framework Metal -framework Foundation
+t_wide_loads: t_wide_loads.m
+	clang -O1 -Wall -fobjc-arc -o $@ t_wide_loads.m -framework Metal -framework Foundation
 t_aniso: t_aniso.c ../nvn/nvn_aniso.h
 	clang -O1 -Wall -Werror -o $@ t_aniso.c
 t_perfline: t_perfline.c ../nvn/nvn_perfline.h
@@ -363,6 +365,7 @@ run: \
 	t_findrain \
 	t_fmt_swz \
 	t_fpcontract \
+	t_wide_loads \
 	t_feedback_pool \
 	t_fout \
 	t_fbx \
@@ -686,6 +689,11 @@ run: \
 	DM_NVN_LIB_COPY=1 ./t_libcopy
 	./t_retry 2>/dev/null
 	python3 -I ../tools/msl_helpers.py t_fpcontract.metal > t_fpcontract_inl.metal && ./t_fpcontract t_fpcontract.metal t_fpcontract_inl.metal
+	python3 -I ../tools/msl_helpers.py t_wide_loads.metal --wide > t_wide_loads_w.metal && ./t_wide_loads t_wide_loads.metal t_wide_loads_w.metal
+	@status=0; python3 -I ../tools/msl_helpers.py t_wide_loads.metal --wide-across > t_wide_loads_a.metal && ./t_wide_loads t_wide_loads.metal t_wide_loads_a.metal > t_wide_loads_a.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_wide_loads_a.log)" -ne 3 ]; then \
+	   cat t_wide_loads_a.log; echo "t_wide_loads_across: unexpected negative-control result ($$status)"; exit 1; \
+	 else echo 't_wide_loads_across: runs reaching across writes fail 3, as expected'; fi
 	./t_refl
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
@@ -697,5 +705,5 @@ run: \
 .PHONY: run
 # The older-API build (DM_NVN_M3=1, macOS 15.0): the same tests built and run in a sibling tests_m3 directory
 run-m3:
-	mkdir -p ../tests_m3 && rsync -a Makefile *.c *.h *.m *.py t_fpcontract.metal ../tests_m3/   # with their times: make rebuilds only what changed
+	mkdir -p ../tests_m3 && rsync -a Makefile *.c *.h *.m *.py t_fpcontract.metal t_wide_loads.metal ../tests_m3/   # with their times: make rebuilds only what changed
 	$(MAKE) -C ../tests_m3 run CFLAGS="$(CFLAGS) -DDM_NVN_M3=1 -mmacosx-version-min=15.0"

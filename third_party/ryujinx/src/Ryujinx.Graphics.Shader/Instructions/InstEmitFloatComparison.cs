@@ -507,16 +507,18 @@ namespace Ryujinx.Graphics.Shader.Instructions
             Operand p0Res = GetFPComparison(context, cmpOp, srcA[0], srcB[0]);
             Operand p1Res = GetFPComparison(context, cmpOp, srcA[1], srcB[1]);
 
+            Operand pred = GetPredicate(context, srcPred, srcPredInv);
+
+            p0Res = GetPredLogicalOp(context, logicOp, p0Res, pred);
+            p1Res = GetPredLogicalOp(context, logicOp, p1Res, pred);
+
+            // manosaba-ios plan item 64g (peiikai/LASRecomp d4c2ff6, MIT; yuzu's rule): .H_AND combines each half with the predicate first, then ANDs
+            // the two, the second result its complement. The halves were ANDed before the predicate, so the second result was !(a && b) op pred
             if (hAnd)
             {
                 p0Res = context.BitwiseAnd(p0Res, p1Res);
                 p1Res = context.BitwiseNot(p0Res);
             }
-
-            Operand pred = GetPredicate(context, srcPred, srcPredInv);
-
-            p0Res = GetPredLogicalOp(context, logicOp, p0Res, pred);
-            p1Res = GetPredLogicalOp(context, logicOp, p1Res, pred);
 
             context.Copy(Register(destPred, RegisterType.Predicate), p0Res);
             context.Copy(Register(destPredInv, RegisterType.Predicate), p1Res);

@@ -69,7 +69,10 @@ if [ "$CMD" = build ] || [ "$CMD" = ipa ] || [ "$CMD" = sim-build ]; then
   [ "$CMD" = sim-build ] && MSL=$ROOT/build/ios/sim/$GAME
   [ -n "$V" ] && ls "$MSL/b-$V" 2>/dev/null | grep -q "_b.metallib$" || { t "[red] no iOS shaders in $MSL/b-$V (gfx/tools/dmsh_build.py with IOSOUT)"; exit 1; }
   python3 tools/shader_check.py "$(ws shader_map)" "$MSL/b-$V" "../games/$GAME/fout.tsv" || { t "[red] build the game's iOS shaders first (gfx/tools/dmsh_build.py with IOSOUT)"; exit 1; }   # every shader of the map (plan item 174)
-  cp -cR "$MSL/b-$V" Gen/msl/
+  # Only the game's libraries, a library of the same bytes as another once (plan item 311b: the chain's directory holds both games'; manosaba's IPA
+  # carried Tears of the Kingdom's 28,652), then checked again as packed
+  PK=$(python3 ../gfx/tools/shader_pack.py "$(ws shader_map)" "$MSL/b-$V" "Gen/msl/b-$V" "../games/$GAME/fout.tsv") || { t "$PK"; exit 1; }; t "$PK"
+  python3 tools/shader_check.py "$(ws shader_map)" "Gen/msl/b-$V" "../games/$GAME/fout.tsv" > /dev/null || { t "[red] the packed shader directory is not complete"; exit 1; }
   # MSL sources for sampler border variants (plan item 214, tools/border_msl.py): the game's listed shaders, from the Mac's MSL
   if [ "$CMD" != sim-build ] && [ -f "../games/$GAME/border_msl.txt" ]; then
     python3 tools/border_msl.py "../games/$GAME/border_msl.txt" "$(ws msl_mac)/b-$V" "Gen/msl/b-$V" || { t "[red] the MSL of a border variant shader is missing (see above)"; exit 1; }
