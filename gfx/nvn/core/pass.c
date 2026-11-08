@@ -139,7 +139,21 @@ static int sdx_decide(uint8_t st[SD_MAX]) {   // Store lookahead decision by the
     return 1;
 }
 void sd_decide(uint8_t store[SD_MAX]) {
-    if (!tbdr_part(TBP_STORE)) { for (int i = 0; i < g_nsd; i++) store[i] = 1; return; }   // All optimizations off: always write back
+    if (!tbdr_part(TBP_STORE)) {   // the store rewrites off (Tears of the Kingdom's default on the Mac and iOS): written back, but for an attachment loaded and not
+        // written (udc: memory holds it already). It was in the rewrites' set, so with them off it never acted: the Air stored 324-361 MB a frame, "0.0 MB
+        // of stores saved" (plan item 315a, after S2Arm 4c0bec5, Apache-2.0, written anew); DM_NVN_UNWRITTEN_DC=0 turns it off
+        for (int i = 0; i < g_nsd; i++) {
+            sd_att *t = &g_sd[i];
+#ifndef DM_TEST_UDC_TBDR_ONLY   // negative control of t_core_pass only: with the rewrites only, as before
+            int dead = udc_on() && t->load && !t->wrote;
+#else
+            int dead = 0;
+#endif
+            store[i] = !dead; g_sd_n_all++;
+            if (dead) { g_sd_n_dead++; g_sd_dead_bytes += t->bytes; g_bw_store -= t->bytes; g_udc_saved_bytes += t->bytes; }
+        }
+        return;
+    }
     uint8_t nst[SD_MAX];
     if (sdx_decide(nst)) { for (int i = 0; i < g_nsd; i++) if (nst[i] == 2) g_sd[i].state = 2; else sd_need(&g_sd[i], nst[i] >> 2); }
     else for (int i = 0; i < g_nsd; i++) sd_need(&g_sd[i], 6);   // Pass ended outside the list / index unavailable: always write back

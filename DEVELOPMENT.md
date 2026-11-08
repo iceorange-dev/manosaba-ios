@@ -409,20 +409,17 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 314c the Vulkan vertex formats checked for VERTEX_BUFFER support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and
   the swapchain acquire bounded (100 ms, the present skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the
   window goes; S2Arm 4c0bec5): on the K100 when it is connected again (314a, b, d, e: batch 153).
-- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: 315a the store of loaded attachments the pass
-  does not write dropped with the TBDR rewrites off (`core/pass.c` keeps every store unless `tbdr_part(TBP_STORE)`, which needs TBDR on, so on the
-  Mac and the iPhone the rule never acts: the Air's log has 324-361 MB stored and 285-320 MB loaded a frame, "0.0 MB a frame of stores saved";
-  written = a channel mask AND an output the shader writes, every draw path marking its writes); 315b a mid-submission chunk committed only when the
-  GPU has run out of work (S2Arm: "the GPU waited 5-40 ms with the next one already committed"; 310's A/B of 75 against 150 draws showed no
-  difference in power at 11.6 against 7.8 command buffers a frame); 315c pools only textures come from kept out of the residency set (the GPU
-  deswizzle's `mtl_addr` wires the whole pool on iOS: 583 pools, about 919 MB resident on the Air; S2Arm uses a no-copy buffer over the texture's
-  pages for the upload batch); 315d unblended half-float colour outputs rounded toward zero (S2Arm: the A19 writes half attachments rounding to
-  nearest even, the Mac toward zero; 310's probe: 1e5 stored as +inf by the A19 Pro, 65504 by the M5; S2Arm rounds in the shader by a per-pipeline
-  mask of R16F / RG16F / RGBA16F targets the shader writes with blending off; nx-port's clamp was not taken because it hit R32F targets, this one
-  does not; the probe gets 1.0007, the GPU p50 measured); 315e the on-screen pad's stick and camera ring as layers that move and the view redrawn
-  only when a control's look changes (310; upstream 7b62d9c, S2Arm's one layer per control): measured first with the pad hidden, idle and in use;
-  315f virtual cores only for threads that ask for their core (GetCurrentProcessorNumber) or are bound to one (S2Arm's on-demand mode: 0 shared core
-  numbers on the Mac where none gave 671): `DM_SCHED_STATS` counts the calls and masks per thread first.
+- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154) 315b a mid-submission chunk
+  committed only when the GPU has run out of work (S2Arm: "the GPU waited 5-40 ms with the next one already committed"; 310's A/B of 75 against 150
+  draws showed no difference in power at 11.6 against 7.8 command buffers a frame); 315c pools only textures come from kept out of the residency set
+  (the GPU deswizzle's `mtl_addr` wires the whole pool on iOS: 583 pools, about 919 MB resident on the Air; S2Arm uses a no-copy buffer over the
+  texture's pages for the upload batch); 315d unblended half-float colour outputs rounded toward zero (S2Arm: the A19 writes half attachments
+  rounding to nearest even, the Mac toward zero; 310's probe: 1e5 stored as +inf by the A19 Pro, 65504 by the M5; S2Arm rounds in the shader by a
+  per-pipeline mask of R16F / RG16F / RGBA16F targets the shader writes with blending off; nx-port's clamp was not taken because it hit R32F
+  targets, this one does not; the probe gets 1.0007, the GPU p50 measured); 315e the on-screen pad's stick and camera ring as layers that move and
+  the view redrawn only when a control's look changes (310; upstream 7b62d9c, S2Arm's one layer per control): measured first with the pad hidden,
+  idle and in use; 315f virtual cores only for threads that ask for their core (GetCurrentProcessorNumber) or are bound to one (S2Arm's on-demand
+  mode: 0 shared core numbers on the Mac where none gave 671): `DM_SCHED_STATS` counts the calls and masks per thread first.
 - 316 manosaba's short sleeps (88: about 24,000 SleepThread calls of 20 µs-1 ms a second) backed off: a run of sleeps under 1 ms from one return
   address with no other system call and at most 20 µs of guest code between them, each sleep after 2 ms of the run max(asked, run / 8) up to 100 µs
   (S2Arm on a Unity game: 5.13 W for the device, 4.03 W at 100 µs with 0.03 % slow frames; 250 µs gave 1.72 W but moved its threads to the
@@ -1493,3 +1490,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   was already running on the phone, maybe the user's own session, and the script ended it; a running app is now asked about before any launch. gfx
   180 / 180 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
   Smoke: Tears of the Kingdom's two red lines as before, manosaba none, the shots as batch 152's.
+- [x] batch 154 · 315a: the store of an attachment a pass loaded and did not write is dropped with the TBDR rewrites off too (S2Arm 4c0bec5,
+  Apache-2.0, written anew). The rule (udc) sat in the store rewrites' set, so with them off, Tears of the Kingdom's default on the Mac and iOS
+  (62j), it never acted, though `core/tbdr.h` called it on by default; now `sd_decide` applies it either way, `DM_NVN_UNWRITTEN_DC=0` still turns it
+  off (`gfx/tests/t_core_pass.c` 28, `-DDM_TEST_UDC_TBDR_ONLY` 1 fails). Written stays an OR of the draw's channel mask and the outputs its shader
+  writes (S2Arm takes the AND, which drops more; ours errs toward storing). On the M5, Tears of the Kingdom's prologue with product60 at 60 Hz: 379
+  → 304 MB stored a frame (75 MB saved, 322 MB loaded either way), GPU p50 7.0 → 6.7 ms; 62j's glow frames 2300 and 3500 as with the rule off
+  (brightness 45.3 / 74.7 against 45.4 / 74.8, looked at). On the iPhone Air, Great Sky Island standing (product60, paced at 30 fps, thermal 2),
+  alternating off / on twice after a first pair: 37-46 MB a frame of stores saved (the stores now about the loads, 35-41 MB above them before), GPU
+  p50 24.2-26.4 against 24.2-27.1 ms and 0.56-0.64 against 0.61-0.66 W of CPU energy, inside the scene's spread; the prologue from an empty save on
+  the phone (frames 2300-6000 of its presents: the title, the cave, Zelda with the torch) shows no glow or trail. Also found: iOS prewarms the app
+  after a run ends (a process that writes no log: the host starts only in the foreground); the phone scripts end such a process only when
+  Documents/boot.txt is still the previous run's. gfx 180 / 180 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests,
+  both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before (69.3 MB a frame of stores saved in its
+  30 fps prologue), the shots the same scenes as batch 153's (s1300 and s1800 a moment apart, looked at); manosaba none.

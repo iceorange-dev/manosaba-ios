@@ -18,7 +18,7 @@ void tbdr_read(void); void tbdr_read_off(void);
 static inline int tbdr_on(void) { if (g_tbdr < 0) tbdr_read(); return g_tbdr && !g_ruler_truth; }
 static inline int tbdr_part(int bit) { if (g_tbdr_off < 0) tbdr_read_off(); return tbdr_on() && !(g_tbdr_off & bit); }
 // Attachments this pass did not write (depth / stencil test only, color write mask 0, etc.) get their write-back changed to DontCare: the content is already in memory, saving one full write-back.
-// On by default: on Mac, same-process on / off screenshots follow the same distribution as the null control; on A19 Pro, private Depth32F_S8 / RGBA8 read back after DontCare differ in 0 places.
+// With the TBDR rewrites on or off (core/pass.c sd_decide; off, it never acted before plan item 315a). On by default: on Mac, same-process on / off screenshots follow the same distribution as the null control; on A19 Pro, private Depth32F_S8 / RGBA8 read back after DontCare differ in 0 places.
 // DM_NVN_UNWRITTEN_DC=0 turns it off (for equivalence comparison)
 extern int g_udc_ab, g_udc_ab_on;
 int udc_on(void);

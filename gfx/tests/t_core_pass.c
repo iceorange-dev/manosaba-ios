@@ -6,7 +6,8 @@
 // without a depth target or a start point (3); the pending clears and the opening draw's state; later draws by their depth-stencil state, up to
 // new targets; through the caller and the remaining handles; a clear inside the pass needs both. The store decision at a pass end: an attachment
 // cleared in full before it is drawn again not stored, one a later draw loads stored, depth and stencil apart; all stored with the store part
-// off or no op being replayed; one loaded and not written not stored (udc); the bandwidth ledger.
+// off or no op being replayed; one loaded and not written not stored (udc), with the TBDR rewrites on or off (plan item 315a), one written
+// stored, the rule off by DM_NVN_UNWRITTEN_DC=0; the bandwidth ledger. With the rewrites only, as before (-DDM_TEST_UDC_TBDR_ONLY): 1 fails.
 // A clear inside the pass taken as needing neither (-DDM_TEST_DS_CLEAR_FREE, a broken variant): 1 fails. A cleared texture on a slot hoisted all
 // the same (-DDM_TEST_HOIST_BOUND_OK, the other): 1 fails. Store records for 9 attachments, the old size (-DDM_TEST_SD_MAX=9): 1 fails.
 #include "../nvn/core/pass.h"
@@ -125,6 +126,14 @@ int main(void) {
     check("a pass ending with no op being replayed: stored (6)", 1, store[0] && g_sd[0].why == 6);
     att(0, &A, 0, 0, 1, 0); uint64_t sv = g_udc_saved_bytes; sd_decide(store);
     check("loaded and not written: not stored, counted as saved", 1, !store[0] && g_udc_saved_bytes == sv + 1000);
+    {   // 315a: the TBDR rewrites off (Tears of the Kingdom's default)
+        int t0 = g_tbdr; g_tbdr = 0; att(0, &A, 0, 0, 1, 0); att(1, &A, 0, 1, 1, 1); att(2, &D, 1, -1, 0, 0); g_nsd = 3;
+        uint64_t s0 = g_udc_saved_bytes; uint8_t st[SD_MAX] = {0}; sd_decide(st);
+        check("rewrites off: loaded and not written not stored, written stored, not loaded stored, 1000 bytes saved [-DDM_TEST_UDC_TBDR_ONLY]", 1, !st[0] && st[1] && st[2] && g_udc_saved_bytes == s0 + 1000);
+        int u0 = g_udc_ab; g_udc_ab = 0; att(0, &A, 0, 0, 1, 0); g_nsd = 1; sd_decide(st);
+        check("... DM_NVN_UNWRITTEN_DC=0: stored", 1, st[0] == 1);
+        g_udc_ab = u0; g_tbdr = t0;
+    }
     // a full pass: 8 colours, the depth and the stencil are 10 records (the old 9 overflowed g_sd and the store arrays) [-DDM_TEST_SD_MAX=9]
     check("the store records hold 8 colours, the depth and the stencil", 1, (int)(sizeof g_sd / sizeof g_sd[0]) >= 10);
     if ((int)(sizeof g_sd / sizeof g_sd[0]) >= 10) {   // (not run in the broken variant: it would write past the arrays)
