@@ -392,13 +392,74 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
   (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
   the on-screen pad's redraw (upstream 7b62d9c).
-- 313 left for Tears of the Kingdom on Android (301e2c / e3): command-buffer cuts, when there are any, only between passes (PKShield f4f9f1c: a
-  cut inside a pass flashed white), the spin before short waits measured again with a game whose threads hand work over thousands of times a
-  second (mleo2003 77f6586), same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata
-  8bb3212), masked and region clears and the counter reports' GPU timestamps (AurelioB/totk-android `VULKAN.md`), scaled depth copies
-  (nx2android e154eec), `vm.max_map_count` (diablo3-port 5bb14e8), pools backed on first GPU use (mleo2003 3f5467d). For 221 (MacNativeGames,
-  facts): LOD by 12 view-depth sites (main+0x1ee8424 and copies), far plane main+0x628c30, FOV load main+0x628c3c, sun shadow map size
-  main+0x683604.
+- 313 left for Tears of the Kingdom on Android (301e2c / e3): command-buffer cuts, when there are any, only between passes (PKShield f4f9f1c: a cut
+  inside a pass flashed white), the spin before short waits measured again with a game whose threads hand work over thousands of times a second
+  (mleo2003 77f6586), same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata 8bb3212),
+  masked and region clears and the counter reports' GPU timestamps (AurelioB/totk-android `VULKAN.md`), scaled depth copies (nx2android e154eec),
+  `vm.max_map_count` (diablo3-port 5bb14e8), pools backed on first GPU use (mleo2003 3f5467d). For 221 (MacNativeGames, facts): LOD by 12 view-depth
+  sites (main+0x1ee8424 and copies), far plane main+0x628c30, FOV load main+0x628c3c, sun shadow map size main+0x683604. From the twelfth review
+  (S2Arm, written anew): Tears of the Kingdom's BC4 3D lookup table drawn one slice per pass through an RGBA16UI block view (a Vulkan image of BC
+  format cannot be an attachment: `vk_tex.c` keeps the BC format and `pass_open` attaches an image without colour usage, undefined; S2Arm
+  round-trips through a buffer, while `vkCmdCopyImage` between size-compatible formats, BC4 and RGBA16UI, should do: a K100 probe), its draw into a
+  1x1 viewport with no target (an agl shader writing only a storage buffer; `vk_draw.c` drops it), Qualcomm's vector-indexing workaround for the
+  Vulkan bundle (Ryujinx's `hasVectorIndexingBug`, off in ours: a probe on the 840 and a count first), memory sub-allocated for images (one
+  allocation each ran out of the driver's count there, 2,660 / 495 MB; the 840's `maxMemoryAllocationCount` logged first), occlusion queries (read
+  by pool page, reset outside passes, a dropped command buffer's queries never waited on), the SampledCubeArray capability (61 of its shaders bind
+  cube arrays).
+From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); the user: a full review):
+- 314 correctness, each with a unit test and a broken variant (S2Arm 4c0bec5, Apache-2.0: written anew from what it does): 314a the dirty tracking's
+  `mprotect` results (`nvn_dirty.c` `mp()` drops them: a failed unprotect still marks the page writable and claims the fault, so the write faults
+  for ever; a failed protect leaves a writable page marked protected and its writes are missed; S2Arm `nvn_dirty.c` puts the state back, leaves the
+  fault unclaimed and from then on counts every range as changed); 314b the argument buffer's length from the reflection, Metal's argument encoder
+  only as a check (`shaders.inc` asks Metal at every shader load and aborts on a mismatch; S2Arm saw `newArgumentEncoderWithBufferIndex` assert and
+  the game abort once the Mac's Metal compiler service was killed under memory pressure); 314c the Vulkan vertex formats checked for VERTEX_BUFFER
+  support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and the swapchain acquire bounded (100 ms, the present
+  skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the window goes); 314d the app's display name in ASCII
+  with the game's title in `<lang>.lproj/InfoPlist.strings` (AltServer for Windows builds the App ID from `CFBundleDisplayName` and refuses a
+  Chinese one); 314e the phone's rumble engine haptics-only (`playsHapticsOnly`, as our controllers' are; S2Arm measured a 2,049 ms audio stall at
+  CoreHaptics' first start: look for ours around the first pulse first).
+- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: 315a the store of loaded attachments the pass
+  does not write dropped with the TBDR rewrites off (`core/pass.c` keeps every store unless `tbdr_part(TBP_STORE)`, which needs TBDR on, so on the
+  Mac and the iPhone the rule never acts: the Air's log has 324-361 MB stored and 285-320 MB loaded a frame, "0.0 MB a frame of stores saved";
+  written = a channel mask AND an output the shader writes, every draw path marking its writes); 315b a mid-submission chunk committed only when the
+  GPU has run out of work (S2Arm: "the GPU waited 5-40 ms with the next one already committed"; 310's A/B of 75 against 150 draws showed no
+  difference in power at 11.6 against 7.8 command buffers a frame); 315c pools only textures come from kept out of the residency set (the GPU
+  deswizzle's `mtl_addr` wires the whole pool on iOS: 583 pools, about 919 MB resident on the Air; S2Arm uses a no-copy buffer over the texture's
+  pages for the upload batch); 315d unblended half-float colour outputs rounded toward zero (S2Arm: the A19 writes half attachments rounding to
+  nearest even, the Mac toward zero; 310's probe: 1e5 stored as +inf by the A19 Pro, 65504 by the M5; S2Arm rounds in the shader by a per-pipeline
+  mask of R16F / RG16F / RGBA16F targets the shader writes with blending off; nx-port's clamp was not taken because it hit R32F targets, this one
+  does not; the probe gets 1.0007, the GPU p50 measured); 315e the on-screen pad's stick and camera ring as layers that move and the view redrawn
+  only when a control's look changes (310; upstream 7b62d9c, S2Arm's one layer per control): measured first with the pad hidden, idle and in use;
+  315f virtual cores only for threads that ask for their core (GetCurrentProcessorNumber) or are bound to one (S2Arm's on-demand mode: 0 shared core
+  numbers on the Mac where none gave 671): `DM_SCHED_STATS` counts the calls and masks per thread first.
+- 316 manosaba's short sleeps (88: about 24,000 SleepThread calls of 20 µs-1 ms a second) backed off: a run of sleeps under 1 ms from one return
+  address with no other system call and at most 20 µs of guest code between them, each sleep after 2 ms of the run max(asked, run / 8) up to 100 µs
+  (S2Arm on a Unity game: 5.13 W for the device, 4.03 W at 100 µs with 0.03 % slow frames; 250 µs gave 1.72 W but moved its threads to the
+  efficiency cores); the sleeps counted per return address first, on the iPhone and the K100.
+- 317 diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
+  span (counted once when delivered again) and named at the next launch (ours knows only that a session ended in the foreground; whether a
+  free-account install receives payloads is to be seen); 317b the signature's expiry shown in the app 48 hours ahead (`embedded.mobileprovision`;
+  ours warns only at install); 317c the translator's own warnings in the reflection's notes (an untraceable bindless texture removed with its
+  results 0, a global access with no storage buffer, dropped float atomics, unimplemented instructions; S2Arm found 398 dropped float reductions
+  this way; a chain change).
+- 318 sampler LOD bias and min / max reduction on GPUs before Apple10 (S2Arm's probes: reduction ignored as plain linear on an M4 Pro and an M3, LOD
+  bias ignored on the M3; `descriptors.inc` sets both on any GPU from OS 26, Tears of the Kingdom biases 861 samplers; item 4 assumed the OS version
+  enough): a probe at start (two mips, LOD bias 1), the GPU family and a red line; the bias emulated in the shader next, the reduction only when
+  counted.
+- 319 the install with the player's own free account (S2Arm's flow, `ios/run.sh` against it): the team and the one paired phone found without
+  `local.env`, `-allowProvisioningDeviceRegistration -destination-timeout 120`, a weekly renewal by signing again instead of building (27 s, 7 s and
+  3 s there), data pushed by content hash, readable errors for an unclicked keychain prompt and a missing iOS platform.
+- 320 Tears of the Kingdom filling the iPhone's and the iPhone Duo's screen with the HUD at its own size (ours puts a 16:9 picture between bars on
+  iOS, the wide picture is Mac only): S2Arm widens on the GPU (16:9 render targets wider by k, viewports × k, the projection's x row ÷ k, the UI
+  layer at its size, k snapped to whole even columns: 2868x1320 → 2346x1080; screens narrower than 16:9 taller), measured on 1.4.3 handheld at 57.89
+  fps on a Duo and 57.91 on an iPhone; the camera sites 0x1ff04f4 and 0x253fbb0 (two of our four aspect caves) never run in its handheld opening. A
+  Tears of the Kingdom route through our own aspect, scene and output options at the screen's shape is untried (the UI on a canvas that is not
+  16:9); the route to be chosen first.
+- 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
+  only when more than 24 of the last 120 frames were shown late (three in a row stepped up on scattered spikes, after which the GPU clock fell and
+  60 never fitted again), the cost as the critical path (submits' start to the GPU's end: 27 against 35 ms at a hold of 3), a probe back to 60 when
+  the CPU sits on the efficiency cores (under 30 % on performance cores in two windows of 30 presents, thermal ≤ 1, Low Power off) or the GPU time
+  at the longer hold is 1.3× its time at 60.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.

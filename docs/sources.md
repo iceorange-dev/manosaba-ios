@@ -27,6 +27,7 @@ d2r-mobile and its derivatives (MIT, keeping jhaizhou's LICENSE; the derivatives
 | LNPANDY/NX2Apple (was nxnative-romfs-archive) | 3dbb450 (11-08) | MIT with its RomFS archive's copyright; nxnative pinned (`.upstream-ref`) plus 64 patches, its own work front ends; a one-click Mac app; issue #23: an A20 Pro limit of 8191 MB |
 | [Nishikori-Yui/lordran-native](https://github.com/Nishikori-Yui/lordran-native) | 85220ca (10-27); PR #40 419f0dc | Dark Souls Remastered, from nxnative; pool base snapshots at record time (c400b58) |
 | [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) | `codex/p5r-runtime` 4062bf4 (10-27) | Persona 5 Royal |
+| [jhaizhou-ops/S2Arm](https://github.com/jhaizhou-ops/S2Arm) (Apache-2.0: written anew) | main 4c0bec5 (11-08, v0.1.0, 7 commits: read as a tree) | the upstream author's one app for a library (211 games surveyed): NVN / Vulkan / OpenGL straight to Metal from nxnative's line, Ryujinx's GPU emulation as the fallback; Tears of the Kingdom 1.4.3 in bring-up there (wide screen on iPhone and Duo); Android in progress |
 | [huajiaoshu520/acnh-mobile](https://github.com/huajiaoshu520/acnh-mobile) | 2206ea7 (11-08; `ios18-compat` gone) | Animal Crossing; its base is now nxnative e72a065 |
 | ha7rock/blade2-mobile | d0ce642 (11-07) | Blade II, UE4 4.17 |
 | enginefuture/bayonetta3-mobile, enginefuture/dr3-mobile | e5ce116, a31c36c | dr3: Diablo III on nxnative 9579030, with LDN |
@@ -107,11 +108,17 @@ Seen, not reviewed: CODPHISH/ns2app (Silksong on iOS), WangTingYeYe/rtg-mobile, 
   Tears of the Kingdom at about 30 fps on an iPhone 18 Pro): 265-284.
 - 2026-10-30, tenth review (four reviewers, after a read of nx2android; the Android version of manosaba is starting): 288-301.
 - 2026-11-08, eleventh review (six reviewers, after Xcode 27.2): 303-313.
+- 2026-11-09, twelfth review (six reviewers, S2Arm): 314-321 and 313's Tears of the Kingdom on Android part.
 
 The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](../DEVELOPMENT.md#open-work).
 
 ## Not taken (and why)
 
+- S2Arm (11-09): its Tears of the Kingdom pacing to the display with the game's own interval (its own A/B: the picture moved 3.99× while frames went
+  1.94×, the game ran fast; it agrees with the line above); fast-returning yields, the spin and clock-read gates (183, 243; its Kirby and Diablo III
+  notes agree); SignalToAddress type 2 writing value − 2 (Atmosphère master still writes −1); the pass-end barrier relaxed (a per-game key there,
+  full by default: batch 151 agrees); DebugMode off (only the translator's memory on the device gained, 200); its generic Ryujinx path (frame-level
+  scheduling, transfer clears, the threaded renderer); one app for many games (two games fit a free account's three apps).
 - A Metal binary archive on macOS 26 without guarding `serializeToURL` (LASRecomp turned it off after crashes; PR #145 closed).
 - Compiling shaders at launch and skipping draws until ready, async shader loading with skipped draws (content drawn once would stay missing).
 - Present pacing to the screen refresh (games that step per frame would run fast; only Tears of the Kingdom's real-time step can use it,
@@ -175,6 +182,11 @@ The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](.
 
 ## Port when a game needs it
 
+- S2Arm (written anew): IADD / ISCADD `.PO` as A + B + 1 (none of either game's words has it; with the next chain change); float RED / ATOM add as a
+  compare-and-swap loop (none in either game); WaitEvent across two NVN queues (ours is a no-op, right for one queue: Ocarina of Time for Switch 2
+  read last frame's depth); free space answered from the save's own size and one save under two mount names; guest memory backed by an unlinked file
+  (dirty pages counted as file cache, not footprint; S2Arm measured 3-4 s stalls and 6-7.5 GB written in 2 minutes, so only when the pool would not
+  fit: 280's 8 GB iPads); Switch 2 games (an RSA-3072 ACID in the NPDM, a 9 GiB pool, 8 cores, a 31.25 MHz tick, svc 0x80).
 - Graphics, nxnative d6cd8a812a1047dff8f660f604d0a46033752242: cube textures as 6-layer 2D arrays for cube-array views; compressed render targets
   skipped with a red line instead of a Metal abort. The attachment snapshot for shaders that sample what they write, per shader by a profile key,
   with `DM_NVN_MAGSCAN` (20cba12c4299d77f05b6bbfd3dfa42d6c6035da4, `nvn_mtl.m`); the submission handed to the GPU every 64 draws for games that
