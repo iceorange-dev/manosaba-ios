@@ -388,10 +388,9 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   the same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); look at a shrine across a step first
   (needs a save in or by a shrine). Also MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps), checked at 90 and 120 with 292;
   the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time).
-- 310 on the iPhone: float16 overflow on the A19 Pro (nxnative PR #1128: +inf where an M1 stores 65504; 260's precise min then gives 2048), GPU
-  writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
-  (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
-  the on-screen pad's redraw (upstream 7b62d9c).
+- 310 on the iPhone, left: sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed; the user plays music on the phone while manosaba runs),
+  memory touched before loading (nxnative-mkw b8f81e4; after other apps have filled the phone's memory). Its half-float rounding went to 315d, the
+  pad's redraw to 315e (batch 152).
 - 313 left for Tears of the Kingdom on Android (301e2c / e3): command-buffer cuts, when there are any, only between passes (PKShield f4f9f1c: a cut
   inside a pass flashed white), the spin before short waits measured again with a game whose threads hand work over thousands of times a second
   (mleo2003 77f6586), same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata 8bb3212),
@@ -1468,3 +1467,21 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   a frame, 32,116 in the app's 40 s); kept in 313 for when 301e2c makes them. Early fragment tests on 8f470f5ce5864df7: counted in batch 149. gfx 177 / 177 on Metal 4
   and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the phone's tests, manosaba headless 40 s and the
   app 40 s (no red line, 60 fps from frame 600). Smoke: Tears of the Kingdom's two red lines as before, manosaba none, the shots as batch 150's.
+- [x] batch 152 · 310 (part): a pool's zero-copy buffer is no longer made over read-only pages. On the M5 (a probe of 64 pages) a buffer made while
+  one page of its range is read-only drops every GPU write through it, to the other pages too and after the page is writable again; one made over
+  writable pages keeps taking them when a page is protected later (nxnative 2d544e0 / issue #1591, MIT, written anew: an M4 Pro). A new pool's own
+  pages are not tracked yet, but a host page it shares with a neighbouring pool (pools 4 KB aligned in 16 KB pages) may be protected for the
+  neighbour's texture: `mtl_pool_add` makes such pages writable first through `dm_guest_write_prepare` (counted as written, so the neighbour's
+  textures there are read again) and looks again after the buffer is made, making it again if a page was protected meanwhile, a red line after four
+  tries (`gfx/tests/t_poolcheck.m` 17, `-DDM_TEST_POOL_RO_KEPT` 4 fail; a counting build found none in Tears of the Kingdom's prologue, about 1,560
+  pools, or manosaba's first trial). What a GPU stores for a float above half-float's range: `gfx/nvn/mtl/fp16_probe.h`, logged with
+  `DM_FP16_PROBE=1` (`gfx/tests/t_fp16_probe.m` 4, `-DDM_TEST_FP16_PROBE_UNORM` 2 fail): for 1e5, -1e5, 65504 and 65520 an RGBA16Float target on the
+  M5 stores 65504, -65504, 65504, 65504 and on the iPhone Air's A19 Pro +inf, -inf, 65504, +inf; `half()` gives +inf, -inf, 65504, +inf on both
+  (nxnative PR #1128's finding on our phone). On the Mac, Tears of the Kingdom's 16-17 half-float targets at frames 1300 and 1800 (a counting build)
+  hold no texel at ±65504, so none of what stays at a frame's end overflowed there; the rounding itself is 315d (S2Arm: the A19 rounds to nearest
+  even, the Mac toward zero). Commits every 75 draws against 150 (nxnative PR #1123) on the Air, Tears of the Kingdom with product60 standing on
+  Great Sky Island (paced at 30 fps, GPU p50 24-27 ms), alternating: CPU energy 0.55-0.65 W and 41-50 % of the CPU on performance cores in both,
+  11.6 against 7.8 command buffers a frame: no difference, 75 kept (the first run's first two windows, 14 ms of GPU and 0.25 W just after the phone
+  woke, not counted). gfx 178 / 178 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the hosts
+  and the APK built, the phone not connected (its tests and runs not run). Smoke: Tears of the Kingdom's two red lines as before, manosaba none, the
+  shots as batch 151's.

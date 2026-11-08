@@ -158,7 +158,7 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   every GPU (`precise::`), and the SDK's address-region node area cut and two SDK return types; then the store-decision records for ten
   attachments, page protection under the pool-slot lock, an ID's cached view dropped with its texture, the AudioOut notifier's disarm and Game
   Mode off on the Mac; WaitSynchronization ended by the signal that woke it, credited in the code; the translator's split storage words read
-  whole.
+  whole; a pool's buffer made only over writable pages.
 - **[tomodachi-native](https://github.com/kuosuko/tomodachi-native)** ([kuosuko](https://github.com/kuosuko), MIT), a fork of nxnative: the
   variant of the duplicated colour slot handling that keeps the slot the pass writes, the memory snapshots (`DM_MEMSNAP`), the FMZ multiply in
   the shader translator, the attachment copies for draws that sample what their pass draws and code options applied at load.

@@ -145,6 +145,12 @@ void mtl_init(void) { @autoreleasepool {
     MLOG("Metal device %s: maxBufferLength %llu MB, recommended working set %llu MB", g_dev.name.UTF8String,   // (plan item 62f, mush8 PR #3: a pool or upload past it fails)
          (unsigned long long)(g_dev.maxBufferLength >> 20), (unsigned long long)(g_dev.recommendedMaxWorkingSetSize >> 20));
     udc_selftest();
+    if (getenv("DM_FP16_PROBE")) {   // what this GPU stores for a float above float16's range (fp16_probe.h, plan item 310)
+        uint16_t h[8]; int rc = fp16_probe(g_dev, h);
+        if (rc) MLOG("[red] fp16 probe on %s failed (%d)", g_dev.name.UTF8String, rc);
+        else MLOG("fp16 probe on %s: 1e5, -1e5, 65504, 65520 stored by an RGBA16Float target as %s, %s, %s, %s (%04x %04x %04x %04x); half() gives %s, %s, %s, %s",
+                  g_dev.name.UTF8String, fp16_name(h[0]), fp16_name(h[1]), fp16_name(h[2]), fp16_name(h[3]), h[0], h[1], h[2], h[3], fp16_name(h[4]), fp16_name(h[5]), fp16_name(h[6]), fp16_name(h[7]));
+    }
 } }
 
 static _Atomic uint64_t g_reg_gen = 1;   // Change generation of memory pool / texture / sampler registration: one of the invalidation conditions for argument buffer reuse
@@ -169,8 +175,9 @@ static void cb_committed(void) {   // called after the main submission / upload 
 // (pool_range_check, ly05010419/MacNativeGames, MIT; written anew here, refusing the pool instead of stopping). A refused pool has no buffer: its
 // textures still work (separate Metal textures), buffer accesses into it report as outside every pool
 #define POOL_BUFFER_MAX (1ull << 30)
-static uint64_t g_pool_refused, g_pool_max;
-static int pool_range_ok(uintptr_t a, uintptr_t b, const void *mem, uint64_t size) {
+static uint64_t g_pool_refused, g_pool_max, g_pool_ro_writable;
+// *has_ro: the range has read-only pages the dirty tracker protected (mtl_pool_add makes them writable before the buffer)
+static int pool_range_ok(uintptr_t a, uintptr_t b, const void *mem, uint64_t size, int *has_ro) {
     if (b - a > g_pool_max) g_pool_max = b - a;
     if (b - a > POOL_BUFFER_MAX) { MLOG("[red] memory pool %p+%#llx: a %llu MiB zero-copy GPU buffer refused (limit %llu MiB)", mem, (unsigned long long)size, (unsigned long long)((b - a) >> 20), POOL_BUFFER_MAX >> 20); return 0; }
     for (vm_address_t at = a; at < b;) {
@@ -180,6 +187,7 @@ static int pool_range_ok(uintptr_t a, uintptr_t b, const void *mem, uint64_t siz
         uintptr_t lo = ra < a ? a : (uintptr_t)ra, hi = ra + rs > b ? b : (uintptr_t)(ra + rs);
         if (!(ri.protection & VM_PROT_READ) || (!(ri.protection & VM_PROT_WRITE) && !nvn_dirty_tracked((const void *)lo, hi - lo))) {
             MLOG("[red] memory pool %p+%#llx: pages at %#llx+%#llx have protection %d, refused for a zero-copy GPU buffer", mem, (unsigned long long)size, (unsigned long long)lo, (unsigned long long)(hi - lo), ri.protection); return 0; }
+        if (!(ri.protection & VM_PROT_WRITE)) *has_ro = 1;
         at = ra + rs;
     }
     return 1;
@@ -211,14 +219,17 @@ static void pc_put(int i) {   // caller holds g_mu; pool i is resident
     *c = (pc_ent){g_pools[i].lo, g_pools[i].hi, g_pools[i].base, g_pools[i].buf, g_pools[i].gpu};
 }
 static int g_test_nocopy_fail;   // tests only (t_poolcheck): the next n zero-copy buffers refused
-void mtl_pool_add(const void *mem, uint64_t size) { @autoreleasepool {
-    mtl_init(); g_reg_gen++;
-    uintptr_t pg = (uintptr_t)getpagesize(), lo = (uintptr_t)mem, hi = lo + size;
-    uintptr_t a = lo & ~(pg - 1), b = (hi + pg - 1) & ~(pg - 1);
-    if (!pool_range_ok(a, b, mem, size)) { g_pool_refused++; return; }
-    // Metal can refuse the zero-copy buffer for a moment (MacNativeGames 11ea252, MIT: at boot, while a guest thread faulted on a page of the range
-    // the tracker had protected): retried 8 times, 2 ms apart doubling, before it stops (plan item 279; the pages stay protected meanwhile, so no
-    // write escapes the tracker)
+static int range_ro(uintptr_t a, uintptr_t b) {   // a page of [a, b) that is not writable (or not mapped)
+    for (vm_address_t at = a; at < b;) {
+        vm_address_t ra = at; vm_size_t rs = 0; vm_region_basic_info_data_64_t ri; mach_msg_type_number_t rc = VM_REGION_BASIC_INFO_COUNT_64; mach_port_t ro = MACH_PORT_NULL;
+        if (vm_region_64(mach_task_self(), &ra, &rs, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&ri, &rc, &ro) != KERN_SUCCESS || ra > at || !(ri.protection & VM_PROT_WRITE)) return 1;
+        at = ra + rs;
+    }
+    return 0;
+}
+// Metal can refuse the zero-copy buffer for a moment (MacNativeGames 11ea252, MIT: at boot, while a guest thread faulted on a page of the range
+// the tracker had protected): retried 8 times, 2 ms apart doubling, before it stops (plan item 279)
+static id<MTLBuffer> pool_nocopy(uintptr_t a, uintptr_t b, const void *mem, uint64_t size) {
     id<MTLBuffer> buf = nil;
     for (int k = 0; ; k++) {
         if (g_test_nocopy_fail > 0) { g_test_nocopy_fail--; buf = nil; }
@@ -232,6 +243,30 @@ void mtl_pool_add(const void *mem, uint64_t size) { @autoreleasepool {
 #endif
     }
     if (!buf) MDIE("memory pool %p+%#llx: failed to create zero-copy buffer", mem, (unsigned long long)size);
+    return buf;
+}
+// A zero-copy buffer made while any page of its range is read-only drops every GPU write through it, with no error: to pages never protected too,
+// and after its pages are writable again; one made over writable pages keeps working when they are protected later (nxnative 2d544e0 / issue
+// #1591, MIT, written anew: an M4 Pro; gfx/tests/t_poolcheck.m on the M5). A new pool's own pages are not tracked yet, but a host page it shares
+// with a neighbouring pool (pools are 4 KB aligned, the host's pages 16 KB) may be protected for the neighbour's texture: made writable first and
+// counted as written (dm_guest_write_prepare: the neighbour's textures there are read again). Another thread may protect it again while the buffer
+// is made: looked at after, the buffer made again (none in Tears of the Kingdom's prologue or manosaba's first trial, 2026-11-09; plan item 310)
+void mtl_pool_add(const void *mem, uint64_t size) { @autoreleasepool {
+    mtl_init(); g_reg_gen++;
+    uintptr_t pg = (uintptr_t)getpagesize(), lo = (uintptr_t)mem, hi = lo + size;
+    uintptr_t a = lo & ~(pg - 1), b = (hi + pg - 1) & ~(pg - 1);
+    int ro = 0;
+    if (!pool_range_ok(a, b, mem, size, &ro)) { g_pool_refused++; return; }
+    id<MTLBuffer> buf = nil;
+    for (int k = 0; ; k++) {
+#ifndef DM_TEST_POOL_RO_KEPT   // negative control of t_poolcheck only: the buffer made over the protected pages, as before
+        if (ro) { dm_guest_write_prepare((void *)a, b - a); if (++g_pool_ro_writable <= 8) MLOG("memory pool %p+%#llx: read-only pages of its range (protected for another pool's textures) made writable before its buffer is made (attempt %d)", mem, (unsigned long long)size, k + 1); }
+#endif
+        buf = pool_nocopy(a, b, mem, size);
+        if (!(ro = range_ro(a, b)) || k == 3) break;
+        buf = nil;
+    }
+    if (ro) MLOG("[red] memory pool %p+%#llx: its buffer made over read-only pages (protected again each time): GPU writes through it are lost", mem, (unsigned long long)size);
     pthread_mutex_lock(&g_mu);
     if (g_npool == g_cap) { g_cap = g_cap ? g_cap * 2 : 64; g_pools = realloc(g_pools, g_cap * sizeof *g_pools); }
     g_pools[g_npool++] = (pool_ent){lo, hi, a, buf, buf.gpuAddress, mem, 0}; pool_find_reset(&g_pfind); atomic_fetch_add(&g_pool_gen, 1);   // not in the residency set yet: put in the first time it is addressed (pool_res)

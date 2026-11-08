@@ -215,6 +215,7 @@ void bf_want_note(const char *shader_key) {
 // The rest of the Metal backend is in gfx/nvn/mtl/, one file per part, included here in this order: they are one translation unit (statics
 // and file-scope state shared as before), split by subject so that each part can be read on its own (plan item 261). The order matters: a part
 // uses what the parts before it define.
+#include "mtl/fp16_probe.h"
 #include "mtl/pools.inc"
 #include "mtl/occlusion.inc"
 #include "mtl/usnap.inc"
