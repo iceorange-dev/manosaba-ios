@@ -17,46 +17,46 @@ d2r-mobile and its derivatives (MIT, keeping jhaizhou's LICENSE; the derivatives
 
 | Project | Last read | Notes |
 |---|---|---|
-| [jhaizhou-ops/d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile) (upstream, fetch only) | main 1e0e7934 (10-28); `android-crash-handler-safe` f755c9ab, `camera-genshin-controls` 29dd3e57 (10-29), `experiment/over-the-shoulder-camera` f23047f7; `android-pipe-guard` d4275cd, `android-warm-seed-pack` 9625ef3 | v2.0 b811b90 (Android and HarmonyOS on a Vulkan engine, Korean, Xbox layout, iPhone Duo); since: Adreno 740-799 rewrite policy, subgroup helper inlining (#156 open), BC4 / BC5 8-bit fallback, a persistent pipeline crash guard (2428e5b3), a crash handler with a signal-safe first half and a 3 s limit (3ebb29bd), the rewriter without a red zone for Android (`patch_nso.py` `NOREDZONE` / `sp_frame`); PRs to #185, #144 (MetalFX, open). d2r-mobile/d2r-mobile is a rewritten copy of its history up to 21cf97b |
-| [seedds/nxnative](https://github.com/seedds/nxnative) | main 8432521 (10-29) | PRs to #634, issues to #640; `chain-refresh` gone. Its history was rewritten on 10-22 (b932024's tree is 5dae4db). No Android port (PR #447, NVN replay on Vulkan, closed 10-28 as outside its Apple scope: RogelioLB/nxnative-android below); its "Vulkan layer" runs Switch games that use Vulkan on Metal. seedds/smbw-mobile is the same repository renamed |
-| [ly05010419/MacNativeGames](https://github.com/ly05010419/MacNativeGames) | main 984ad05 (10-29) | Tears of the Kingdom 1.0.0 / 1.1.2 / 1.4.3 on the Mac, the iPhone and Vision Pro; PRs to #1306; no Android (#151, #357) |
-| MacNativeGames forks | 10-29 | tvc97 main 5ab07b7 (upstream's), `poc/nxnative-perf` e8bd37d; DavidZande/MacNativeGames `performance` a60cdb3 (unchanged); BennettStaley/NativeTOTK-Apple-Silicon 4819590; dnlflores/MacNativeGames ff8b194 (Breath of the Wild on the iPad; a GPU clock probe, ff8b1947); NicholasDominici/totk-ios b3de471 (its aspect data is GPL-3.0); colonnellotong/MacNativePorts d2e1e6d (unchanged); Sacrappy/NativeTOTK gone (404) |
+| [jhaizhou-ops/d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile) (upstream, fetch only) | main 6a3f1ee2 (11-04, v2.3.0; PRs to #248, issues to #252); `android-crash-handler-safe` f755c9ab, `camera-genshin-controls` 311344d0 (10-30), `experiment/over-the-shoulder-camera` f23047f7; `android-pipe-guard` d4275cd, `android-warm-seed-pack` 9625ef3 | v2.0 b811b90 (Android and HarmonyOS on a Vulkan engine, Korean, Xbox layout, iPhone Duo); since: Adreno 740-799 rewrite policy, subgroup helper inlining (#156 open), BC4 / BC5 8-bit fallback, a persistent pipeline crash guard (2428e5b3), a crash handler with a signal-safe first half and a 3 s limit (3ebb29bd), the rewriter without a red zone for Android (`patch_nso.py` `NOREDZONE` / `sp_frame`); PRs to #248: #144 (MetalFX) closed unmerged on 10-28 and continued as PowerBeef/d2r-metal (MIT), #156 closed on 10-30. d2r-mobile/d2r-mobile is a rewritten copy of its history up to 21cf97b |
+| [seedds/nxnative](https://github.com/seedds/nxnative) | main 1794a35 (11-08) | PRs and issues to #1783; `chain-refresh` gone. Its history was rewritten on 10-22 (b932024's tree is 5dae4db). No Android port (PR #447, NVN replay on Vulkan, closed 10-28 as outside its Apple scope: RogelioLB/nxnative-android below); its "Vulkan layer" runs Switch games that use Vulkan on Metal. seedds/smbw-mobile is the same repository renamed |
+| [ly05010419/MacNativeGames](https://github.com/ly05010419/MacNativeGames) | main 9fe3fdc (11-06) | Tears of the Kingdom 1.0.0 / 1.1.2 / 1.4.3 on the Mac, the iPhone and Vision Pro; PRs to #1917; no Android (#151, #357) |
+| MacNativeGames forks | 10-29 | tvc97 main 67cf3da (11-03; its own work: cheats only), `poc/nxnative-perf` e8bd37d; DavidZande/MacNativeGames `performance` a60cdb3 (unchanged); BennettStaley/NativeTOTK-Apple-Silicon 0f34663 (11-01; render targets carried across a resolution step, 38a1348); dnlflores/MacNativeGames ff8b194 (Breath of the Wild on the iPad; a GPU clock probe, ff8b1947); NicholasDominici/totk-ios b3de471 (its aspect data is GPL-3.0); colonnellotong/MacNativePorts d2e1e6d (unchanged); Sacrappy/NativeTOTK gone (404) |
 | [T5eng/nxnative_totk](https://github.com/T5eng/nxnative_totk) (MIT with a note) | 057575d | Tears of the Kingdom 1.4.3 on an iPhone Air (iOS 27.0.1) as patches on MacNativeGames |
 | [atone/nxnative](https://github.com/atone/nxnative) | e3144b7 (an upstream merge only) | Pro Controller motion and HD rumble |
 | [chayan-bit/AnySwitch](https://github.com/chayan-bit/AnySwitch) | 29d88a4 (10-27) | base nxnative 23a11da; render-target heaps in any pool, heap members without lossless compression (8ba3c71), `DM_INTERNAL_RES` |
-| LNPANDY/NX2Apple (was nxnative-romfs-archive) | 1a8478b (10-29) | MIT with its RomFS archive's copyright; a one-click Mac app; issue #23: an A20 Pro limit of 8191 MB |
+| LNPANDY/NX2Apple (was nxnative-romfs-archive) | 3dbb450 (11-08) | MIT with its RomFS archive's copyright; nxnative pinned (`.upstream-ref`) plus 64 patches, its own work front ends; a one-click Mac app; issue #23: an A20 Pro limit of 8191 MB |
 | [Nishikori-Yui/lordran-native](https://github.com/Nishikori-Yui/lordran-native) | 85220ca (10-27); PR #40 419f0dc | Dark Souls Remastered, from nxnative; pool base snapshots at record time (c400b58) |
 | [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) | `codex/p5r-runtime` 4062bf4 (10-27) | Persona 5 Royal |
-| [huajiaoshu520/acnh-mobile](https://github.com/huajiaoshu520/acnh-mobile) | 20066bf (10-29), `ios18-compat` a98d127 | Animal Crossing; its base is now nxnative e72a065 |
-| ha7rock/blade2-mobile | a7dff99 (10-23) | Blade II, UE4 4.17 |
+| [huajiaoshu520/acnh-mobile](https://github.com/huajiaoshu520/acnh-mobile) | 2206ea7 (11-08; `ios18-compat` gone) | Animal Crossing; its base is now nxnative e72a065 |
+| ha7rock/blade2-mobile | d0ce642 (11-07) | Blade II, UE4 4.17 |
 | enginefuture/bayonetta3-mobile, enginefuture/dr3-mobile | e5ce116, a31c36c | dr3: Diablo III on nxnative 9579030, with LDN |
-| MZhao-ouo/Touchable | 8b22a49 (10-27) | Rhythm Heaven and Silksong (Unity: its render height, capped by the 1920-wide guest window textures); touch controls; MIT |
+| MZhao-ouo/Touchable | f0bf368 (10-30) | Rhythm Heaven and Silksong (Unity: its render height, capped by the 1920-wide guest window textures); touch controls; MIT |
 | kuosuko/tomodachi-native | 5587d1b | Tomodachi Life, SDK 20 |
 | armyja/nxnative-aa-port, armyja/nxnative-cuphead | df997fa, a393de4 | Ace Attorney (Unity, RE Engine); Cuphead |
 | shh632058099/d2r-mobile | e460049 (10-23) | iOS |
-| xinerqu/ns2ios-shell, Xc1Ym/LumaNX, IMTHECOOLEST/NXNATIVE-1.43.1 | aede8af (10-29), 5e3914b, 1780c28 | an IPA packed on Windows (its table of signers that keep the increased memory limit, ios/README.md); a Mac GUI; a 1.43:1 view |
-| kxn/d2r-mobile `codex/*` (`codex/android-native-backup-20261019` 7091475b, 10-28), kxn/nvn-kgsl ed090cb, n3crosis, TIMYW2K `lang-voice` 2d9ac3a, ghostyshell/nx2apk d0b5267 | 10-29 | Android measurements on an Adreno 735 (the translation on the calling thread 43 against 32 fps); NVN on KGSL; a browser IPA packager; portrait D2R; nxnative for Android with Darwin shim headers |
-| littckerQiu/witchspringr-ios | b276bc4 (10-27) | a fork of this repository with an nxnative overlay for WitchSpring R |
-| dodola, n2ray, tib-kpl (d2r-mobile forks) | 69b1b09f; main 346b37e, `generic/android` 60c720f, `review/upstream-183` f697868f (10-29); 039802a0 | dodola: the newest write per 64-page block, an ordered NVN worker |
+| xinerqu/ns2ios-shell, Xc1Ym/LumaNX, IMTHECOOLEST/NXNATIVE-1.43.1 | d3eceaa (11-08), 9fbca65 (11-06), 53c3875 (10-31) | an IPA packed on Windows (its table of signers that keep the increased memory limit, ios/README.md); a Mac GUI; a 1.43:1 view |
+| kxn/d2r-mobile `codex/*` (`codex/android-native-backup-20261019` 7091475b, 10-28), kxn/nvn-kgsl ed090cb, n3crosis, TIMYW2K `lang-voice` 2d9ac3a, ghostyshell/nx2apk d0b5267 (gone, 404 on 11-08) | 10-29 | Android measurements on an Adreno 735 (the translation on the calling thread 43 against 32 fps); NVN on KGSL; a browser IPA packager; portrait D2R; nxnative for Android with Darwin shim headers |
+| littckerQiu/witchspringr-ios | 2a0e59d (11-03) | a fork of this repository with an nxnative overlay for WitchSpring R |
+| dodola, n2ray, tib-kpl (d2r-mobile forks) | 69b1b09f; main e92f417 (11-02, merges only), `generic/android` 60c720f, `review/upstream-183` f697868f (10-29); ef9c13c (11-04) | dodola: the newest write per 64-page block, an ordered NVN worker |
 | hyc1743/super-mario-odyssey-ios | 3ef14d3, `codex/nxnative-verify-once` 103329c (10-22) | |
 | q520asdf0123/nsCHaojIMaLiAo, DanielZhangyc/smbw-mobile | 10-22, 56737aa | Super Mario 3D World on upstream; Super Mario Bros. Wonder on the Mac |
 | realskyrin/ns-game-apple-arm-port | 4d2986e | MIT since that commit |
 | yokeyhh/switch-port-to-apple, aerolithink, bluewater0121 | 8e1d2af, 43cde9a, 30ca74e (10-22) | a porting playbook; two A12Z iPad Pro D2R ports |
-| Johnoooob/nx-port, Kamisorara/d2r-mobile, 4ppp44/d2r-mobile-ios17 | 3e6366b, 1539d80, cb21bec | 4ppp44 (an iOS 17 build): argument blocks reused across passes, the driver segment filled per vec4 offset, capped speculative pipeline workers |
+| Johnoooob/nx-port, Kamisorara/d2r-mobile, 4ppp44/d2r-mobile-ios17 | 3e6366b, fae8c68 (11-02: reset to upstream v2.2.4), cb21bec | 4ppp44 (an iOS 17 build): argument blocks reused across passes, the driver segment filled per vec4 offset, capped speculative pipeline workers |
 | TommyLau/botw-mobile | gone (404 since 10-17) | its commits named in this file can no longer be fetched |
 
 Independent projects:
 
 | Project | Last read | Notes |
 |---|---|---|
-| [c22dev/mush8](https://github.com/c22dev/mush8) | a826860 (10-29) | **GPL-3.0: ideas and behaviour only.** Mario Kart 8 Deluxe in Rust; its IPA is ad-hoc signed with the increased memory limit for signers that read the app's own entitlements ([ios/README.md](../ios/README.md)) |
-| peiikai/LASRecomp (MIT for its own code, with a note) | main a4b53a3, `beta_6` e0371d0 (10-28) | Link's Awakening static recompilation; the GPU overlap merged (#333), Vulkan executor, iOS (PR #238 dac664c: "Match display" render-target scaling); hjqcan's fork is a copy |
-| Apolinario-coder/SkyRecomp (MIT with a note) | 506a9bc (10-27) | Skyward Sword HD; much of it is LASRecomp's |
+| [c22dev/mush8](https://github.com/c22dev/mush8) | 35fed4d (11-08) | **GPL-3.0: ideas and behaviour only.** Mario Kart 8 Deluxe in Rust; its IPA is ad-hoc signed with the increased memory limit for signers that read the app's own entitlements ([ios/README.md](../ios/README.md)) |
+| peiikai/LASRecomp (MIT for its own code, with a note) | main 579fdad, `beta_6` 4756d2a (11-08) | Link's Awakening static recompilation; the GPU overlap merged (#333), Vulkan executor, iOS (PR #238 dac664c: "Match display" render-target scaling); hjqcan's fork is a copy |
+| Apolinario-coder/SkyRecomp (MIT with a note) | ad649b4 (10-31) | Skyward Sword HD; much of it is LASRecomp's |
 | IshaanKalra2103/BotWRecomp | 2b84b82 | MIT; its Cemu-derived parts (MPL) and `fps.cpp`: ideas only |
 | [OJZen/totk-mobile](https://github.com/OJZen/totk-mobile) | 6d4c1d3 (10-22) | Apache-2.0 (its `core/` is upstream's MIT code); Tears of the Kingdom 1.4.3 on a Mac and M1+ iPads |
-| nxporting/nxport | main b0c0391 (10-29) | MIT, Rust, Tears of the Kingdom 1.1.2 only; a Vulkan backend, frame capture with pass-by-pass replay against both backends |
+| nxporting/nxport | main fd4a248 (11-07) | MIT, Rust, Tears of the Kingdom 1.1.2 only; a Vulkan backend, frame capture with pass-by-pass replay against both backends |
 | itzzslimechisel/totkrecomp, fedebuonco/nxrt, MayBAMemory/nvn-metal | b1b3d2d, c41d913 (10-29), 10-23 | MIT (Windows through dynarmic and Vulkan); Unlicense (a runtime for static recompilations, macOS only since 20360ec); MIT (Kirby) |
-| [catoncat/d2r-port-radar](https://github.com/catoncat/d2r-port-radar) | 77c62e6 (10-29, 400 entries) | an index of derivative ports |
+| [catoncat/d2r-port-radar](https://github.com/catoncat/d2r-port-radar) | 489adac (11-08, 458 entries) | an index of derivative ports |
 | masagrator's FPSLocker-Warehouse, alanyangcn/smbwonder-ios | | no licence: facts only |
 | vecStardo/VA-11_ns2ios | | GameMaker through GLES, no NVN: little to take |
 
@@ -70,11 +70,13 @@ mamcjr's Recomps (a placed heap only on Mesa's driver, the stock driver copies),
 
 | Project | Last read | Notes |
 |---|---|---|
-| [shirai91/nx2android](https://github.com/shirai91/nx2android) | main 4e5f6dd (10-29) | Its README: "MIT, as nxnative" (no LICENSE of its own; `nxnative/LICENSE` is seedds's). nxnative 6034fca as a subtree plus an Android runtime (Vulkan, NativeActivity, AAudio, MediaCodec, an APK writer of its own); 18 games with Android profiles on a Legion Y700 (Adreno 830). Its forks with work of their own: iamfaraz `s26-ultra` (Adreno 840), GabZoFar `feat/links-awakening` (the Android Emulator on a Mac, deebab4), parsifal295 `vulkan11`, freapsy PR #7 (a KGSL power hook, Turnip only) |
-| mamcjr/TOTKRecompAndroid, BOTWRecompAndroid, LASRecompAndroid | cc4f134, 1e727f2, 4f00a9d | MIT (Peiikai) for LASRecomp's own code; mamcjr's additions state no licence: facts only. Static recompilations on Vulkan; BOTWRecompAndroid 4fc0d28: HyperOS's gralloc refused AHardwareBuffer pools (-129, -22) |
-| simipoB/PKShield-Android | e69c64f | MIT. Pokémon Shield on the d2r-mobile engine; pools by host import, else an exported fd mapped at the pool's address (`nvn_vk.c`), then `mremap`, then a mirror |
-| akeem000-ship-it/nxnative-android, RogelioLB/nxnative-android | 2465314, ec9f5e9 | MIT. A host with no graphics backend (thread slots through `tpidr_el0`, 086bd8a); NVN replay on Vulkan (Unity's thread stack reported without bionic's guard page) |
-| Desm0nt/doom-port | ae303b7 | MIT. DOOM 2016 on the d2r-mobile engine (Adreno 750, Turnip) |
+| [shirai91/nx2android](https://github.com/shirai91/nx2android) | main 4689378 (11-08) | Its README: "MIT, as nxnative" (no LICENSE of its own; `nxnative/LICENSE` is seedds's). nxnative 6034fca as a subtree plus an Android runtime (Vulkan, NativeActivity, AAudio, MediaCodec, an APK writer of its own); 18 games with Android profiles on a Legion Y700 (Adreno 830). Its forks with work of their own: iamfaraz `s26-ultra` (Adreno 840), GabZoFar `feat/links-awakening` (the Android Emulator on a Mac, deebab4), parsifal295 `vulkan11`, freapsy PR #7 (a KGSL power hook, Turnip only); since 10-30 mleo2003 `perf/*` (pools backed on first GPU use, a spin before host waits, 11-07) and game forks (kianborg, RibhuNoodleBoodle, DeathKhan, sid350, zouyoujia, kalasyan) |
+| mamcjr/TOTKRecompAndroid, BOTWRecompAndroid, LASRecompAndroid | 58d39a5, 7bb5bc9, 82da18b (11-08) | MIT (Peiikai) for LASRecomp's own code; mamcjr's additions state no licence: facts only. Static recompilations on Vulkan; BOTWRecompAndroid 4fc0d28: HyperOS's gralloc refused AHardwareBuffer pools (-129, -22) |
+| simipoB/PKShield-Android | be5b6d3 (11-06) | MIT. Pokémon Shield on the d2r-mobile engine; pools by host import, else an exported fd mapped at the pool's address (`nvn_vk.c`), then `mremap`, then a mirror |
+| akeem000-ship-it/nxnative-android, RogelioLB/nxnative-android | b490eed (11-01), d23d7a3 (10-29) | MIT. A host with no graphics backend (thread slots through `tpidr_el0`, 086bd8a); NVN replay on Vulkan (Unity's thread stack reported without bionic's guard page) |
+| Desm0nt/doom-port | 51e4246 (11-07) | MIT. DOOM 2016 on the d2r-mobile engine (Adreno 750, Turnip) |
+| AurelioB/totk-android | 670b71d (11-07) | MIT ("MacNativeGames contributors"). Tears of the Kingdom 1.4.3 on Android from MacNativeGames, kitcatkode's `android-port` and d2r-mobile, with Mesa's Turnip bundled (no stock Qualcomm driver passed its start-up check: no `VK_EXT_external_memory_host` or dma-buf); Adreno 740 30 fps, 830 42-60; `games/totk/android/VULKAN.md` |
+| triasbrata/nxnative-android, Desm0nt/diablo3-port | 14868f5 (11-08), 0545886 (11-06) | MIT. nxnative on Android (FF XII, Tomodachi Life; Adreno 825); Diablo III from the DOOM port (write tracking against `vm.max_map_count`) |
 | igawa6/Raitchi, VinniGamgee/TOTK-recomp, valentderah/totk-pc-recomp, NotRexed/SkyboundTotk | | Android, with GPL parts: facts only; C generation, not running yet; Windows (MIT); Windows on WebGPU (MIT) |
 
 Android and HarmonyOS (10-23 night): upstream v2.0 runs D2R on both through its NVN → Vulkan engine (`dm/gfx/vulkan`, from biglawine's
@@ -82,6 +84,8 @@ HarmonyOS port); nxnative has no Android port. The radar (c7002ad) lists about 3
 (wdjwxh/D2R-Mobile-Android, Timqt/d2r-android, akari-sora/d2r-native AGPL-3.0, …); of other games wdjwxh/Taikou5-mobile, todwang96/rhythm-heaven-android,
 akari-sora/taiko-android (MIT) and rootrd/dontstarve-harmony; none of Tears of the Kingdom. For ours: the host calls 89 backend functions, 41 of
 which upstream's Vulkan engine lacks, and 26 of the 60 host sources use Apple-only APIs.
+
+New on 2026-11-08 (eleventh review, read only where a finding came from): Thijs2004/nxnative-mkw b1c5e4e (MIT; memory touched before loading), PowerBeef/d2r-metal (MIT, upstream's MetalFX PR), leeashine/ot2-mobile (MIT, Octopath Traveler II on an iPhone 18 Pro), kencalx/Nintanium (MIT, os_signpost lanes), yuchanns/nxnative-tvos (MIT), Poshandka/AnimalDuo (MIT), Timqt/pokelegza-and (no licence), Switch 2 ports of Mario Kart World and Pokopia, about 30 IPA builders.
 
 Seen, not reviewed: CODPHISH/ns2app (Silksong on iOS), WangTingYeYe/rtg-mobile, rootrd/dontstarve-harmony (NVN → Vulkan), hitsmaxft/nsp-dawrin
 (GPL-3.0: a synthetic NSP that CI could use).
@@ -102,6 +106,7 @@ Seen, not reviewed: CODPHISH/ns2app (Silksong on iOS), WangTingYeYe/rtg-mobile, 
 - 2026-10-27, ninth review (six reviewers; the A20 Pro "MetalFX to 1080p at a steady 60" claim is in none of them: nxnative #183 has
   Tears of the Kingdom at about 30 fps on an iPhone 18 Pro): 265-284.
 - 2026-10-30, tenth review (four reviewers, after a read of nx2android; the Android version of manosaba is starting): 288-301.
+- 2026-11-08, eleventh review (six reviewers, after Xcode 27.2): 303-313.
 
 The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](../DEVELOPMENT.md#open-work).
 
@@ -128,6 +133,11 @@ The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](.
   offline Metal 4 pipeline archive for now (615-850 MB of footprint while open, Tears of the Kingdom's 1,306 MiB); nxnative 82ab25b's present
   allocator by its own completion (268: here the drawable is taken first, and each of the layer's three returns only after the present that showed
   it, so the allocator three presents back has finished).
+- The eleventh review (11-08): upstream 955f274's crash and thread exit and n2ray f697868's SIGALRM (ours, `host/runtime/crash.c`), upstream PR #246's
+  staging reuse (ours), software BC decoding (Mali), fec76d1's pipeline guard (no parallel warm-up here), Turnip through adrenotools (a driver
+  replacement), LASRecomp's frame generation (7 + 3 ms an in-between frame; the iPhone is GPU-bound), MacNativeGames' synchronous replay (Mac
+  only) and mip-chain feedback view 6100b99 (it caused #1698), NX2Apple's and ns2ios-shell's own work (anonymous guest memory measured worse:
+  2.97 of 5 GB compressed). nxport's 10,015 listed pipelines cost about 1,640 MB on NVIDIA: the offline archive stays not taken.
 - Equal or better here: the Opus table leak (we run the SDK's decoder), macOS 27 fixed reservations (ours are anywhere), a Metal 3 backend, one
   descriptor pool, lordran's deswizzle and in-place re-upload (ours waits for the fence / keeps a spare, 16), the audio mixers and renderers of
   LASRecomp, SkyRecomp, MacNativeGames, nx-port, totk-mobile and blade2 (our in-process SDK renderer is closer), saves (transactional), the condvar
@@ -185,4 +195,7 @@ The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](.
   a per-game present interval (9745da2061b09fea0ea524c7d5369ad8e1357539), pool finalize dropping texture ID views
   (799df3c5edd00281c40ae8889a10c55cefe93616, the leak class of a593388); nx-port: geometry shader point-to-quad, alpha test, newer NVN object
   sizes (3e6366b…).
+- From the eleventh review: nxnative f5cc73d (NVNbuffer offset and size at +0x18 / +0x20), a9d06b6 (32-byte linear rows on iOS), 92f223a (sRGB and
+  linear twins over one storage), cac783a (copy strides as command-buffer state), ffdf67d (clearing every layer); SkyRecomp 598af40 (logic op OR as
+  max blending; ours is a red line).
 - An ad-hoc signature for LiveContainer (Kamisorara 95d6caa903bc19e602493bb5a5568650d39f52cf).

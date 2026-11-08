@@ -383,6 +383,55 @@ and 297 in batch 142, the user's order: 301 next):
   stress-test first), and the game's own work on its main thread (a frame of 140 ms with the render thread waiting for it). The frame of
   about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
 
+From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the user: fix the bugs, port what is worth it):
+- 303 correctness, each with a unit test and a broken variant: 303a the store-decision records hold 10 (8 colours, depth, stencil; nxnative
+  9508b93, MacNativeGames 6f4cbe3: `g_sd[9]`, `st[9]` and `nst[9]` overflow on such a pass); 303b pages protected under the slot lock (nxnative
+  af616f5, MacNativeGames 9505582: `nvn_dirty_protect` looked the range up without `g_slot_mu`, so a retirement in between left read-only pages
+  with no owner); 303c a cached texture view dropped when its ID has no texture (nxnative 0e4480d: `cur == v || v.parentTexture == cur` held for
+  nil == nil); 303d the AudioOut notifier's lost wakeup (nxnative c76a424: the disarm's release store and the `pending` acquire load compile to
+  `stlr` then `ldapr`, which may reorder); 303e RGBA4 with red in bits 0-3 (SkyRecomp 81f6507, nxport 00e04bc, nxnative 230fe53, deko3d's
+  table: Metal's ABGR4 read fully reversed), which settles the 16-bit family's order for 301e3's 5-bit formats; 303f no blending on integer
+  colour outputs (MacNativeGames PR #1797: Metal aborts); 303g an empty memory pool (MacNativeGames d3407e2, #1367); 303h the Mac app out of
+  Game Mode (`LSSupportsGameMode` false; nxnative cb59a67: Tears of the Kingdom's GPU held at 338 MHz in fullscreen, 10.5 → 19.7 ms), 97's drop.
+- 304 Tears of the Kingdom above 100 fps (the real-time step at `DM_PRESENT_HZ=120`): the moving-platform check at main 0x562a58 (nxport
+  1bf994a, MIT: a tenth of the platform's velocity once the time object's +0x28 exceeds 100; compare +0x28 × +0x38, once +0x38 is shown to hold
+  the step in 1.4.3); the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time);
+  MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps) checked at 90 and 120 with 292.
+- 305 Tears of the Kingdom's scene targets across a resolution step (BennettStaley 38a1348, MIT): the game makes them again at the new size at
+  the same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); look at a shrine across a step first.
+- 306 a virtual core taken by moving its owner to an idle core (MacNativeGames 3a48acf, as Horizon migrates); core-take waits by `DM_SCHED_STATS` first.
+- 307 the lookahead's pipeline guesses pruned by the draw's depth / stencil use (MacNativeGames 3578d66: Breath of the Wild on an iPhone, 12,517
+  → 418 pipelines built in play).
+- 308 the Vulkan backend (301e): 308a colour write mask 0 and no blending for outputs the fragment shader does not write (upstream PR #229; the
+  Metal backend's 621bd6d); 308b a view's swizzle replaces the texture's (nx2android f13ecfa); 308c a texture at two colour slots (`rt_dup_slot`,
+  nx2android 8e06fd2); 308d the swapchain through a lost surface, more than 8 images and a failed capabilities call (LASRecomp ee37681 /
+  2745a5e / 202916d); 308e the pipeline cache kept between launches (its header checked, written through a temporary file; LASRecomp 202916d,
+  SkyRecomp ec367c6); 308f the manifest's `configChanges` (nx2android d47cb00); 308g a host-read barrier at a submission's end (PKShield
+  b4002cc); 308h NEAREST for formats without linear filtering (upstream 0733eb4); 308i AAudio reopened without low latency after a stall
+  (doom-port 728dd65); 308j upload staging reused (upstream 64b5fcd), after measuring its share of 301f's `vkAllocateMemory`.
+- 309 Adreno checks on the K100: the subgroup size given to the translator for the Vulkan bundle (nx2android 44eca7e; 41 of manosaba's 2,740
+  modules shuffle by lane), NaN min / max / clamp by a probe like 260's (LASRecomp 856103b: Qualcomm's driver Maxwell-like on an 830), the
+  display frame-rate vote and the hint details for 301f (nx2android 70c8cb8).
+- 310 on the iPhone: float16 overflow on the A19 Pro (nxnative PR #1128: +inf where an M1 stores 65504; 260's precise min then gives 2048), GPU
+  writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
+  (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
+  the on-screen pad's redraw (upstream 7b62d9c).
+- 311 the next change of the translation chain (with 64g; every shader built again): TMML's negative LOD as unsigned 24.8, clamped to 0
+  (nx2android 44eca7e), FSETP / FSET / FCMP `.FTZ` (nxnative 84dea69), an exiting thread still arriving at a barrier (nxport dc36147), split
+  storage-word loads as one packed load (nxnative 1b9fbea), one translation for shaders that differ only in control bytes the translator does not
+  read (MacNativeGames fb9b734), the Mac libraries' minimum system version (MacNativeGames #1845) and Xcode 27.2's Metal compiler (32023.922;
+  the lock holds 32023.921) in the lock.
+- 312 HLE: WaitSynchronization completing with the index of an event signalled and cleared before the waiter ran (nxnative db206a4); Unity's
+  ThreadedStreamBuffer handshake (a store-release then a plain load; nxnative d51417b, witchspringr 2a0e59d) looked for in manosaba's main.
+- 313 decisions to measure again: the 1 GiB pool buffer cap (its reason, MacNativeGames' kernel-panic theory, was withdrawn in b3bb2c0), early
+  fragment tests on Tears of the Kingdom's 8f470f5ce5864df7 (nxnative 9ced2c3: replays differ with the attribute), the pass-end barrier (187
+  removed only the encoder-start one; nxnative PR #1572), the spin before short waits on Android (mleo2003 77f6586), pre-rotation on portrait
+  panels (nx2android f7a3371), command-buffer cuts only between passes (PKShield f4f9f1c). For Tears of the Kingdom on Android (301e2c / e3):
+  same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata 8bb3212), masked and region
+  clears and the counter reports' GPU timestamps (AurelioB/totk-android `VULKAN.md`), scaled depth copies (nx2android e154eec),
+  `vm.max_map_count` (diablo3-port 5bb14e8), pools backed on first GPU use (mleo2003 3f5467d). For 221 (MacNativeGames, facts): LOD by 12
+  view-depth sites (main+0x1ee8424 and copies), far plane main+0x628c30, FOV load main+0x628c3c, sun shadow map size main+0x683604.
+
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64g HSETP2 `.H_AND` and translator call arguments (with the next change of the translation chain); 64h2 a SystemEvent kept while
 its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN. Also [docs/sources.md § Port when a game needs
