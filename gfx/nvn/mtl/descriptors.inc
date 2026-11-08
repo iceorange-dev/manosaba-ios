@@ -124,6 +124,16 @@ static void view_sweep(void) {   // fin_drain, every submission
             defer_obj_unref(CFBridgingRelease(e->view)); free(e); again = 1; break; } }
     pthread_mutex_unlock(&g_rmu);
 }
+// A cached view of an ID is still good when the ID's texture is the view itself or the view's parent. With no texture now (nil) a base-texture
+// view, whose parent is nil too, passed the second test (nil == nil) and a released texture stayed on the ID (seedds/nxnative 0e4480d, MIT: GPU
+// page faults); t_texgone
+static int view_still_good(id<MTLTexture> cur, id<MTLTexture> v) {
+#ifdef DM_TEST_VIEW_NIL_KEEPS   // negative control of t_texgone only: the test as before
+    return cur == v || v.parentTexture == cur;
+#else
+    return cur && (cur == v || v.parentTexture == cur);
+#endif
+}
 static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     if (g_tpool_n && tid - g_tex_ns >= g_tpool_n) { if (!g_stat_tex_oob++) MLOG("texture ID %d outside the pool (pool capacity %d) treated as an empty slot: reads 0", tid - g_tex_ns, g_tpool_n); return nil; }
     if (tid < 0 || tid >= g_ntreg || !g_treg[tid].ok) { RED_ONCE(10, "texture ID %d not registered", tid); return nil; }
@@ -150,7 +160,7 @@ static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
     id<MTLTexture> v = (__bridge id<MTLTexture>)rp->view;
     if (v) {   // The serial table or guest memory has changed: check whether the base texture was re-uploaded and replaced; if so the view is invalidated
         id<MTLTexture> cur = tex_mtl(&rp->t);
-        if (cur == v || v.parentTexture == cur) { rp->view_ser = sg; rp->view_dirty = dg; rp->view_kind = kind; return v; }
+        if (view_still_good(cur, v)) { rp->view_ser = sg; rp->view_dirty = dg; rp->view_kind = kind; return v; }
         defer_obj_unref(v); CFRelease(rp->view); rp->view = NULL; rp->view_rid = 0; v = nil; treg_alt_drop(rp);
     }
     // The game uses an ID whose texture was released after its finalize and grace period: its descriptor still names that storage, so the texture is

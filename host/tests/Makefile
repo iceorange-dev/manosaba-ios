@@ -13,6 +13,8 @@ run: \
 	$(B)/t_audio_extras_vol \
 	$(B)/t_audio_extras_kept \
 	$(B)/t_audio_extras_stopkeeps \
+	$(B)/t_audio_notify \
+	$(B)/t_audio_notify_store \
 	$(B)/t_audren \
 	$(B)/t_audren_void \
 	$(B)/t_audren_unbounded \
@@ -217,6 +219,11 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_$$t.log)" -ne "$$want" ]; then \
 	   cat $(B)/t_audio_extras_$$t.log; echo "t_audio_extras_$$t: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audio_extras_$$t: $$want fail, as expected"; done
+	$(B)/t_audio_notify
+	@status=0; $(B)/t_audio_notify_store > $(B)/t_audio_notify_store.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_notify_store.log)" -ne 1 ]; then \
+	   cat $(B)/t_audio_notify_store.log; echo "t_audio_notify_store: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_audio_notify_store: the release-only disarm loses wakeups, as expected"
 	$(B)/t_audren 2>/dev/null
 	@status=0; $(B)/t_audren_void > $(B)/t_audren_void.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ AcquireAudioDeviceNotificationForOutput: success" $(B)/t_audren_void.log; then \
@@ -790,6 +797,10 @@ $(B)/t_audio_extras_early: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h 
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_AUDIO_PUBLISH_EARLY -I.. -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_vol: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_VOLUME_IGNORED -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_notify: t_audio_notify.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_audio_notify.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_notify_store: t_audio_notify.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -DDM_TEST_AUDIO_NOTIFY_STORE -I.. -o $@ t_audio_notify.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_kept: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_PLAYED_KEPT -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_stopkeeps: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)

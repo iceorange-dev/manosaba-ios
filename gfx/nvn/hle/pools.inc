@@ -12,7 +12,14 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
 #endif
     const pool_builder_t *s = (const pool_builder_t *)b; pool_t *o = (pool_t *)p;
     o->magic = MAGIC('P', 'O', 'O', 'L'); o->flags = s->flags; o->mem = s->mem; o->size = s->size;
+    // An empty pool (storage but size 0; MacNativeGames d3407e2, #1367: Tears of the Kingdom 1.2.1 makes one) registers nothing: the backends refuse a
+    // buffer of no bytes (Metal retried for a second, then the process died; Vulkan died at once) and it can hold no buffer or texture (t_pools)
+#ifndef DM_TEST_POOL_EMPTY_ADDED   // negative control of t_pools only: registered like any other, as before
+    if (o->mem && o->size) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
+    else if (o->mem) { static int seen; if (seen++ < 4) LOG("MemoryPoolInitialize: an empty pool at %p (flags %#x): nothing registered", o->mem, o->flags); }
+#else
     if (o->mem) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
+#endif
     if (!o->mem && !(o->flags & 0x200)) LOG("[red] MemoryPoolInitialize: non-virtual pool has no storage flags=%#x size=%#llx", o->flags, o->size);
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     return 1;
@@ -20,7 +27,7 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
 NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) {
     x_drain();   // a queued replay may still use it (plan item 61)
     pool_t *o = (pool_t *)p;
-    if (o->mem && !(o->flags & 0x200)) { nvn_dirty_remove_range(o->mem); mtl_pool_del(o->mem); }   // a virtual pool's storage belongs to a physical pool (MapVirtual)
+    if (o->mem && o->size && !(o->flags & 0x200)) { nvn_dirty_remove_range(o->mem); mtl_pool_del(o->mem); }   // (an empty pool registered nothing)   // a virtual pool's storage belongs to a physical pool (MapVirtual)
     o->magic = 0;
 }
 // Virtual pool (flags 0x200): a GPU address range without storage; MapVirtual maps pages of physical pools into it. A request is 0x28 bytes: {physical pool,

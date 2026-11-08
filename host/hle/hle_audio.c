@@ -72,11 +72,26 @@ static int g_suspended;
 static _Atomic unsigned g_consumer_dupes;   // a second consumer on one output's queues (two silent sinks, or a sink beside the AudioUnit): reported red at the next backend stop
 static aout *ao(const void *g) { aout *a = objmap_get(g); if (!a) die("AudioOut %p was not created by the host", g); return a; }
 
+// The release handoff to the notifier thread. The producer publishes `pending`, then arms; it posts only when the notifier was not armed. The
+// notifier disarms, then looks at `pending` again. The disarm is an acquire-release exchange: a release-only store followed by the acquire load
+// compiles to stlr then ldapr on Apple cores, which may let the load go first, so the producer could see the old armed (no post) while the
+// notifier saw the old pending (back to sleep) and the game's event never came (seedds/nxnative c76a424, MIT; t_audio_notify). As exchanges on
+// the same word they are ordered: if the producer's came first, the notifier acquires its pending; otherwise the producer posts
+static int notify_arm(aout *a) {   // 1: post the notifier
+    atomic_store_explicit(&a->notify_pending, 1, memory_order_release);
+    return atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0;
+}
+static int notify_disarm(aout *a) {   // the pending flag seen after disarming
+#ifdef DM_TEST_AUDIO_NOTIFY_STORE   // negative control of t_audio_notify only: the release-only store, as before
+    atomic_store_explicit(&a->notify_armed, 0, memory_order_release);
+#else
+    atomic_exchange_explicit(&a->notify_armed, 0, memory_order_acq_rel);
+#endif
+    return atomic_load_explicit(&a->notify_pending, memory_order_acquire);
+}
 static void notify_release(aout *a) {
     dm_sem_post(a->rel_sem);
-    atomic_store_explicit(&a->notify_pending, 1, memory_order_release);
-    if (atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0)
-        dm_sem_post(a->notify_sem);
+    if (notify_arm(a)) dm_sem_post(a->notify_sem);
 }
 
 static void *event_notify(void *p) {
@@ -85,10 +100,9 @@ static void *event_notify(void *p) {
         dm_sem_wait(a->notify_sem, -1);
         if (atomic_exchange_explicit(&a->notify_pending, 0, memory_order_acq_rel) && a->event)
             hle_signal_system_event(a->event);
-        atomic_store_explicit(&a->notify_armed, 0, memory_order_release);
+        int pend = notify_disarm(a);
         if (!atomic_load_explicit(&a->notify_run, memory_order_acquire)) break;
-        if (atomic_load_explicit(&a->notify_pending, memory_order_acquire) &&
-            atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0)
+        if (pend && atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0)
             dm_sem_post(a->notify_sem);
     }
     return NULL;

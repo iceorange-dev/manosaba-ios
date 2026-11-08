@@ -129,18 +129,18 @@ int pass_ds_need(void) {
 }
 
 // ---- Store lookahead ----
-sd_att g_sd[9]; int g_nsd;
+sd_att g_sd[SD_MAX]; int g_nsd;
 uint64_t g_sd_dead_bytes, g_sd_n_dead, g_sd_n_all;
 uint64_t g_bw_load, g_bw_store, g_pass_full_rw, g_udc_saved_bytes;
 static void sd_need(sd_att *t, int why) { if (!t->state) { t->state = 1; t->why = (uint8_t)why; } }   // why: 1 a draw reads it as a texture 2 as an attachment, drawn before cleared 3 copy 4 texture clear 5 scanned to the end undecided 6 no start point / index unavailable
-static int sdx_decide(uint8_t st[9]) {   // Store lookahead decision by the index (gfx/nvn/core/store_index.c; built by mtl_sub_index): st[i] 2 redundant, otherwise why << 2 (the reason it is needed, same as sd_need). Returns 0 = index unavailable
+static int sdx_decide(uint8_t st[SD_MAX]) {   // Store lookahead decision by the index (gfx/nvn/core/store_index.c; built by mtl_sub_index): st[i] 2 redundant, otherwise why << 2 (the reason it is needed, same as sd_need). Returns 0 = index unavailable
     uint32_t P; if (!sdx_pos(g_exec_cur, &P)) return 0;
     for (int i = 0; i < g_nsd; i++) st[i] = sdx_first(g_sd[i].ser, g_sd[i].lv, g_sd[i].sl, g_sd[i].depth, P, g_hoist_skip, g_hoist_n);
     return 1;
 }
-void sd_decide(uint8_t store[9]) {
+void sd_decide(uint8_t store[SD_MAX]) {
     if (!tbdr_part(TBP_STORE)) { for (int i = 0; i < g_nsd; i++) store[i] = 1; return; }   // All optimizations off: always write back
-    uint8_t nst[9];
+    uint8_t nst[SD_MAX];
     if (sdx_decide(nst)) { for (int i = 0; i < g_nsd; i++) if (nst[i] == 2) g_sd[i].state = 2; else sd_need(&g_sd[i], nst[i] >> 2); }
     else for (int i = 0; i < g_nsd; i++) sd_need(&g_sd[i], 6);   // Pass ended outside the list / index unavailable: always write back
     for (int i = 0; i < g_nsd; i++) {

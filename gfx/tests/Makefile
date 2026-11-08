@@ -18,6 +18,8 @@ t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_race.c $(CRASH)
 t_dirty_stamp: t_dirty_stamp.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_stamp.c $(CRASH)
+t_dirty_retire: t_dirty_retire.c ../nvn/nvn_dirty.c $(CRASH) ../nvn/nvn_dirty.h
+	clang $(CFLAGS) -o $@ t_dirty_retire.c $(CRASH)
 t_deswz_gpu: t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../tex/nvn_deswizzle.h ../tex/nvn_deswizzle_gpu.h ../nvn/nvn_tex.c ../nvn/nvn_tex.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../nvn/nvn_tex.c -framework Metal -framework Foundation
 t_tex_auto: t_tex_auto.c ../nvn/nvn_tex.c ../nvn/nvn_tex.h ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle.h
@@ -351,6 +353,7 @@ run: \
 	t_deswz_gpu \
 	t_dirty_race \
 	t_dirty_stamp \
+	t_dirty_retire \
 	t_dirty_slots \
 	t_esfilter \
 	t_vbelide \
@@ -467,6 +470,7 @@ run: \
 	./t_dirty_slots
 	./t_dirty_race
 	./t_dirty_stamp
+	./t_dirty_retire
 	./t_dirty_shared
 	./t_deswz_gpu
 	./t_pace

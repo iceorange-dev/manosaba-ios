@@ -1,7 +1,9 @@
 // A format's own components as the replay samples them (nvn_mtl.m tex_by_id with nvn_fmt_to_mtl's swizzle): an RGB565 and an RGB5A1 texture laid
 // out in guest memory with NVN's red in the low bits (the order totk-mobile d3dd76c found for Tears of the Kingdom's terrain textures) read red,
 // green and blue where they were written; an RGBX8 texel whose X byte is 0 reads alpha 1; a guest swizzle (G, R, 1, 0) on RGB565 picks NVN's
-// green and red, not Metal's. GPU reads through a compute kernel. The format's swizzle dropped (-DDM_TEST_FMT_SWZ_DROP), as before: 6 fail.
+// green and red, not Metal's; an RGBA4 texture reads red from its low four bits and alpha from its top four (Metal's ABGR4 holds them reversed). GPU
+// reads through a compute kernel. The format's swizzle dropped (-DDM_TEST_FMT_SWZ_DROP), as before: 8 fail; RGBA4 read in ABGR4's own order
+// (-DDM_TEST_RGBA4_AS_ABGR4, as before): 2 fail.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -51,6 +53,10 @@ int main(void) { @autoreleasepool {
     tex4(4, NVN_FORMAT_RGB565, c565, sizeof c565, &v);
     EXPECT("RGB565 viewed (G, R, 1, 0): NVN's red texel reads in green", 0x00ffff00, rd(4, 0));
     EXPECT("... NVN's green texel reads in red", 0xff00ff00, rd(4, 1));
+    const uint16_t c4444[4] = {0x4321, 0xf000, 0, 0};               // red 0-3, green 4-7, blue 8-11, alpha 12-15 [-DDM_TEST_RGBA4_AS_ABGR4]
+    tex4(6, NVN_FORMAT_RGBA4, c4444, sizeof c4444, NULL);
+    EXPECT("RGBA4: 0x4321 reads red 1, green 2, blue 3, alpha 4 (of 15)", 0x11223344, rd(6, 0));
+    EXPECT("RGBA4: the top four bits are alpha", 0x000000ff, rd(6, 1));
     tex4(5, NVN_FORMAT_RGBA8, cx, sizeof cx, NULL);
     EXPECT("RGBA8 (identity format): the X byte is alpha, untouched", 0x11223300, rd(5, 0));
     printf("FMT_SWZ %s %d/%d\n", fail ? "FAIL" : "OK", n - fail, n);

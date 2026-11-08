@@ -8,7 +8,7 @@
 // cleared in full before it is drawn again not stored, one a later draw loads stored, depth and stencil apart; all stored with the store part
 // off or no op being replayed; one loaded and not written not stored (udc); the bandwidth ledger.
 // A clear inside the pass taken as needing neither (-DDM_TEST_DS_CLEAR_FREE, a broken variant): 1 fails. A cleared texture on a slot hoisted all
-// the same (-DDM_TEST_HOIST_BOUND_OK, the other): 1 fails.
+// the same (-DDM_TEST_HOIST_BOUND_OK, the other): 1 fails. Store records for 9 attachments, the old size (-DDM_TEST_SD_MAX=9): 1 fails.
 #include "../nvn/core/pass.h"
 #include "../nvn/core/state.h"
 #include "../nvn/core/store_index.h"
@@ -115,7 +115,7 @@ int main(void) {
     for (int i = 0; i < g_nops; i++) { sdx_seq(g_ops[i]); if (g_ops[i] == e) break; }
     g_exec_cur = e; R.rt = rt_of(&A, &D);
     att(0, &A, 0, 0, 1, 1); att(1, &D, 1, -1, 1, 1); att(2, &D, 2, -1, 1, 1); g_nsd = 3;
-    g_bw_store = 6000; uint8_t store[9]; sd_decide(store);
+    g_bw_store = 6000; uint8_t store[SD_MAX]; sd_decide(store);
     check("cleared in full before drawn again: colour and depth not stored, the stencil (loaded) stored", 1, !store[0] && !store[1] && store[2]);
     check("... why: the stencil drawn to before cleared (2)", 2, g_sd[2].why);
     check("... the ledger: 3 decided, 2 not stored, 3000 bytes off the stores", 1, g_sd_n_all == 3 && g_sd_n_dead == 2 && g_sd_dead_bytes == 3000 && g_bw_store == 3000);
@@ -125,6 +125,15 @@ int main(void) {
     check("a pass ending with no op being replayed: stored (6)", 1, store[0] && g_sd[0].why == 6);
     att(0, &A, 0, 0, 1, 0); uint64_t sv = g_udc_saved_bytes; sd_decide(store);
     check("loaded and not written: not stored, counted as saved", 1, !store[0] && g_udc_saved_bytes == sv + 1000);
+    // a full pass: 8 colours, the depth and the stencil are 10 records (the old 9 overflowed g_sd and the store arrays) [-DDM_TEST_SD_MAX=9]
+    check("the store records hold 8 colours, the depth and the stencil", 1, (int)(sizeof g_sd / sizeof g_sd[0]) >= 10);
+    if ((int)(sizeof g_sd / sizeof g_sd[0]) >= 10) {   // (not run in the broken variant: it would write past the arrays)
+        for (int k = 0; k < 8; k++) att(k, &A, 0, k, 1, 1);
+        att(8, &D, 1, -1, 1, 1); att(9, &D, 2, -1, 1, 1); g_nsd = 10; g_exec_cur = NULL;
+        uint8_t full[SD_MAX + 1]; memset(full, 7, sizeof full); sd_decide(full);
+        int all = 1; for (int k = 0; k < 10; k++) all &= full[k] == 1 && g_sd[k].why == 6;
+        check("... with no op being replayed all 10 stored (6), the stencil last, nothing written past them", 1, all && full[SD_MAX] == 7 && g_sd[9].depth == 2);
+    }
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }

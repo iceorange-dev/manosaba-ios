@@ -155,7 +155,9 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   yield back-off (opt-in), targeted wakes, waits on upload completion and buffer releases, a per-thread pool cache, the dirty range kept per
   texture, residency no-op skips, page runs, a spare texture for re-uploads and VP9 row multithreading; then the host race fixes, the c1 guard
   by interval arithmetic, the yield back-off start, the guest CPU power line and the BAHS shader entries; later Maxwell's min / max / clamp results for a NaN operand on
-  every GPU (`precise::`), and the SDK's address-region node area cut and two SDK return types, credited in the code.
+  every GPU (`precise::`), and the SDK's address-region node area cut and two SDK return types; then the store-decision records for ten
+  attachments, page protection under the pool-slot lock, an ID's cached view dropped with its texture, the AudioOut notifier's disarm and Game
+  Mode off on the Mac, credited in the code.
 - **[tomodachi-native](https://github.com/kuosuko/tomodachi-native)** ([kuosuko](https://github.com/kuosuko), MIT), a fork of nxnative: the
   variant of the duplicated colour slot handling that keeps the slot the pass writes, the memory snapshots (`DM_MEMSNAP`), the FMZ multiply in
   the shader translator, the attachment copies for draws that sample what their pass draws and code options applied at load.
@@ -167,7 +169,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   small-texture hashing and once-per-submission checks, layered passes, the encode stage, driver segment fills, block height and D16 clear fixes,
   the GPU memory budget and pool range checks, and the RomFS overlay findings for 60 fps; then the fault guard around snapshot copies, read-only
   rodata, waiting for a save at quit and one game at a time on the Mac, host calls on a per-thread host stack with the frame record back to
-  the guest, the live command channel, the sead heap walk and list watch and the soak measurement, ported by hand and credited in the code.
+  the guest, the live command channel, the sead heap walk and list watch and the soak measurement; then no blending on integer colour outputs and
+  empty memory pools, ported by hand and credited in the code.
 - **[LASRecomp](https://github.com/peiikai/LASRecomp)** ([Peiikai](https://github.com/peiikai), MIT), a static recompilation of Link's Awakening:
   its rule that a texture is uploaded from guest memory until the GPU renders into it, behind the CPU-filled textures of Tears of the Kingdom,
   and the order of WaitSynchronization's checks; GPU time as the union of command buffers; the ring of lock / condition variable calls, the late
@@ -175,7 +178,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
 - **Single fixes from other ports**, credited in the code: [Kamisorara/d2r-mobile](https://github.com/Kamisorara/d2r-mobile) (controller face
   buttons by the printed letter, also upstream's), [jiangjifeng/nxnative](https://github.com/jiangjifeng/nxnative) (scaled vertex formats),
   [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) and [lordran-native](https://github.com/Nishikori-Yui/lordran-native) (sampler LOD
-  bias and reduction; lordran-native also the alpha test and occlusion counts across submissions), [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (the handles of a WaitSynchronization in thread dumps, user mod folders),
+  bias and reduction; lordran-native also the alpha test and occlusion counts across submissions), [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (the handles of a WaitSynchronization in thread dumps, user mod folders, RGBA4's
+  channel order, as [nxport](https://github.com/nxporting/nxport) found it),
   [BotWRecomp](https://github.com/IshaanKalra2103/BotWRecomp) (game data out of backups, GCSupportsGameMode),
   [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17) (what an iOS 17 build needs), [GirlNet/nxnative](https://github.com/GirlNet/nxnative)
   (the host built for every game on a CI runner), [RogelioLB/nxnative-android](https://github.com/RogelioLB/nxnative-android) (a thread's stack
@@ -189,7 +193,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
 - **[LibHac](https://www.nuget.org/packages/LibHac/0.19.0)** ([Alex Barney](https://github.com/Thealexbarney), MIT; the NuGet package, as its
   GitHub repository is no longer reachable): reads NSP, XCI and NCA containers in `tools/game_extract`.
 - **[Ryujinx](https://ryujinx.app)** (MIT; source on the project's own Forgejo instance): the shader translator in `third_party/ryujinx`.
-- **[deko3d](https://github.com/devkitPro/deko3d)** (devkitPro, zlib): the texture layout size algorithm in `gfx/nvn/nvn_tex.c`.
+- **[deko3d](https://github.com/devkitPro/deko3d)** (devkitPro, zlib): the texture layout size algorithm in `gfx/nvn/nvn_tex.c`; its format table
+  told the bit order of the 16-bit formats (`gfx/tex/nvn_fmt_mtl.c`).
 - **nvn.h** ([h1k421](https://github.com/h1k421), MIT): NVN declarations in `gfx/nvn/include/nvn.h`.
 - **[bcdec](https://github.com/iOrange/bcdec)** ([iOrange](https://github.com/iOrange), MIT or Unlicense): BC texture decoding.
 - **[libvpx](https://github.com/webmproject/libvpx)** (WebM Project, BSD-3-Clause): VP8 / VP9 movie decoding, linked statically from Homebrew

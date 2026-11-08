@@ -384,15 +384,6 @@ and 297 in batch 142, the user's order: 301 next):
   about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
 
 From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the user: fix the bugs, port what is worth it):
-- 303 correctness, each with a unit test and a broken variant: 303a the store-decision records hold 10 (8 colours, depth, stencil; nxnative
-  9508b93, MacNativeGames 6f4cbe3: `g_sd[9]`, `st[9]` and `nst[9]` overflow on such a pass); 303b pages protected under the slot lock (nxnative
-  af616f5, MacNativeGames 9505582: `nvn_dirty_protect` looked the range up without `g_slot_mu`, so a retirement in between left read-only pages
-  with no owner); 303c a cached texture view dropped when its ID has no texture (nxnative 0e4480d: `cur == v || v.parentTexture == cur` held for
-  nil == nil); 303d the AudioOut notifier's lost wakeup (nxnative c76a424: the disarm's release store and the `pending` acquire load compile to
-  `stlr` then `ldapr`, which may reorder); 303e RGBA4 with red in bits 0-3 (SkyRecomp 81f6507, nxport 00e04bc, nxnative 230fe53, deko3d's
-  table: Metal's ABGR4 read fully reversed), which settles the 16-bit family's order for 301e3's 5-bit formats; 303f no blending on integer
-  colour outputs (MacNativeGames PR #1797: Metal aborts); 303g an empty memory pool (MacNativeGames d3407e2, #1367); 303h the Mac app out of
-  Game Mode (`LSSupportsGameMode` false; nxnative cb59a67: Tears of the Kingdom's GPU held at 338 MHz in fullscreen, 10.5 → 19.7 ms), 97's drop.
 - 304 Tears of the Kingdom above 100 fps (the real-time step at `DM_PRESENT_HZ=120`): the moving-platform check at main 0x562a58 (nxport
   1bf994a, MIT: a tenth of the platform's velocity once the time object's +0x28 exceeds 100; compare +0x28 × +0x38, once +0x38 is shown to hold
   the step in 1.4.3); the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time);
@@ -1312,3 +1303,23 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   6 fail). gfx 173 / 173 on Metal 4 and Metal 3, host 200 / 200, sanitizer, texture, audit and tool tests, both IPAs; the Android phone was not
   connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes at other moments (looked at); manosaba no red line,
   its four shots as batch 144's.
+- [x] batch 146 · 303: correctness fixes from the eleventh review (the user, 2026-11-08: fix the bugs), each with a test and a broken variant.
+  303a the store-decision records hold 10 (`SD_MAX`: 8 colours, the depth and the stencil; nxnative 9508b93, MacNativeGames 6f4cbe3): `g_sd`, the
+  store arrays and the lookahead's were 9, overrun by an 8-target pass with a depth-stencil target (`t_core_pass` 26; `-DDM_TEST_SD_MAX=9` 1 fails).
+  303b pages protected under the slot mutex from the lookup to the last mprotect (nxnative af616f5, MacNativeGames 9505582): a pool destroyed in
+  between left its returned memory read-only with no range (`t_dirty_retire`, the destruction staged after the lookup: a host read() into it
+  EFAULT without the lock; `-DDM_TEST_DIRTY_PROTECT_NOLOCK` 2 fail). 303c an ID's cached view dropped when the ID has no texture
+  (`view_still_good`; nxnative 0e4480d: nil == nil kept it; `t_texgone` 7, `-DDM_TEST_VIEW_NIL_KEEPS` 1 fails). 303d the AudioOut notifier
+  disarms with an acquire-release exchange (`notify_arm` / `notify_disarm`; nxnative c76a424): host `t_audio_notify`, a store-buffering
+  litmus of four thread pairs, 2,000,000 rounds each: none lost; the release-only store (`t_audio_notify_store`, in the run) lost 115-230 in
+  every run here (one pair alone showed it in 2 of 19 runs). 303e RGBA4 read fully reversed from Metal's ABGR4 (`SV`; SkyRecomp 81f6507,
+  nxport 00e04bc, nxnative 230fe53, deko3d's table as facts; the 16-bit family's order now written down in `nvn_fmt_mtl.c`): `t_fmt_swz` 11
+  (0x4321 reads 1, 2, 3, 4 of 15; `-DDM_TEST_RGBA4_AS_ABGR4` 2 fail, `-DDM_TEST_FMT_SWZ_DROP` now 8). 303f no blending on integer colour
+  outputs, the write mask kept (MacNativeGames PR #1797: Metal aborts; `t_fout` 7, the pipeline made; `-DDM_TEST_INT_BLEND` 1 fails). 303g an
+  empty memory pool registers nothing (MacNativeGames d3407e2): `t_pools` 7, in a child process after another pool, the neighbour tracked
+  whole; `-DDM_TEST_POOL_EMPTY_ADDED` 1 fails (Metal refuses the buffer, the child dies). 303h the Mac app out of Game Mode
+  (`LSSupportsGameMode` false in `tools/mac_app.sh`; nxnative cb59a67): `tools/tests/t_mac_app.py` 4 (`T_MAC_APP_OLD=1` 1 fails). Xcode 27.2's
+  Metal Toolchain was not installed with it (`xcodebuild -downloadComponent MetalToolchain`, at the user's word; 32023.922 against the lock's
+  32023.921: for 311). gfx 174 / 174 on Metal 4 and Metal 3, host 202 / 202, sanitizer, texture, audit and tool tests, both IPAs (the first
+  with Xcode 27.2); the Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes;
+  manosaba no red line, its four shots looked at (title, the prologue's three; batch 145's shots were gone with the scratchpad).

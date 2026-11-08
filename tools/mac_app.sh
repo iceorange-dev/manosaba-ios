@@ -40,6 +40,9 @@ else mkdir -p "$RES/msl/b-$V"; rsync -a --include='*.metallib' --include='*.json
 [ -s "$RES/paths.txt" ] || rm -f "$RES/paths.txt"
 VER=${DM_MAC_VERSION:-1.0}; BUILD=${DM_MAC_BUILD:-$(date +%m%d%H%M)}
 echo "version $VER build $BUILD product $(basename "$P") commit $(git -C "$DM" rev-parse --short HEAD 2>/dev/null || echo unknown)" > "$RES/build.txt"
+# Game Mode off (LSSupportsGameMode false; seedds/nxnative cb59a67, MIT): in fullscreen Game Mode macOS held the GPU at its lowest clock under load
+# (Tears of the Kingdom 10.5 -> 19.7 ms a frame, 338 MHz at 94 % busy against 924 MHz without it; a plain Metal app the same). A bundle macOS
+# already took for a game may need its Game Overlay switched off once. iOS keeps Game Mode (ios/project.yml). tools/tests/t_mac_app.py
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -54,6 +57,7 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>LSMinimumSystemVersion</key><string>$MIN</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+<key>LSSupportsGameMode</key><false/>
 <key>GCSupportsControllerUserInteraction</key><true/>
 </dict></plist>
 PL

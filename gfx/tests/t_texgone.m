@@ -7,6 +7,7 @@
 //   without content given;
 //   all three counted as faults caught, and the storage back, the big one uploaded again.
 // The upload read as before (-DDM_TEST_UPLOAD_UNGUARDED): the process dies of the first fault (the run's log has the crash report).
+// A cached view kept for an ID with no texture (nil == nil, -DDM_TEST_VIEW_NIL_KEEPS, seedds/nxnative 0e4480d): 1 fails.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -49,6 +50,10 @@ int main(void) { @autoreleasepool {
     mprotect(bm, 16384, PROT_READ | PROT_WRITE);
     id<MTLTexture> b3 = use(80);
     check("the big one's storage back: uploaded again", b3 != nil && b3 != b1 && guard_faults() - f0 == 3);
+    // an ID's cached view when the ID has no texture any more (nxnative 0e4480d) [-DDM_TEST_VIEW_NIL_KEEPS]
+    id<MTLTexture> vw = [b3 newTextureViewWithPixelFormat:b3.pixelFormat], other = l1;
+    check("a cached view: kept for its own texture or its parent, dropped for another texture", view_still_good(b3, b3) && view_still_good(b3, vw) && !view_still_good(other, vw));
+    check("... and dropped when the ID has no texture (nil), the base texture itself included [-DDM_TEST_VIEW_NIL_KEEPS]", !view_still_good(nil, b3) && !view_still_good(nil, vw));
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 } }

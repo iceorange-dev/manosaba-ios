@@ -4,7 +4,8 @@
 // handle of ID 3 likewise; the first pool's IDs are the table's own (base 0: a game with one pool is unchanged); the same pool memory
 // initialized again keeps its base; a second pool's textures do not overwrite the first's. One ID space, as before (-DDM_TEST_POOLS_ONE_SPACE):
 // 4 fail. A memory pool's setup (nvnMemoryPoolInitialize) gives the thread's virtual core up and takes it back (plan item 297; core_away_stub.c
-// counts; -DDM_TEST_POOL_KEEPS_CORE, the core kept: 1 fails).
+// counts; -DDM_TEST_POOL_KEEPS_CORE, the core kept: 1 fails). An empty memory pool (MacNativeGames d3407e2) registers nothing and its neighbour stays
+// tracked; registered as before (-DDM_TEST_POOL_EMPTY_ADDED: the backend refuses a buffer of no bytes and the process dies): 1 fails.
 #include "../nvn/nvn_mtl.m"
 #include "../nvn/hle_nvn.c"
 const dm_game_profile dm_game = { .id = "test", .nvn_api_major = 55, .nvn_api_minor = 15, .nvn_c2 = {0x168, 128, 0x568, 128, 0x120, 8}, .nvn_depth_mode = 1 };
@@ -54,6 +55,18 @@ int main(void) { @autoreleasepool {
     h_nvnMemoryPoolBuilderSetDefaults(&pb); h_nvnMemoryPoolBuilderSetStorage(&pb, pm, sizeof pm); h_nvnMemoryPoolBuilderSetFlags(&pb, NVN_MEMORY_POOL_FLAGS_CPU_CACHED | NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
     int okp = h_nvnMemoryPoolInitialize(&mp, &pb);
     check("nvnMemoryPoolInitialize: the virtual core given up once for the backend's setup, taken back once", okp && g_core_aways - aw0 == 1 && g_core_backs - bk0 == 1);
+    // an empty memory pool (storage, size 0) right after it, in a child process (the old registration died there): made and finalized, the
+    // neighbour still tracked [-DDM_TEST_POOL_EMPTY_ADDED]
+    h_nvnMemoryPoolInitialize(&mp, &pb);
+    pid_t pid = fork();
+    if (!pid) {
+        alarm(10); NVNmemoryPoolBuilder eb; NVNmemoryPool ep; h_nvnMemoryPoolBuilderSetDefaults(&eb); h_nvnMemoryPoolBuilderSetStorage(&eb, pm + sizeof pm, 0);
+        h_nvnMemoryPoolBuilderSetFlags(&eb, NVN_MEMORY_POOL_FLAGS_CPU_CACHED | NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+        int ok = h_nvnMemoryPoolInitialize(&ep, &eb); h_nvnMemoryPoolFinalize(&ep);
+        _exit(ok && nvn_dirty_tracked(pm, 64) && nvn_dirty_tracked(pm + sizeof pm - 64, 64) ? 0 : 3);
+    }
+    int st = 0; waitpid(pid, &st, 0);
+    check("an empty memory pool after another: made and finalized, the neighbour still tracked whole [-DDM_TEST_POOL_EMPTY_ADDED]", WIFEXITED(st) && WEXITSTATUS(st) == 0);
     h_nvnMemoryPoolFinalize(&mp);
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;

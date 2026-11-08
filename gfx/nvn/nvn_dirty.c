@@ -45,7 +45,7 @@ static _Atomic uint64_t g_adds_total;
 static _Atomic int g_live, g_live_peak;   // number of registered pools and peak (for the memory readout line)
 void nvn_dirty_stat(int *live, int *peak, int *cap) { *live = atomic_load(&g_live); *peak = atomic_load(&g_live_peak); int b = 0; while (b < NBLK && atomic_load(&g_blk[b])) b++; *cap = b * BLK; }   // cap: slots allocated so far
 static _Atomic int g_overflow_logged;
-static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
+static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // Pool creation, destruction and protection (guest threads, the render thread) hold it, so a range stays live from protection's lookup to its last mprotect; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
 static void mp(uintptr_t a, size_t len, int prot) {
     uint64_t t = mach_absolute_time(); mprotect((void *)a, len, prot);
@@ -192,10 +192,27 @@ void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_unlock(&g_slot_mu);
 }
 int nvn_dirty_tracked(const void *addr, size_t len) { return find_span((uintptr_t)addr, len) != NULL; }
-// Set read-only: mark the page BUSY first, and mark it PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
+static void protect_in(range_t *r, const void *addr, size_t len);
+// Under the slot mutex from the lookup to the last mprotect (seedds/nxnative af616f5, MacNativeGames 9505582, MIT): a pool's destruction finishing
+// in between restored its pages and marked the range dead, then this set the returned memory read-only with no range to release it (a host
+// read() into it failed with EFAULT, a game write faulted with no owner); a new pool on the same slot could even be protected by the old one's
+// pages. The fault path and prep_write take no lock, so a BUSY page they hold still finishes while this waits for it (t_dirty_retire)
+#ifndef DM_DIRTY_AFTER_LOOKUP
+#define DM_DIRTY_AFTER_LOOKUP()   // t_dirty_retire stages a pool's destruction here
+#endif
 void nvn_dirty_protect(const void *addr, size_t len) {
+#ifndef DM_TEST_DIRTY_PROTECT_NOLOCK   // negative control of t_dirty_retire only: the lookup and protection without the slot mutex, as before
+    pthread_mutex_lock(&g_slot_mu);
+#endif
     range_t *r = len ? find_span((uintptr_t)addr, len) : NULL;
-    if (!r) return;
+    DM_DIRTY_AFTER_LOOKUP();
+    if (r) protect_in(r, addr, len);
+#ifndef DM_TEST_DIRTY_PROTECT_NOLOCK
+    pthread_mutex_unlock(&g_slot_mu);
+#endif
+}
+// Set read-only: mark the page BUSY first, and mark it PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
+static void protect_in(range_t *r, const void *addr, size_t len) {
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     // Consecutive pages set to PROT are merged into one mprotect (per-page calls ran to over a thousand per frame when large textures were first uploaded; character select, startup frame 5: 4888 calls).
     // Pages already PROT break a run and are not protected again. A page another thread is changing (BUSY: a write being released) is waited

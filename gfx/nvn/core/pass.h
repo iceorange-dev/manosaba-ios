@@ -97,11 +97,18 @@ extern uint64_t g_stat_s_only, g_stat_d_only;    // Of those, the number of pass
 // texture clear 5 scanned to the end undecided 6 no start point / index unavailable; pw: cleared, or written by a draw that samples none of the
 // pass's attachments (fbx_prepare's split, plan item 165)
 typedef struct { uint64_t ser, bytes; uint32_t lv, sl; int idx; uint8_t depth, state, ridx, drawn, why, load, wrote, wwhy, pw; const char *wkey; int wslot; } sd_att;
-extern sd_att g_sd[9]; extern int g_nsd;
+// A pass has at most 8 colour attachments, the depth and the stencil: 10 records (9 overflowed on 8 colours with a combined depth-stencil target;
+// seedds/nxnative 9508b93, MacNativeGames 6f4cbe3, MIT)
+#ifndef DM_TEST_SD_MAX
+#define SD_MAX 10
+#else
+#define SD_MAX DM_TEST_SD_MAX   // negative control of t_core_pass only: the old 9
+#endif
+extern sd_att g_sd[SD_MAX]; extern int g_nsd;
 extern uint64_t g_sd_dead_bytes, g_sd_n_dead, g_sd_n_all;
 // At the pass end: store[i] 1 when g_sd[i] is written back, 0 when not (DontCare); counted, logged (pass dump Z and U lines), the cross-submission
 // validity ledger kept (tbdr.h). g_nsd is left to the caller
-void sd_decide(uint8_t store[9]);
+void sd_decide(uint8_t store[SD_MAX]);
 
 // ---- The bandwidth ledger ----
 extern uint64_t g_bw_load, g_bw_store, g_pass_full_rw, g_udc_saved_bytes;   // Attachment load / store bytes, number of full load-store passes, store bytes saved on attachments loaded and not written (udc_on)

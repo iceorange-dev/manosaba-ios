@@ -1,5 +1,6 @@
 // NVNformat (nvn.h 0x01–0x9C) → Metal. The table is written entry by entry in NVN enum order; unlisted formats (including 0 and out of range) return 0.
-// Component remapping: "no alpha" formats such as RGBX / RGB_DXT1 read a as 1; RGB-family 16-bit packed formats swap r/b; all others are identity.
+// Component remapping: "no alpha" formats such as RGBX / RGB_DXT1 read a as 1; RGB-family 16-bit packed formats swap r/b; RGBA4 reads all four
+// reversed; all others are identity.
 // BC1–7 on iOS require GPU BC support (MTLDevice.supportsBCTextureCompression, iOS 16.4+; A19 supports it; device capability is not checked in this table:
 // on a GPU without it nvn_mtl.m no_bc() turns BC1 into ASTC 4x4 and decompresses the other BC formats, plan items 62c / 62c3).
 #include "nvn_fmt_mtl.h"
@@ -17,7 +18,7 @@ enum {   // MTLPixelFormat
     Depth16Unorm = 250, Depth32Float = 252, Stencil8 = 253, Depth32Float_Stencil8 = 260,
 };
 
-typedef struct { uint16_t mtl; uint8_t kind, noalpha, rb; } ent;   // kind: 1 exact, 2 substitute; noalpha: a reads as 1; rb: swap r/b
+typedef struct { uint16_t mtl; uint8_t kind, noalpha, rb, rev; } ent;   // kind: 1 exact, 2 substitute; noalpha: a reads as 1; rb: swap r/b; rev: all four reversed
 #define E(m) {m, 1, 0, 0}
 #define X(m) {m, 1, 1, 0}     // exact, no alpha
 #define S(m) {m, 2, 0, 0}     // substitute
@@ -25,6 +26,7 @@ typedef struct { uint16_t mtl; uint8_t kind, noalpha, rb; } ent;   // kind: 1 ex
 #define N {0, 0, 0, 0}        // no counterpart
 #define SR(m) {m, 2, 0, 1}    // substitute, swap r/b
 #define SXR(m) {m, 2, 1, 1}
+#define SV(m) {m, 2, 0, 0, 1}   // substitute, all four components reversed
 
 static const ent T[0x9D] = {
     [0x01] = E(R8Unorm), E(R8Snorm), E(R8Uint), E(R8Sint),
@@ -47,9 +49,18 @@ static const ent T[0x9D] = {
     // DEPTH24_STENCIL8 → Depth32Float_Stencil8 (as above: precision upgrade as a render target, equivalent behavior; marked substitute because uploaded data needs conversion); DEPTH32F_STENCIL8 is exact
     [0x35] = S(Depth32Float_Stencil8), E(Depth32Float_Stencil8),
     [0x37] = X(RGBA8Unorm_sRGB), E(RGBA8Unorm_sRGB),
-    // 16-bit packed formats: matched by name - the BGR family (0x95–0x98) maps directly to the same-named Metal format, the RGB family uses the same Metal format with r/b swapped.
-    // The actual bit order of NVN vs Metal has not been verified with real data → all marked substitute; verify the bit order when a real texture is first encountered, then upgrade to exact
-    [0x39] = S(ABGR4Unorm), SXR(BGR5A1Unorm), SR(BGR5A1Unorm), SR(B5G6R5Unorm),
+    // 16-bit packed formats. NVN names them from bit 0 up (deko3d's format table, facts only: RGBA4 is the GPU's A4B4G4R4 read R, G, B, A, so red in
+    // bits 0-3; RGB5A1 A1B5G5R5, RGB565 B5G6R5, red at the bottom; the BGR family's red at the top), Metal from bit 0 up the other way (MoltenVK maps
+    // Vulkan's R5G6B5 and R4G4B4A4, red at the top, to B5G6R5Unorm and ABGR4Unorm). So the BGR family (0x95–0x98) is Metal's same-named format, the
+    // RGB family the same with red and blue swapped (Tears of the Kingdom's terrain, totk-mobile d3dd76c), and RGBA4 Metal's ABGR4 read in reverse
+    // (SkyRecomp 81f6507, nxport 00e04bc, MIT; seedds/nxnative 230fe53 saw Super Mario RPG's shadow mask right with it; t_fmt_swz). Substitutes:
+    // a swizzle only reads, so as a render target they would be written crossed (hle_nvn.c SetRenderTargets reports it)
+#ifndef DM_TEST_RGBA4_AS_ABGR4   // negative control of t_fmt_swz only: RGBA4 read as Metal's ABGR4 in its own order, as before
+    [0x39] = SV(ABGR4Unorm),
+#else
+    [0x39] = S(ABGR4Unorm),
+#endif
+    [0x3A] = SXR(BGR5A1Unorm), SR(BGR5A1Unorm), SR(B5G6R5Unorm),
     [0x3D] = E(RGB10A2Unorm), E(RGB10A2Uint), E(RG11B10Float), E(RGB9E5Float),
     // DXT / RGTC / BPTC = BC1–7; RGB_DXT1 has no alpha
     [0x41] = X(BC1), E(BC1), E(BC2), E(BC3), X(BC1_sRGB), E(BC1_sRGB), E(BC2_sRGB), E(BC3_sRGB),
@@ -79,6 +90,7 @@ int nvn_fmt_to_mtl(int f, uint32_t *mtl, uint8_t swz[4]) {
     if (f >= 0x79 && f <= 0x94) { int k = (f - 0x79) % 14; e = (ent){(uint16_t)((f < 0x87 ? ASTC_LDR0 : ASTC_SRGB0) + astc_off[k]), 1, 0, 0}; }
     else if (f > 0 && f < (int)(sizeof T / sizeof *T)) e = T[f];
     if (mtl) *mtl = e.kind ? e.mtl : 0;
-    if (swz) { swz[0] = e.rb ? NVN_SWZ_B : NVN_SWZ_R; swz[1] = NVN_SWZ_G; swz[2] = e.rb ? NVN_SWZ_R : NVN_SWZ_B; swz[3] = e.noalpha ? NVN_SWZ_ONE : NVN_SWZ_A; }
+    if (swz && e.rev) { swz[0] = NVN_SWZ_A; swz[1] = NVN_SWZ_B; swz[2] = NVN_SWZ_G; swz[3] = NVN_SWZ_R; }
+    else if (swz) { swz[0] = e.rb ? NVN_SWZ_B : NVN_SWZ_R; swz[1] = NVN_SWZ_G; swz[2] = e.rb ? NVN_SWZ_R : NVN_SWZ_B; swz[3] = e.noalpha ? NVN_SWZ_ONE : NVN_SWZ_A; }
     return e.kind;
 }

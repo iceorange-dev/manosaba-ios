@@ -5,7 +5,7 @@
 static void draw(const p_draw *dw, const p_draw_idx *di);
 static void sd_finish(void) {   // the store lookahead's decision (gfx/nvn/core/pass.c sd_decide) as each attachment's store action
     if (!g_nsd) return;
-    uint8_t st[9]; sd_decide(st);
+    uint8_t st[SD_MAX]; sd_decide(st);
     for (int i = 0; i < g_nsd; i++) enc_r_store(g_enc, g_sd[i].depth, st[i] ? MTLStoreActionStore : MTLStoreActionDontCare, (NSUInteger)g_sd[i].idx);
     g_nsd = 0;
 }
