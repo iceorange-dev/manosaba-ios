@@ -7,6 +7,8 @@
 // (-DDM_TEST_PP_ONE_SCAN): 1 fails.
 // On the GPU (plan item 283): seven guesses kicked at once compile on at most two threads, and the last, taken by its draw before a thread started it,
 // is compiled on the submit thread. A thread of its own for each kick, a take waiting (-DDM_TEST_PP_UNBOUNDED): 2 fail.
+// The attach modes guessed for a draw (plan item 307, MacNativeGames 3578d66): not those without the depth a draw tests or writes, nor without the
+// stencil it tests. Every mode guessed (-DDM_TEST_GUESS_ALL_DS, as before): 4 fail.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -42,6 +44,19 @@ int main(void) { @autoreleasepool {
     EXPECT("a recent finished guess stays for the next submission's draws", 1, (claim(PSO_PEND_MAX + 3, 1002), used() >= 2));
     // Plan item 205
     g_pp_submit_mark = 0; g_pp_more = 0;
+    // 307: the attach modes guessed for a draw on a pass with depth and stencil (D32S8): all four for a draw that uses neither; a draw that tests
+    // depth keeps the depth (only "as attached" and "depth only"), one that writes depth the same, one that tests stencil keeps the stencil
+    // ("as attached" and "stencil only"), one that uses both only "as attached" [-DDM_TEST_GUESS_ALL_DS]; no stencil target: no stencil-only mode
+    { uint32_t D = (uint32_t)MTLPixelFormatDepth32Float_Stencil8; ds_st none = {0}, dt = {0}, dw = {0}, st = {0}, both = {0}; dt.dt = 1; dw.dw = 1; st.st = 1; both.dt = both.st = 1;
+      int m[5] = {0}; const ds_st *c[5] = {&none, &dt, &dw, &st, &both};
+      for (int i = 0; i < 5; i++) for (int v = 0; v < 4; v++) m[i] |= pp_variant_ok(v, D, D, c[i]) << v;
+      EXPECT("307: a draw using neither depth nor stencil: all four modes (mask)", 0xf, m[0]);
+      EXPECT("307: a draw testing depth: as attached and depth only [-DDM_TEST_GUESS_ALL_DS]", 0x9, m[1]);
+      EXPECT("307: a draw writing depth: as attached and depth only", 0x9, m[2]);
+      EXPECT("307: a draw testing stencil: as attached and stencil only", 0x5, m[3]);
+      EXPECT("307: a draw using both: as attached only", 0x1, m[4]);
+      int d = 0; for (int v = 0; v < 4; v++) d |= pp_variant_ok(v, (uint32_t)MTLPixelFormatDepth32Float, 0, &none) << v;
+      EXPECT("307: a pass with a depth target only: as attached and neither", 0x3, d); }
     EXPECT("205: the first miss of a submission scans", 1, pp_scan_due(50));
     g_pp_more = 1;   // that scan stopped at a bound
     int again = 0; for (int i = 0; i < 100; i++) again += pp_scan_due(50);

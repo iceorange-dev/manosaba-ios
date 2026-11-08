@@ -384,15 +384,10 @@ and 297 in batch 142, the user's order: 301 next):
   about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
 
 From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the user: fix the bugs, port what is worth it):
-- 304 Tears of the Kingdom above 100 fps (the real-time step at `DM_PRESENT_HZ=120`): the moving-platform check at main 0x562a58 (nxport
-  1bf994a, MIT: a tenth of the platform's velocity once the time object's +0x28 exceeds 100; compare +0x28 × +0x38, once +0x38 is shown to hold
-  the step in 1.4.3); the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time);
-  MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps) checked at 90 and 120 with 292.
 - 305 Tears of the Kingdom's scene targets across a resolution step (BennettStaley 38a1348, MIT): the game makes them again at the new size at
-  the same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); look at a shrine across a step first.
-- 306 a virtual core taken by moving its owner to an idle core (MacNativeGames 3a48acf, as Horizon migrates); core-take waits by `DM_SCHED_STATS` first.
-- 307 the lookahead's pipeline guesses pruned by the draw's depth / stencil use (MacNativeGames 3578d66: Breath of the Wild on an iPhone, 12,517
-  → 418 pipelines built in play).
+  the same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); look at a shrine across a step first
+  (needs a save in or by a shrine). Also MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps), checked at 90 and 120 with 292;
+  the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time).
 - 308 the Vulkan backend (301e): 308a colour write mask 0 and no blending for outputs the fragment shader does not write (upstream PR #229; the
   Metal backend's 621bd6d); 308b a view's swizzle replaces the texture's (nx2android f13ecfa); 308c a texture at two colour slots (`rt_dup_slot`,
   nx2android 8e06fd2); 308d the swapchain through a lost surface, more than 8 images and a failed capabilities call (LASRecomp ee37681 /
@@ -412,8 +407,6 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   storage-word loads as one packed load (nxnative 1b9fbea), one translation for shaders that differ only in control bytes the translator does not
   read (MacNativeGames fb9b734), the Mac libraries' minimum system version (MacNativeGames #1845) and Xcode 27.2's Metal compiler (32023.922;
   the lock holds 32023.921) in the lock.
-- 312 HLE: WaitSynchronization completing with the index of an event signalled and cleared before the waiter ran (nxnative db206a4); Unity's
-  ThreadedStreamBuffer handshake (a store-release then a plain load; nxnative d51417b, witchspringr 2a0e59d) looked for in manosaba's main.
 - 313 decisions to measure again: the 1 GiB pool buffer cap (its reason, MacNativeGames' kernel-panic theory, was withdrawn in b3bb2c0), early
   fragment tests on Tears of the Kingdom's 8f470f5ce5864df7 (nxnative 9ced2c3: replays differ with the attribute), the pass-end barrier (187
   removed only the encoder-start one; nxnative PR #1572), the spin before short waits on Android (mleo2003 77f6586), pre-rotation on portrait
@@ -1323,3 +1316,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   32023.921: for 311). gfx 174 / 174 on Metal 4 and Metal 3, host 202 / 202, sanitizer, texture, audit and tool tests, both IPAs (the first
   with Xcode 27.2); the Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, its frames the same scenes;
   manosaba no red line, its four shots looked at (title, the prologue's three; batch 145's shots were gone with the scratchpad).
+- [x] batch 147 · 304, 306, 307, 312: from the eleventh review. 304 Link keeps moving ground's velocity above 100 fps (nxport 1bf994a, MIT,
+  written anew; MacNativeGames and SkyboundTOTK for 1.0.0): the time object's update (0x3e7244) stores the step at +0x38 and 1 / (+0x20 × +0x44 ×
+  step) at +0x28; the check at 0x562a58 kept a tenth of the ground's velocity above 100, which at the real-time step is any frame rate over 100
+  (DM_PRESENT_HZ=120). A cave under `realtime` (0x562a64) compares +0x28 × +0x38, 30 / time scale. `games/totk/check_ground_carry.py` (Unicorn, in
+  the batch's TotK checks): 32 cases at 20-240 fps and time scales 1 to 0.25, only time below 0.3 keeps a tenth; the original main and the product
+  without realtime slide at 120 fps; a product from before 2 fail. Both products rebuilt (`product.prev304`, `product60.prev304`; only the cave area
+  and the stamp differ), `verify/regress.sh --fuzz` OK on product60. 306 a virtual core's owner moves to a free core it may use when a waiter may
+  use only that core (MacNativeGames 3a48acf, written anew; Horizon's suggested-thread migration): host `t_vcores` 3 (the main thread's mask
+  behind a worker allowed on all three: core 0 at once; `t_vcores_nomove`, in the run, 2 fail). Measured on the Mac (product60, fps60 +
+  realtime, 75 s, `DM_SCHED_STATS=1`): moves happen (threads of masks 0x2 and 0x4), but the core takes of about 10 ms in most 5-second spans stay
+  (owners that reach no system call: the preemption waits for the next svc) and frame times are as before. 307 the lookahead guesses no attach
+  mode without the depth a draw tests or writes, nor without the stencil it tests (`pp_variant_ok`; MacNativeGames 3578d66): `t_ppred` 6 more
+  (`-DDM_TEST_GUESS_ALL_DS` 4 fail). 312 WaitSynchronization ends with the index of the handle whose signal woke it (nxnative db206a4): an event
+  signalled and cleared before the waiter ran sent it back to sleep; host `t_waitsync` 13 (a hook clears the event after the wake;
+  `t_waitsync_rescan`, in the run, 1 fails at the 300 ms timeout). Unity's ThreadedStreamBuffer handshake (nxnative d51417b) is not in manosaba's
+  main: no store-release followed by a plain load in the 93 functions that wait on or post a semaphore, event, condition variable or address,
+  or call those that do. gfx 174 / 174 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; the
+  Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, frames 1300 / 1800 the same scenes a moment apart
+  (looked at); manosaba no red line, its shots as batch 146's.

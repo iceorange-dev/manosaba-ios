@@ -168,11 +168,38 @@ static thr_t *g_core_owner[NCORE];
 static thr_t *g_core_wait;
 static int cores_enabled(void) { static int on = -1; if (on < 0) on = dm_game.virtual_cores && !getenv("DM_FREE_CORES"); return on; }
 static int core_allowed(const thr_t *t, int c) { return (int)(t->mask >> c & 1); }
+// A waiter that may use only cores another thread holds takes one of them when its owner may run on a free core: the owner moves there, as
+// Horizon's scheduler moves a thread to an idle core it may use when the core it runs on has another thread to run (KScheduler's migration of
+// suggested threads). A virtual core is only an entitlement here, so the move is bookkeeping: the owner keeps running, holding the free core.
+// Without it a thread allowed on one core only (the main thread: core 0) waited behind a thread that could have run elsewhere while other cores
+// stood idle (MacNativeGames 3a48acf, MIT, written anew: Pokopia's frame loop stopped; Tears of the Kingdom here: core takes of about 10 ms in
+// most 5-second spans with DM_SCHED_STATS=1). Holding G; 1 when w got a core. t_vcores
+static uint64_t g_core_migrations;
+uint64_t dm_core_migrations(void) { return g_core_migrations; }
+static int core_migrate(thr_t *w) {
+#ifdef DM_TEST_NO_MIGRATE   // negative control of t_vcores only: no move, as before
+    (void)w; return 0;
+#endif
+    for (int c = 0; c < NCORE; c++) {
+        thr_t *o = g_core_owner[c];
+        if (!o || o == w || !core_allowed(w, c)) continue;
+        for (int f = 0; f < NCORE; f++) {
+            if (f == c || g_core_owner[f] || !core_allowed(o, f)) continue;
+            o->cur_core = o->act = f; g_core_owner[f] = o;
+            for (thr_t **p = &g_core_wait; *p; p = &(*p)->cnext) if (*p == w) { *p = w->cnext; break; }
+            w->cnext = NULL; w->cur_core = w->act = c; g_core_owner[c] = w; pthread_cond_signal(&w->cv);
+            if (g_core_migrations++ < 4) LOG("virtual cores: thread %#x moved from core %d to idle core %d for thread %#x (priority %d, mask %#llx)",
+                                             o->handle, c, f, w->handle, w->prio, (unsigned long long)w->mask);
+            return 1;
+        }
+    }
+    return 0;
+}
 static void core_grant(int c) {   // holding G: give free core c to the best waiter
     thr_t *b = NULL, **bp = NULL;
     for (thr_t **p = &g_core_wait; *p; p = &(*p)->cnext)
         if (core_allowed(*p, c) && (!b || (*p)->prio < b->prio || ((*p)->prio == b->prio && (*p)->cseq < b->cseq))) { b = *p; bp = p; }
-    if (!b) return;
+    if (!b) { for (thr_t *w = g_core_wait; w; w = w->cnext) if (core_migrate(w)) break; return; }   // no waiter may use c: an owner that may goes there
     *bp = b->cnext; b->cnext = NULL; b->cur_core = b->act = c; g_core_owner[c] = b; pthread_cond_signal(&b->cv);
 }
 static void core_put(thr_t *t) {   // holding G
@@ -186,6 +213,7 @@ static void core_take(thr_t *t) {   // holding G; waits until a core of t's mask
     for (int i = 0; c < 0 && i < NCORE; i++) if (core_allowed(t, i) && !g_core_owner[i]) c = i;
     if (c >= 0) { t->cur_core = t->act = c; g_core_owner[c] = t; return; }
     t->cseq = ++g_wseq; t->cnext = g_core_wait; g_core_wait = t;
+    if (core_migrate(t)) return;
     for (int i = 0; i < NCORE; i++) if (core_allowed(t, i) && g_core_owner[i] && g_core_owner[i]->prio > t->prio) g_core_owner[i]->preempt = 1;
     while (t->cur_core < 0) pthread_cond_wait(&t->cv, &G);
 }
@@ -531,14 +559,21 @@ static int sig_obj(uint32_t h, int *bad) {    // 1 = signaled (holding G)
 }
 // A signaled event or an exited thread wakes only the WaitSynchronization waiters holding a handle to it (nxnative e06a8ec, MIT): it used to wake every
 // such waiter, each re-checking its handles and blocking again (holding G)
-static int waits_on(const thr_t *w, const void *obj) {
-    for (int i = 0; i < w->whn; i++) { unsigned x = w->whp[i] - 0x1000; if (x && x < MAX_H && g_h[x].obj == obj) return 1; }
+static int waits_on(const thr_t *w, const void *obj) {   // 1 + the index of its first handle to obj, 0 when it holds none
+    for (int i = 0; i < w->whn; i++) { unsigned x = w->whp[i] - 0x1000; if (x && x < MAX_H && g_h[x].obj == obj) return i + 1; }
     return 0;
 }
+// The signal completes the wait with that handle's index, as Horizon's KSynchronizationObject::Wait records the object that signalled it: the
+// waiter used to look at the handles again when it ran, and an event signalled and cleared before then (ClearEvent / ResetSignal right after
+// SignalEvent) sent it back to sleep, an infinite wait for good (seedds/nxnative db206a4, MIT; t_waitsync)
+#define SYNC_WOKE_IDX (1ll << 32)   // a waiter's wres: SYNC_WOKE_IDX + the index
 uint64_t g_sync_wakes;   // WaitSynchronization waiters woken by a signal or a thread exit (t_waitsync counts them)
 static void wake_sync_waiters(void *obj) {
-    for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4 && waits_on(w, obj)) { wake(w, -1); g_sync_wakes++; } w = n; }
+    for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; int k; if (w->wkind == 4 && (k = waits_on(w, obj))) { wake(w, SYNC_WOKE_IDX + k - 1); g_sync_wakes++; } w = n; }
 }
+#ifdef DM_TEST_HOOKS
+void (*dm_test_sync_woken)(void);   // t_waitsync: a WaitSynchronization waiter just woken, G released (another thread's clear lands here)
+#endif
 
 static int64_t now_mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ll + ts.tv_nsec; }
 void dm_guest_clock_advanced(void) {
@@ -1057,8 +1092,14 @@ int svc_thread(int num, uint64_t *regs) {
             if (ns > 0 && left <= 0) { r = R_TIMEOUT; break; }
             t->whp = hs; t->whn = n > 0 ? n : 0;
             int64_t br = block(t, 4, left);
+#ifdef DM_TEST_HOOKS
+            if (dm_test_sync_woken && br >= SYNC_WOKE_IDX) { pthread_mutex_unlock(&G); dm_test_sync_woken(); pthread_mutex_lock(&G); }
+#endif
             if (br == R_TIMEOUT) { r = R_TIMEOUT; break; }
             if (br == R_CANCELLED) { r = R_CANCELLED; break; }   // CancelSynchronization while blocked
+#ifndef DM_TEST_SYNC_RESCAN   // negative control of t_waitsync only: the handles looked at again after the wake, as before
+            if (br >= SYNC_WOKE_IDX && br - SYNC_WOKE_IDX < n) { idx = (int)(br - SYNC_WOKE_IDX); r = 0; break; }
+#endif
         }
         pthread_mutex_unlock(&G);
         regs[0] = (uint64_t)r; regs[1] = idx >= 0 ? (uint64_t)idx : 0; return 1;

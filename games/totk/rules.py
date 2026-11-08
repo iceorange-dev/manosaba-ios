@@ -65,6 +65,15 @@ CAVES = {
          'cloth clock (call): s2, s3 × page+0 (the measured ratio) before bl 0x2a0e40', 'realtime'),
         (0x28bc98, '9400546a', [_HOST_X8, 0xbd400104, 0x1e240842, 0x1e240863, ('bl', 0x2a0e40)],
          'cloth clock (call): s2, s3 × page+0 (the measured ratio) before bl 0x2a0e40', 'realtime'),
+        # Link's grip on moving ground above 100 fps (plan item 304, after nxport 1bf994a, MIT, written anew; MacNativeGames and SkyboundTOTK made
+        # the same fix for 1.0.0). The time object (the game's [[x25]] + 0xc8) holds the step at +0x38 and, from its update (0x3e7244: the step
+        # stored at +0x38, +0x24 = +0x20 × +0x44 × step, capped by the constant at 0x2d01cdc, +0x28 = 1 / +0x24), 30 / (step × time scale) at +0x28.
+        # The velocity Link keeps from what he stands on (0x562a58-0x562a74) keeps only a tenth of it when +0x28 is over 100: meant for time slowed
+        # below 0.3 at 30 fps, but with the real-time step any frame rate over 100 gets there (DM_PRESENT_HZ=120: 120), and he slid off moving
+        # platforms. Here +0x28 × +0x38 is compared: 30 / time scale, the same at 30 fps and at any frame rate. Scratch s1: 0x562a6c (fmov s1, w9)
+        # sets it next. games/totk/check_ground_carry.py runs it in Unicorn.
+        (0x562a64, 'bd402920', [('orig',), 0xbd403921, 0x1e210800],
+         'ground carry: ldr s0, [x9, #0x28] → s0 = +0x28 × +0x38 (ldr s1, [x9, #0x38]; fmul s0, s0, s1): 30 / time scale, the step taken out', 'realtime'),
         # The canvas (plan item 63, after MacNativeGames' game_patches_v143.c patch_output_res, MIT, see OPTIONS): the display configuration
         # object x19 (0x3dc9a8) keeps display 0's canvas size at +0x10, the active crop at +0x508, and lays them out again when bit 21 of +8 is set
         # (a pending output change, as at boot). Every such path reaches 0x3dcb28 with the new size in x3 (+0x10, or +0x274 of the selected

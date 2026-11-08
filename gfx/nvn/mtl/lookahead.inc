@@ -70,6 +70,20 @@ static int state_op(uint32_t op, const void *a) {   // a command that only sets 
 
 // Prediction for parallel precompilation (see the note before pso_get): scan from after the current operation to the end of this submit, replaying only state; at a draw, compute the pipeline key from "the state at that time + that render pass's attachment formats" and dispatch those not yet built to the background.
 // Whether a render pass actually attaches depth / stencil is only decided at replay (depth-only / stencil-only / neither attached are omitted), so one key is computed for each possible attach mode -- guessing too many only means wasted background compiles and does not affect the result.
+// Which attach modes a draw's pipeline can meet (v: 0 as attached, 1 neither, 2 stencil only, 3 depth only), given the pass's full depth / stencil
+// formats: a mode that differs from the full one, and only one the pass's targets allow. A draw that tests or writes depth keeps the pass's depth
+// (pass_ds_need counts every draw of the pass), one that tests stencil keeps its stencil, so the modes without them never come for it
+// (MacNativeGames 3578d66, MIT: Breath of the Wild on an iPhone built 12,517 → 418 pipelines in play; t_ppred)
+static int pp_variant_ok(int v, uint32_t dfull, uint32_t sfull, const ds_st *ds) {
+    const uint32_t dv[4] = {dfull, 0, 0, dfull}, sv[4] = {sfull, 0, sfull, 0};
+    if (v && dv[v] == dv[0] && sv[v] == sv[0]) return 0;
+    if ((v == 2 && !sfull) || (v == 3 && (!dfull || !sfull))) return 0;
+#ifndef DM_TEST_GUESS_ALL_DS   // negative control of t_ppred only: every mode guessed whatever the draw uses, as before
+    if (dfull && !dv[v] && (ds->dt || ds->dw)) return 0;
+    if (sfull && !sv[v] && ds->st) return 0;
+#endif
+    return 1;
+}
 static void pso_predict_rest(void) {
     if (!g_exec_next) { g_pp_more = 0; return; }
     static typeof(S) Ssave; memcpy(&Ssave, &S, sizeof S);
@@ -103,8 +117,7 @@ static void pso_predict_rest(void) {
             __unsafe_unretained NvShader *vs = pr->sh[0], *fs = pr->sh[1];
             const uint32_t dv[4] = {dfull, 0, 0, dfull}, sv[4] = {sfull, 0, sfull, 0};
             for (int v = 0; v < 4; v++) {
-                if (v && dv[v] == dv[0] && sv[v] == sv[0]) continue;
-                if (v == 2 && !sfull) continue; if (v == 3 && (!dfull || !sfull)) continue;
+                if (!pp_variant_ok(v, dfull, sfull, &S.ds)) continue;
                 pso_key k; pso_key_fill(&k, vs, fs, cf, dv[v], sv[v], samples, 0);
                 if (hm_get_id(&g_pso, &k) || pp_pending(&k)) continue;   // made, or kicked by an earlier scan: not one of this scan's keys
                 int dup = 0; for (int i = 0; i < (v ? nb : na) && !dup; i++) dup = !memcmp(&(v ? qb : qa)[i].k, &k, sizeof k);

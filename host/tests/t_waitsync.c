@@ -4,6 +4,8 @@
 // returns cancelled and keeps no flag. (LASRecomp 1144aea found the order on the same symptom; ours checked the flag first.)
 // The thread dump lists the handles a blocked WaitSynchronization waits for, with each one's state (it showed only an unrelated address before).
 // A signal wakes only the waiters holding a handle to that event: two threads blocked on different events, signalling one wakes one (it woke both).
+// A signal completes the wait (plan item 312, seedds/nxnative db206a4): an event signalled and cleared before its waiter runs again still ends the
+// wait with its index; looking at the handles again after the wake (-DDM_TEST_SYNC_RESCAN, as before) sleeps on to the 300 ms timeout: 1 fails.
 #include "../dm.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -21,6 +23,13 @@ static uint32_t g_w2, g_r2, g_r3; static _Atomic int g_waiting2; static uint64_t
 static uint64_t wait1(uint32_t h, int64_t ns, uint64_t *idx) { uint64_t r[8] = {0, (uint64_t)&h, 1, (uint64_t)ns}; svc_thread(0x18, r); if (idx) *idx = r[1]; return r[0]; }
 static void cancel(uint32_t th) { uint64_t r[8] = {th}; svc_thread(0x19, r); }
 static uint32_t g_ea_w, g_ea_r, g_eb_w, g_eb_r; static _Atomic int g_blocked_ab;
+extern void (*dm_test_sync_woken)(void);
+static uint32_t g_ec_w, g_ec_r; static _Atomic int g_blocked_c; static uint64_t g_rc_c = 1, g_idx_c = 9;
+static void clear_c(void) { dm_test_sync_woken = NULL; uint64_t c[8] = {g_ec_r}; svc_thread(0x12, c); }   // the waiter woken, not yet running: the event cleared
+static void *waiter_c(void *a) {   // a 300 ms wait on event C
+    (void)a; svc_thread_main_init(); uint32_t h = g_ec_r; uint64_t w[8] = {0, (uint64_t)&h, 1, 300000000};
+    atomic_store(&g_blocked_c, 1); svc_thread(0x18, w); g_rc_c = w[0]; g_idx_c = w[1]; return NULL;
+}
 static void *waiter(void *a) {   // blocks on one event's read end until it is signaled
     svc_thread_main_init(); uint32_t h = (uint32_t)(uintptr_t)a; uint64_t w[8] = {0, (uint64_t)&h, 1, (uint64_t)-1};
     atomic_fetch_add(&g_blocked_ab, 1); svc_thread(0x18, w); return NULL;
@@ -69,5 +78,11 @@ int main(void) {
       EXPECT("signal event A: one waiter woken (B, waiting on event B, is not)", 1, g_sync_wakes - w0);
       uint64_t sb[8] = {g_eb_w}; svc_thread(0x11, sb); pthread_join(tb, NULL);
       EXPECT("signal event B: its waiter woken", 2, g_sync_wakes - w0); }
+    // 312: signalled, then cleared before the waiter runs: the wait still ends with the signal (index 0), not at its timeout
+    { uint64_t r[8] = {0}; svc_thread(0x45, r); g_ec_w = (uint32_t)r[1]; g_ec_r = (uint32_t)r[2];
+      pthread_t tc; pthread_create(&tc, NULL, waiter_c, NULL); while (!atomic_load(&g_blocked_c)) usleep(1000); usleep(30000);
+      dm_test_sync_woken = clear_c; uint64_t sc[8] = {g_ec_w}; svc_thread(0x11, sc); pthread_join(tc, NULL);
+      EXPECT("signalled and cleared before the waiter ran: success [-DDM_TEST_SYNC_RESCAN]", 0, g_rc_c);
+      EXPECT("... index 0", 0, g_idx_c); }
     printf("t_waitsync: %d checks, %d failed\n", n, fail); return fail != 0;
 }
