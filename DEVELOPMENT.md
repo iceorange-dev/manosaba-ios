@@ -392,14 +392,13 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
   (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
   the on-screen pad's redraw (upstream 7b62d9c).
-- 313 decisions to measure again: the 1 GiB pool buffer cap (its reason, MacNativeGames' kernel-panic theory, was withdrawn in b3bb2c0), early
-  fragment tests on Tears of the Kingdom's 8f470f5ce5864df7 (nxnative 9ced2c3: replays differ with the attribute), the pass-end barrier (187
-  removed only the encoder-start one; nxnative PR #1572), the spin before short waits on Android (mleo2003 77f6586), pre-rotation on portrait
-  panels (nx2android f7a3371), command-buffer cuts only between passes (PKShield f4f9f1c). For Tears of the Kingdom on Android (301e2c / e3):
-  same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata 8bb3212), masked and region
-  clears and the counter reports' GPU timestamps (AurelioB/totk-android `VULKAN.md`), scaled depth copies (nx2android e154eec),
-  `vm.max_map_count` (diablo3-port 5bb14e8), pools backed on first GPU use (mleo2003 3f5467d). For 221 (MacNativeGames, facts): LOD by 12
-  view-depth sites (main+0x1ee8424 and copies), far plane main+0x628c30, FOV load main+0x628c3c, sun shadow map size main+0x683604.
+- 313 left for Tears of the Kingdom on Android (301e2c / e3): command-buffer cuts, when there are any, only between passes (PKShield f4f9f1c: a
+  cut inside a pass flashed white), the spin before short waits measured again with a game whose threads hand work over thousands of times a
+  second (mleo2003 77f6586), same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata
+  8bb3212), masked and region clears and the counter reports' GPU timestamps (AurelioB/totk-android `VULKAN.md`), scaled depth copies
+  (nx2android e154eec), `vm.max_map_count` (diablo3-port 5bb14e8), pools backed on first GPU use (mleo2003 3f5467d). For 221 (MacNativeGames,
+  facts): LOD by 12 view-depth sites (main+0x1ee8424 and copies), far plane main+0x628c30, FOV load main+0x628c3c, sun shadow map size
+  main+0x683604.
 
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
@@ -1391,3 +1390,20 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   phone's tests, manosaba headless 40 s (no red line, 60 fps from frame 600) and the app 40 s (no red line, 60 fps, s1800 as batch 148's). Smoke:
   Tears of the Kingdom's two red lines as before, its shots the same scenes as batch 148's (s1300 a moment apart), GPU p50 7.0 ms against batch
   148's 7.1 (frames 1500-2100; within two runs' spread); manosaba no red line, its shots as batch 148's.
+- [x] batch 151 · 313 measured (the user, 2026-11-09: the pool cap may be tried on the Mac); nothing changed. The 1 GiB pool buffer cap: Tears
+  of the Kingdom with a 3840x2160 scene (`games/totk/heapdef.py`'s overlay, option scene, `DM_RENDER_RES`) had no pool refused, its largest
+  resident pool 503 MB as at 1080p, and no run log in the workspace (Mac and iPhone) holds a refusal; MacNativeGames' 4K failure (its pools of
+  1,490 MiB and 3.8 GiB) is not ours, so the cap stays and a refusal stays a red line (the 4K scene: GPU p50 9.5-10.7 ms against 6.2-7.6 at
+  1080p, frames 1200-2100, the picture right). The pass-end barrier: render passes end with an All → All producer barrier and begin with an
+  All → All consumer one (187 measured the start one and kept it); Tears of the Kingdom's prologue on the M5, two rounds alternating, GPU p50
+  over frames 1200-2100: as now 6.21-6.59 / 7.36-7.60 ms, nxnative's relaxed end barrier (vertex, fragment and tile stages before fragment,
+  dispatch and blit; PR #1572) 6.13-7.18 / 7.23-7.39, none 7.89-8.33 / 8.24-8.70, the shots right in all three: the relaxed one inside the
+  spread of two rounds, none slower; kept. The spin before short waits on Android (mleo2003 77f6586: a waiter spins up to 30 µs before it
+  parks): manosaba on the K100 (`DM_SCHED_STATS=1`, 40 s, 60 fps) waits 585 times a second on condition variables, 6.1 ms each on average,
+  and 107 on sync objects, 18.5 ms each, woken to running in 0.05-0.11 ms: a 30 µs spin would seldom see the wake; not taken (again with
+  a game of many short hand-overs, 313). Pre-rotation (nx2android f7a3371): the K100 still puts the identity swapchain on the panel with
+  the display hardware (`dumpsys SurfaceFlinger` during the app's run: composition DEVICE, bufferTransform ROT_90, forceClientComposition
+  false), as on 2026-10-30. Command-buffer cuts only between passes (PKShield f4f9f1c): the Vulkan backend makes none (manosaba about 13 draws
+  a frame, 32,116 in the app's 40 s); kept in 313 for when 301e2c makes them. Early fragment tests on 8f470f5ce5864df7: counted in batch 149. gfx 177 / 177 on Metal 4
+  and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the phone's tests, manosaba headless 40 s and the
+  app 40 s (no red line, 60 fps from frame 600). Smoke: Tears of the Kingdom's two red lines as before, manosaba none, the shots as batch 150's.
