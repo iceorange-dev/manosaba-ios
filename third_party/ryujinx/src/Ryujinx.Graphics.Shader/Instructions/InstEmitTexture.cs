@@ -918,7 +918,9 @@ namespace Ryujinx.Graphics.Shader.Instructions
 
                         res = context.FPMultiply(res, ConstF(256.0f));
 
-                        Operand fixedPointValue = context.FP32ConvertToS32(res);
+                        // manosaba-ios plan item 311 (nx2android 44eca7e, MIT; yuzu #10234's rule): Maxwell returns the LOD as unsigned 24.8, a negative LOD (a
+                        // magnified texture) as 0; read signed, a shader that takes it as unsigned saw about 16 million (Tears of the Kingdom's sea of clouds)
+                        Operand fixedPointValue = context.FP32ConvertToU32(context.FPMaximum(res, ConstF(0.0f)));
 
                         context.Copy(d, fixedPointValue);
                     }

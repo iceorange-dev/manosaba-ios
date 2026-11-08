@@ -21,6 +21,10 @@ NDK = os.environ.get('NDK', '/opt/homebrew/share/android-ndk')
 SPIRV_VAL = os.path.join(NDK, 'shader-tools', 'darwin-x86_64', 'spirv-val')
 XLATE = os.environ.get('XLATE', f'{DM_ROOT}/build/gfx/dmsh_xlate/dmsh_xlate')
 SHIFT = {'vs': 0, 'ps': 64, 'cs': 0}
+# Plan item 311 (nx2android 44eca7e, MIT): Adreno's waves are 64 or 128 lanes (the driver's choice per pipeline); translated for 128 the translator keeps
+# Maxwell's 32-lane warps inside the wave (its 128 path picks the ballot word by lane id >> 5, so it holds for 64 too). Gathers moved 1/512 texel off
+# the texel edge (8 bits), where Adreno rounds the other way from Maxwell
+SUBGROUP, GATHER_BIAS = int(os.environ.get('DM_TEST_VK_SUBGROUP', '128')), 8   # (DM_TEST_VK_SUBGROUP: tools/tests/t_vk_subgroup.py's broken variant only)
 STAGE_NO = {'vs': 0, 'ps': 1, 'cs': 5}
 K_CBUF, K_SUPPORT, K_C1, K_C0, K_C2, K_SBUF, K_TEX, K_IMG, K_TBUF, K_TEXI = range(1, 11)
 # VkDescriptorType
@@ -174,7 +178,9 @@ def main():
     nj = int(os.environ.get('J', os.cpu_count() or 8))
     with tempfile.TemporaryDirectory() as w:
         jobs, c1s = {}, {}
-        for k, (st, rec) in recs.items(): jobs[k], c1s[k] = ns['job_for'](k, rec, w)
+        for k, (st, rec) in recs.items():
+            jobs[k], c1s[k] = ns['job_for'](k, rec, w)
+            jobs[k]['subgroup'] = SUBGROUP; jobs[k]['gather_bias'] = GATHER_BIAS   # (Program.cs; the Metal chain's jobs carry neither)
         keys = sorted(jobs); chunks = [keys[i::nj] for i in range(nj)]
         def xl(ch):
             jp = os.path.join(w, f'job_{abs(hash(ch[0]))}.json'); json.dump([jobs[k] for k in ch], open(jp, 'w'))

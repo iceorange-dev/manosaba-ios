@@ -392,12 +392,8 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
   (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
   the on-screen pad's redraw (upstream 7b62d9c).
-- 311 the next change of the translation chain (with 64g; every shader built again): the subgroup size given to the translator for the Vulkan
-  bundle (nx2android 44eca7e; 41 of manosaba's 2,740 modules shuffle by lane; Adreno waves are 64 or 128 lanes), TMML's negative LOD as unsigned 24.8, clamped to 0
-  (nx2android 44eca7e), FSETP / FSET / FCMP `.FTZ` (nxnative 84dea69), an exiting thread still arriving at a barrier (nxport dc36147), split
-  storage-word loads as one packed load (nxnative 1b9fbea), one translation for shaders that differ only in control bytes the translator does not
-  read (MacNativeGames fb9b734), the Mac libraries' minimum system version (MacNativeGames #1845) and Xcode 27.2's Metal compiler (32023.922;
-  the lock holds 32023.921) in the lock.
+- 311b the next change of the translation chain after batch 149's (with 64g; every shader built again): split storage-word loads as one packed
+  load (nxnative 1b9fbea), one translation for shaders that differ only in control bytes the translator does not read (MacNativeGames fb9b734).
 - 313 decisions to measure again: the 1 GiB pool buffer cap (its reason, MacNativeGames' kernel-panic theory, was withdrawn in b3bb2c0), early
   fragment tests on Tears of the Kingdom's 8f470f5ce5864df7 (nxnative 9ced2c3: replays differ with the attribute), the pass-end barrier (187
   removed only the encoder-start one; nxnative PR #1572), the spin before short waits on Android (mleo2003 77f6586), pre-rotation on portrait
@@ -1350,3 +1346,26 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   failing as before. gfx 174 / 174 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the
   phone's tests, manosaba headless 40 s (no red line, 60 fps from frame 600) and the app 40 s (no red line, 60 fps), then the app twice more
   for the cache (75 s and 25 s). Smoke: Tears of the Kingdom's two red lines as before; manosaba no red line, its shots as batch 147's.
+- [x] batch 149 · 311a: the translation chain's change from the eleventh review (the user, 2026-11-08: port what is worth porting), chain
+  ae6a8bd1acdd → 5285ca7bad0f, every shader translated again (the Mac's and iOS's 31,415 libraries each, the Android bundle's 2,740). The
+  Vulkan bundle's jobs give the translator the host's subgroup size, 128, and 8 bits of gather precision (`Program.cs` `QueryHostSubgroupSize`,
+  `QueryHostGatherBiasPrecision`; nx2android 44eca7e, MIT): Adreno's waves are 64 or 128 lanes and the translator keeps Maxwell's 32-lane warps
+  inside them (41 of manosaba's 2,740 modules shuffle by lane); Metal's jobs carry neither, so its output is as before there
+  (`tools/tests/t_vk_subgroup.py` 2, `DM_TEST_VK_SUBGROUP=32` 1 fails). TMML returns the LOD as unsigned 24.8 with a negative LOD as 0
+  (`InstEmitTexture.cs`; nx2android 44eca7e; yuzu #10234's rule): 2,829 shaders of both games query a LOD at 5,023 sites, each now max(LOD x 256,
+  0) into a uint (`gfx/tests/t_tmml_msl.py`; the chain before fails at all 5,023). The Mac libraries are compiled for macOS 26.0, the Metal 4
+  host's minimum (`dmsh_build.py` `MAC_MIN`; MacNativeGames #1845): built by Xcode 27.2 without it they record macOS 27.2
+  (`tools/tests/t_mac_shader_min.py` 3, `T_MAC_MIN_OLD=1` 2 fail); the lock holds Xcode 27.2's Metal compiler, 32023.922. Fixed on the way:
+  `gfx/tools/msl_retarget.sh` compiled the older-API package's libraries without `-fpreserve-invariance -fmetal-math-mode=safe`, so with fast
+  math. Not taken: FSETP / FSET / FCMP `.FTZ` (nxnative 84dea69; no Switch 1 game has shown the symptom, and it adds work to nearly every compare
+  on the GPU-bound iPhone), a thread exiting before a barrier (nxport dc36147; none of the 325 compute kernels does). 313's early fragment tests
+  counted: 869 of the 1,677 pixel shaders with the attribute also write memory; kept (nxnative saw replays differ, no fault in the picture, and
+  239's gain comes from it). 64g goes with 311b. gfx 175 / 175 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests,
+  both IPAs; Android: the phone's tests, manosaba headless 40 s (no red line, 60 fps from frame 600) and the app 40 s (no red line, 60 fps, s1800
+  as batch 148's). Smoke: the batch's Tears of the Kingdom run froze for 28.8 s: the Mac went to sleep during it (pmset: a maintenance sleep of 31
+  s from the run's 28th second) with submission 706 on the GPU, whose feedback never came, no error reported (the main thread in `mtl_wait`).
+  Not the chain: three runs after it, and one on a cold Metal compile cache (the libraries compiled again for macOS 26.1, so the system's cache
+  missed: warm-up 6.1 s against the frozen run's 6.3 s and 0.1-0.2 s warm), reached frame 2100 with the two red lines as before and shots of the
+  same scene as batch 148's (the differences within two runs of one chain). `work/scripts/batch_fast.sh` and `run_pro.sh` now hold a power
+  assertion while they run (`caffeinate -i -s -w`; the headless host takes none, the windowed one holds App Nap off, 127). manosaba's s3300 was
+  dark in the batch for the same reason: run again awake, its four shots as batch 148's (s3300 identical).

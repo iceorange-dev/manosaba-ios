@@ -37,7 +37,11 @@ PRE_STATS = collections.Counter()
 #   another with depth test less-or-equal then failed on whole blocks (seedds/nxnative f1cc6be, MIT: Super Mario Odyssey's ground in 32x32 blocks)
 # -fmetal-math-mode=safe: no unsafe floating-point optimizations (the default, fast, broke the integer division a Tears of the Kingdom tile-light vertex
 #   shader does in float: MacNativeGames compiles every shader with MTLMathModeSafe, MIT)
-MAC_METAL = ['xcrun', '-sdk', 'macosx', 'metal', '-c', '-fpreserve-invariance', '-fmetal-math-mode=safe']
+# -mmacosx-version-min=26.0: the minimum system of the Metal 4 Mac host (make -C host print-macos-min); without it the libraries target the build
+#   machine's SDK, and built with Xcode 27.2 they would not load on macOS 26 (MacNativeGames #1845: language version 4.1; plan item 311). The
+#   older-API package recompiles them for its own minimum (msl_retarget.sh)
+MAC_MIN = '26.0'
+MAC_METAL = ['xcrun', '-sdk', 'macosx', 'metal', '-c', '-mmacosx-version-min=' + MAC_MIN, '-fpreserve-invariance', '-fmetal-math-mode=safe']
 MAC_RECORD = ' '.join(MAC_METAL) + '; xcrun -sdk macosx metallib'
 def mac_compile(msl, air, lib):   # the interface of ios_metal.compile
     subprocess.run([*MAC_METAL, msl, '-o', air], check=True)

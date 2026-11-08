@@ -123,6 +123,14 @@ static class SwshXlate
         public bool QueryHostSupportsDepthClipControl() => !_nearMinusW;
         // Job reduced = true: relaxed precision - the translator marks NoContraction only on operations that must be exact (the default marks all: keeps the bit-exact results of Maxwell's separate rounding, at the cost of many optimization-disabled spvFMul etc. in the MSL)
         public bool QueryHostReducedPrecision() => _job["reduced"] is JsonNode n && (bool)n;
+        // Job "subgroup" (the Vulkan bundle, dmsh_vk.py; plan item 311): the host's subgroup size. Adreno runs waves of 64 or 128 lanes; above 32 the
+        // translator keeps Maxwell's 32-lane warps inside it (lane id & 31, the ballot word of the lane's own 32, shuffles within its 32). At 32 a
+        // shuffle's source lane lost the wave's upper lanes (41 of manosaba's modules shuffle by lane; nx2android 44eca7e, MIT). Metal's SIMD groups: 32
+        public int QueryHostSubgroupSize() => _job["subgroup"] is JsonNode n ? (int)n : 32;
+        // Job "gather_bias" (the Vulkan bundle): bits of the host's gather coordinate precision; the translator moves gather coordinates off the texel
+        // edge, where Adreno rounds the other way from Maxwell (nx2android 44eca7e: Tears of the Kingdom's tiled lighting drew dark 16x16 boxes, Eden
+        // #4565). Metal: 0, none
+        public int QueryHostGatherBiasPrecision() => _job["gather_bias"] is JsonNode n ? (int)n : 0;
     }
 
     static int Main(string[] args)

@@ -603,6 +603,7 @@ run: \
 	python3 -I t_alpha_src.py 1 > t_alpha_1.metal && python3 -I t_alpha_src.py 0 > t_alpha_0.metal && ./t_alpha t_alpha_1.metal t_alpha_0.metal
 	DM_ROOT=$${DM_ROOT:-$(HOME)/dm-work} python3 -I t_xlate_ops.py
 	DM_ROOT=$${DM_ROOT:-$(HOME)/dm-work} python3 -I t_early_z.py
+	DM_ROOT=$${DM_ROOT:-$(HOME)/dm-work} python3 -I t_tmml_msl.py
 	@status=0; DM_TEST_EARLY_Z_OFF=1 DM_ROOT=$${DM_ROOT:-$(HOME)/dm-work} python3 -I t_early_z.py > t_early_z_off.log 2>&1 || status=$$?; \
 	 if grep -q 'skipped' t_early_z_off.log; then echo 't_early_z_off: skipped (no translator)'; elif [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_early_z_off.log)" -ne 1 ]; then \
 	   cat t_early_z_off.log; echo "t_early_z_off: unexpected negative-control result ($$status)"; exit 1; \

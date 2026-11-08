@@ -3,7 +3,8 @@
 # Why it exists: dmsh_build.py compiles the libraries without a minimum-version flag, so the target recorded in them is the SDK of the build machine (macOS 26); loading such a library on an older system simply fails
 # (the same matter as the minimum system version of the executable, in a different place). The older-API package (tools/mac_app.sh DM_MAC_M3=1) carries the libraries recompiled here.
 # Where the sources come from (the shared cache is read-only): the .metal next to each _b library; the sources of _bf libraries (the readable-tile variants) are in the content-addressed cache and are matched by the content of the library file.
-# The compile command is the same as in dmsh_build.py with only -mmacosx-version-min added. About 7000 libraries in 3 minutes.
+# The compile command is dmsh_build.py's with its own -mmacosx-version-min (until plan item 311 it also lacked -fpreserve-invariance and
+# -fmetal-math-mode=safe, so the older-API package's libraries were compiled with fast math). About 7000 libraries in 3 minutes.
 set -u; MIN=$1; OUTROOT=$2
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=${DM_ROOT:-$HOME/dm-work}
 SRC=${MSL_SRC:-$ROOT/build/cache/metal_shader_cache}   # the shader cache root the libraries are taken from (mac_app.sh passes the game's)
@@ -14,7 +15,7 @@ D=$OUTROOT/b-$V; rm -rf "$D"; mkdir -p "$D"
 # exceeds the system argument-length limit, cp fails as a whole and copies nothing, and the package then has libraries without reflections (every
 # shader fails to load; upstream d2r-mobile 1784563, #60). The check at the end makes sure every _b library has its reflection
 rsync -a --include='*.json' --exclude='*' "$S/" "$D/" || { echo "[red] copying the reflection json files failed"; exit 3; }
-one() { src=$1; dst=$2; t=$(mktemp -d); if xcrun -sdk macosx metal -c -mmacosx-version-min="$MIN" "$src" -o "$t/a.air" 2>"$t/err" && xcrun -sdk macosx metallib "$t/a.air" -o "$t/a.metallib" 2>>"$t/err"; then mv "$t/a.metallib" "$dst"; else echo "failed $(basename "$dst"): $(head -1 "$t/err" | cut -c1-120)"; fi; rm -rf "$t"; }
+one() { src=$1; dst=$2; t=$(mktemp -d); if xcrun -sdk macosx metal -c -mmacosx-version-min="$MIN" -fpreserve-invariance -fmetal-math-mode=safe "$src" -o "$t/a.air" 2>"$t/err" && xcrun -sdk macosx metallib "$t/a.air" -o "$t/a.metallib" 2>>"$t/err"; then mv "$t/a.metallib" "$dst"; else echo "failed $(basename "$dst"): $(head -1 "$t/err" | cut -c1-120)"; fi; rm -rf "$t"; }
 export -f one; export MIN D S
 BAD=$(ls "$S" | grep '_b\.metal$' | sed 's/\.metal$//' | xargs -P 10 -I{} bash -c 'one "$S/{}.metal" "$D/{}.metallib"')
 T=$(mktemp); for r in "$CAS"/*/; do [ -f "$r/mac.metallib" ] && [ -f "$r/metal" ] && echo "$(shasum -a 256 "$r/mac.metallib" | cut -c1-64) $r"; done > "$T"
