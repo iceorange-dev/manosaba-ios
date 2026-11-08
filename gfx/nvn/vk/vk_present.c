@@ -6,19 +6,36 @@
 // and are queued behind the frame's submission (queue order); the next present waits for the one before it to finish on the GPU (one in flight).
 #define VK_USE_PLATFORM_ANDROID_KHR 1
 #include "vk.h"
+#include "vk_rules.h"
 #include <android/native_window.h>
 #include <stdlib.h>
 #include <string.h>
 
 ANativeWindow *front_android_window(void);   // android/front_android.c (NULL: no window now)
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+#ifndef DM_TEST_VK_NIMG
+#define NIMG 16   // swapchain images held (a Mali-G68 made 9 when 8 were asked for: LASRecompAndroid 2557e57)
+#else
+#define NIMG DM_TEST_VK_NIMG
+#endif
 static struct {
-    ANativeWindow *win; VkSurfaceKHR surf; VkSwapchainKHR sc; VkFormat fmt; VkExtent2D ext; uint32_t n; VkImage img[8];
-    VkSemaphore acq[4], rel[8]; VkFence fence[4]; VkCommandPool pool; VkCommandBuffer cb[4]; uint32_t at; int srgb;
+    ANativeWindow *win; VkSurfaceKHR surf; VkSwapchainKHR sc; VkFormat fmt; VkExtent2D ext; uint32_t n; VkImage img[NIMG];
+    VkSemaphore acq[4], rel[NIMG]; VkFence fence[4]; VkCommandPool pool; VkCommandBuffer cb[4]; uint32_t at; int srgb;
 } P;
 static uint64_t g_presents, g_drops;
+// 309: the game's frame rate voted for the window (a fixed source) once it has held for 60 presents (vk_rules.h), again for a new window, so the
+// compositor can run the panel at it (nx2android 70c8cb8, MIT). DM_VK_VOTE=0 votes nothing
+static vk_rate_vote g_vote; static int g_votes;
+int mtl_fps_target(void);   // (below)
+static int vote_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_VK_VOTE"); on = !e || strcmp(e, "0"); } return on; }
+int vk_frame_rate_votes(void) { return g_votes; }
 
 static void idle(void) { pthread_mutex_lock(&V.qmu); vkDeviceWaitIdle(V.dev); pthread_mutex_unlock(&V.qmu); }   // (every queue's host access held: the queue lock)
+static void surface_drop(void) {   // holding g_mu: the surface lost or refused (308d); the next present makes it again
+    if (P.sc) { idle(); vkDestroySwapchainKHR(V.dev, P.sc, NULL); P.sc = VK_NULL_HANDLE; }   // (a swapchain may not outlive its surface)
+    if (P.surf) vkDestroySurfaceKHR(V.inst, P.surf, NULL);
+    P.surf = VK_NULL_HANDLE; P.win = NULL;
+}
 static void drop_locked(void) {
     if (!V.dev || (!P.sc && !P.surf)) return;
     idle();
@@ -26,7 +43,8 @@ static void drop_locked(void) {
     if (P.surf) vkDestroySurfaceKHR(V.inst, P.surf, NULL);
     P.sc = VK_NULL_HANDLE; P.surf = VK_NULL_HANDLE; P.win = NULL;
 }
-void vk_window_gone(void) { pthread_mutex_lock(&g_mu); drop_locked(); pthread_mutex_unlock(&g_mu); }   // front_android.c, before the window is released
+size_t vk_pcache_save(int force);   // vk_draw.c
+void vk_window_gone(void) { pthread_mutex_lock(&g_mu); drop_locked(); pthread_mutex_unlock(&g_mu); vk_pcache_save(1); }   // (308e: kept before the app may be ended)   // front_android.c, before the window is released
 static int make_locked(ANativeWindow *w, int srgb) {
     if (!V.android_surface) { VRED("no VK_KHR_android_surface: nothing is shown"); return 0; }
     if (!P.pool) {
@@ -36,7 +54,7 @@ static int make_locked(ANativeWindow *w, int srgb) {
         VK(vkAllocateCommandBuffers(V.dev, &ai, P.cb));
         VkSemaphoreCreateInfo si = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO}; VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
         for (int i = 0; i < 4; i++) { VK(vkCreateSemaphore(V.dev, &si, NULL, &P.acq[i])); VK(vkCreateFence(V.dev, &fi, NULL, &P.fence[i])); }
-        for (int i = 0; i < 8; i++) VK(vkCreateSemaphore(V.dev, &si, NULL, &P.rel[i]));
+        for (int i = 0; i < NIMG; i++) VK(vkCreateSemaphore(V.dev, &si, NULL, &P.rel[i]));
     }
     VkSwapchainKHR old = P.sc;
     if (P.win != w) { if (old) { idle(); vkDestroySwapchainKHR(V.dev, old, NULL); old = VK_NULL_HANDLE; P.sc = VK_NULL_HANDLE; }
@@ -44,15 +62,18 @@ static int make_locked(ANativeWindow *w, int srgb) {
         VkAndroidSurfaceCreateInfoKHR ci = {VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR, .window = w};
         VkResult r = vkCreateAndroidSurfaceKHR(V.inst, &ci, NULL, &P.surf);
         if (r != VK_SUCCESS) { VLOG("[red] the window's surface: %d", (int)r); P.surf = VK_NULL_HANDLE; return 0; }
-        P.win = w; }
-    VkSurfaceCapabilitiesKHR cap; VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.pd, P.surf, &cap));
+        P.win = w; g_vote.voted = 0; }
+    // 308d: an ordinary event (the app sent to the background while this runs, the window taken) loses the surface; it is made again at the next
+    // present instead of ending the app (LASRecomp ee37681 / 2745a5e / 202916d, from mamcjr's LASRecompAndroid, MIT)
+    VkSurfaceCapabilitiesKHR cap; VkResult cr = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.pd, P.surf, &cap);
+    if (cr != VK_SUCCESS) { VLOG("[red] the window's surface capabilities: %d (the surface made again at the next present)", (int)cr); surface_drop(); return 0; }
     VkBool32 ok = 0; vkGetPhysicalDeviceSurfaceSupportKHR(V.pd, V.qf, P.surf, &ok); if (!ok) { VRED("the queue cannot present to the window"); return 0; }
     VkFormat want = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, got = VK_FORMAT_UNDEFINED;
     uint32_t nf = 0; vkGetPhysicalDeviceSurfaceFormatsKHR(V.pd, P.surf, &nf, NULL); VkSurfaceFormatKHR sf[32]; if (nf > 32) nf = 32; vkGetPhysicalDeviceSurfaceFormatsKHR(V.pd, P.surf, &nf, sf);
     for (uint32_t i = 0; i < nf; i++) if (sf[i].format == want) got = want;
     if (!got) got = nf ? sf[0].format : VK_FORMAT_R8G8B8A8_UNORM;
     VkExtent2D ext = cap.currentExtent.width != UINT32_MAX ? cap.currentExtent : (VkExtent2D){(uint32_t)ANativeWindow_getWidth(w), (uint32_t)ANativeWindow_getHeight(w)};
-    uint32_t n = cap.minImageCount < 3 ? 3 : cap.minImageCount; if (cap.maxImageCount && n > cap.maxImageCount) n = cap.maxImageCount;
+    uint32_t n = cap.minImageCount < 3 ? 3 : cap.minImageCount; if (cap.maxImageCount && n > cap.maxImageCount) n = cap.maxImageCount; if (n > NIMG) n = NIMG;
     VkSwapchainCreateInfoKHR ci = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = P.surf, .minImageCount = n, .imageFormat = got, .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
         .imageExtent = ext, .imageArrayLayers = 1, .imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = (cap.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : cap.currentTransform,
@@ -61,9 +82,18 @@ static int make_locked(ANativeWindow *w, int srgb) {
     VkSwapchainKHR sc; VkResult r = vkCreateSwapchainKHR(V.dev, &ci, NULL, &sc);
     if (old) { idle(); vkDestroySwapchainKHR(V.dev, old, NULL); }
     P.sc = VK_NULL_HANDLE;
-    if (r != VK_SUCCESS) { VLOG("[red] swapchain %ux%u format %d: %d", ext.width, ext.height, (int)got, (int)r); return 0; }
+    if (r != VK_SUCCESS) { VLOG("[red] swapchain %ux%u format %d: %d", ext.width, ext.height, (int)got, (int)r);
+        if (r == VK_ERROR_SURFACE_LOST_KHR || r == VK_ERROR_NATIVE_WINDOW_IN_USE_KHR) surface_drop();   // made again at the next present
+        return 0; }
     P.sc = sc; P.fmt = got; P.ext = ext; P.srgb = srgb;
-    P.n = 8; VK(vkGetSwapchainImagesKHR(V.dev, sc, &P.n, P.img));
+    uint32_t ni = 0; VK(vkGetSwapchainImagesKHR(V.dev, sc, &ni, NULL));
+#ifndef DM_TEST_VK_IMG_FIXED   // negative control of t_vk_be only: room for 8 assumed, as before
+    if (ni > NIMG) { VLOG("[red] the swapchain has %u images, more than the %d held: not shown", ni, NIMG); vkDestroySwapchainKHR(V.dev, sc, NULL); P.sc = VK_NULL_HANDLE; return 0; }
+    P.n = ni;
+#else
+    P.n = 8;
+#endif
+    VK(vkGetSwapchainImagesKHR(V.dev, sc, &P.n, P.img));
     VLOG("swapchain %ux%u, %u images, format %d (%s, the window texture %s), transform %#x (the window's %#x)", ext.width, ext.height, P.n, (int)got,
          got == want ? "as wanted" : "[red] not the one wanted", srgb ? "sRGB" : "linear", ci.preTransform, cap.currentTransform);
     return 1;
@@ -123,6 +153,9 @@ uint64_t mtl_present(const tex_t *t, double period_s, const int crop[4]) {
     else if (pr == VK_SUBOPTIMAL_KHR) { static int said; if (!said++) VLOG("present: suboptimal (the compositor rotates the image): the swapchain kept"); }
     else if (pr != VK_SUCCESS) VLOG("[red] present: %d", (int)pr);
     uint64_t n = ++g_presents;
+    int vf = vote_on() ? vk_rate_rules(&g_vote, mtl_fps_target()) : 0;
+    if (vf) { int rc = ANativeWindow_setFrameRate(w, (float)vf, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE); g_votes++;
+              VLOG("frame rate %d voted for the window (%s)", vf, rc ? "refused" : "taken"); }
     pthread_mutex_unlock(&g_mu);
     if (n == 1) VLOG("first present: the window texture %ux%u (format %d), crop %d,%d %dx%d → %dx%d at %d,%d", im->w, im->h, (int)im->fmt, cx, cy, cw, ch, ow, oh, ox, oy);
     return n;

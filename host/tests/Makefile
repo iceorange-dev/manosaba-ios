@@ -13,6 +13,7 @@ run: \
 	$(B)/t_audio_extras_vol \
 	$(B)/t_audio_extras_kept \
 	$(B)/t_audio_extras_stopkeeps \
+	$(B)/t_audio_extras_nolegacy \
 	$(B)/t_audio_notify \
 	$(B)/t_audio_notify_store \
 	$(B)/t_audren \
@@ -218,7 +219,7 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_early.log)" -ne 1 ]; then \
 	   cat $(B)/t_audio_extras_early.log; echo "t_audio_extras_early: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audio_extras_early: an output in the registry before it is made fails 1, as expected"
-	@for v in vol:3 kept:1 stopkeeps:1; do t=$${v%%:*}; want=$${v##*:}; status=0; $(B)/t_audio_extras_$$t > $(B)/t_audio_extras_$$t.log 2>/dev/null || status=$$?; \
+	@for v in vol:3 kept:1 stopkeeps:1 nolegacy:1; do t=$${v%%:*}; want=$${v##*:}; status=0; $(B)/t_audio_extras_$$t > $(B)/t_audio_extras_$$t.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_audio_extras_$$t.log)" -ne "$$want" ]; then \
 	   cat $(B)/t_audio_extras_$$t.log; echo "t_audio_extras_$$t: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_audio_extras_$$t: $$want fail, as expected"; done
@@ -817,6 +818,8 @@ $(B)/t_audio_extras_kept: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h .
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_PLAYED_KEPT -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_extras_stopkeeps: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_STOP_KEEPS -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
+$(B)/t_audio_extras_nolegacy: t_audio_extras.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -DDM_TEST_AUDIO_NO_LEGACY -o $@ t_audio_extras.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_spsc: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation ../runtime/plat_apple.c
 $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle/hle_audio.c ../hle.h ../dm.h | $(B)

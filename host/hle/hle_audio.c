@@ -54,6 +54,7 @@ typedef struct aout {
     _Atomic uint64_t under_n, under_b;   // underruns while started: callbacks or sink steps that found the queue empty, and the bytes filled with zeros (plan item 134)
     _Atomic uint64_t cb_n;               // sound card callbacks of this output: the watchdog's evidence that the device still plays it
     uint64_t wd_n, wd_t, said_under;     // watchdog (under g_aos_lock): callback count last seen and when it last moved; underruns already logged
+    int aa_legacy, aa_reopen;            // Android: the stream without low latency from now on; to be opened again so at the next retry (308i)
     int stalled, retry_ms; uint64_t retry_at;   // the device stopped calling back (or refused to start): the silent sink stands in, the AudioUnit is retried at retry_at
     _Atomic float vol;                   // SetAudioOutVolume's gain, applied as the game's samples are taken (1 = as they are)
     _Atomic uint64_t played_b;           // bytes of the game's buffers played since the last StartAudioOut (GetAudioOutPlayedSampleCount)
@@ -174,6 +175,16 @@ static void render_into(aout *a, void *out, uint32_t n) {
       if (df) fwrite(out, 1, n, df); }
     if (g_audio_mute > 0) memset(out, 0, n);   // (after taking the blocks: the game's pacing goes on)
 }
+// 308i (doom-port 728dd65, MIT): AAudio's low-latency (MMAP) stream can be taken from the app or stall at its first write on some phones (an S23+
+// on Android 17: a timeout after 1 s), where the legacy path (performance mode NONE) plays. After a stall of a low-latency stream the output's
+// stream is opened again without it, once. 1: the caller opens it again so (t_audio_extras)
+static int aa_legacy_after_stall(aout *a) {
+#ifdef DM_TEST_AUDIO_NO_LEGACY   // negative control of t_audio_extras only: low latency kept, as before
+    (void)a; return 0;
+#endif
+    if (a->aa_legacy) return 0;
+    a->aa_legacy = 1; return 1;
+}
 #ifdef __APPLE__
 static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *bl) {
     (void)f; (void)ts; (void)bus; (void)frames;
@@ -237,7 +248,7 @@ static int au_open(aout *a) {   // 0 = the stream is open; -1 = it cannot be (a-
     int och = a->mix ? 2 : a->ch; AAudioStreamBuilder *b = NULL; aaudio_result_t r = AAudio_createStreamBuilder(&b);
     if (r == AAUDIO_OK) {
         AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16); AAudioStreamBuilder_setChannelCount(b, och); AAudioStreamBuilder_setSampleRate(b, RATE);
-        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY); AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+        AAudioStreamBuilder_setPerformanceMode(b, a->aa_legacy ? AAUDIO_PERFORMANCE_MODE_NONE : AAUDIO_PERFORMANCE_MODE_LOW_LATENCY); AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
         AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_GAME); AAudioStreamBuilder_setContentType(b, AAUDIO_CONTENT_TYPE_MUSIC);
         AAudioStreamBuilder_setDataCallback(b, aa_render, a); AAudioStreamBuilder_setErrorCallback(b, aa_error, a);
         r = AAudioStreamBuilder_openStream(b, &a->au); AAudioStreamBuilder_delete(b);
@@ -248,7 +259,7 @@ static int au_open(aout *a) {   // 0 = the stream is open; -1 = it cannot be (a-
     if (a->mix) LOG("audio: the game gives 6 channels (5.1) → downmixed to stereo (center / surround ×0.707 into left and right, no LFE, −3 dB overall, saturating)");
     LOG("audio: AAudio output opened in %.1f ms: %d Hz, %d channels, burst %d frames, buffer %d of %d frames, %s, %s", (now_ns() - t0) / 1e6,
         AAudioStream_getSampleRate(a->au), AAudioStream_getChannelCount(a->au), burst, AAudioStream_getBufferSizeInFrames(a->au), AAudioStream_getBufferCapacityInFrames(a->au),
-        AAudioStream_getPerformanceMode(a->au) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY ? "low latency" : "[red] not the low-latency path",
+        AAudioStream_getPerformanceMode(a->au) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY ? "low latency" : a->aa_legacy ? "the legacy path (after a stall)" : "[red] not the low-latency path",
         AAudioStream_getSharingMode(a->au) == AAUDIO_SHARING_MODE_EXCLUSIVE ? "exclusive" : "shared");
     return 0;
 }
@@ -263,8 +274,12 @@ static int ao_index(const aout *a);
 static void au_revive(aout *a) {
 #ifdef __ANDROID__
     if (a->au && AAudioStream_getState(a->au) == AAUDIO_STREAM_STATE_DISCONNECTED) {
-        AAudioStream_close(a->au); a->au = NULL;
+        AAudioStream_close(a->au); a->au = NULL; a->aa_reopen = 0;
         LOG("audio #%d: the stream lost its device: %s", ao_index(a), au_open(a) ? "[red] no new one" : "a new one opened");
+    }
+    if (a->au && a->aa_reopen) {   // 308i: stalled while low latency: opened again on the legacy path
+        AAudioStream_close(a->au); a->au = NULL; a->aa_reopen = 0;
+        LOG("audio #%d: the low-latency stream stalled: %s", ao_index(a), au_open(a) ? "[red] no legacy one either" : "opened again without low latency");
     }
 #else
     (void)a;
@@ -333,6 +348,9 @@ static void *au_watchdog(void *p) {
             } else if (t - a->wd_t > WD_STALL_MS * 1000000ull) {
                 LOG("[red] audio #%d: the device has not called back for %.0f ms while playing: the silent sink stands in, retrying the AudioUnit", i, (t - a->wd_t) / 1e6);
                 AudioOutputUnitStop(a->au); a->backend = BK_NONE; null_start(a);
+#ifdef __ANDROID__
+                if (AAudioStream_getPerformanceMode(a->au) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY && aa_legacy_after_stall(a)) a->aa_reopen = 1;   // (au_revive at the retry)
+#endif
                 a->stalled = 1; a->retry_ms = a->retry_ms ? (a->retry_ms < 8000 ? a->retry_ms * 2 : 8000) : 1000; a->retry_at = t + (uint64_t)a->retry_ms * 1000000;
             }
             if (a->stalled && a->backend == BK_NULL && !g_suspended && t >= a->retry_at && atomic_load_explicit(&a->state, memory_order_relaxed) == STATE_STARTED) {

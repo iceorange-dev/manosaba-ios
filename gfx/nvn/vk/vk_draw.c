@@ -15,7 +15,11 @@
 #include "../core/state.h"
 #include "../core/upd.h"
 #include "../core/usnap.h"
+#include "../core/rt.h"
+#include "vk_rules.h"
 #include <math.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,9 +27,11 @@ int exec_draw_dropped(void);   // core/exec.c: rendering off, no program, empty 
 static uint64_t g_draws, g_dropped, g_pipes, g_passes, g_dispatches;
 
 // ---------- The pass ----------
-static struct { int open, n, bar, sw; uint64_t draws; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;   // bar: a barrier in it; sw: storage written
+static struct { int open, n, bar, sw; uint8_t dup; uint64_t draws; vk_img *col[8]; vk_img *ds; VkFormat cf[8], df, sf; uint32_t w, h, samples; } P;   // bar: a barrier in it; sw: storage written; dup: slots left out (308c)
 int vk_pass_is_open(void) { return P.open; }
 int nvn_be_pass_mode(void) { return P.open ? 0 : -1; }
+static uint8_t g_last_dup;
+uint8_t vk_pass_last_dup(void) { return g_last_dup; }   // the slots the last pass opened left out (308c; t_vk_be)
 int vk_pass_attach_index(const vk_img *im) { if (!P.open) return -1; for (int i = 0; i < P.n; i++) if (P.col[i] == im) return i; return P.ds == im ? -2 : -1; }
 uint64_t vk_pass_count(void) { return g_passes; }
 static uint64_t g_pe[VK_PE_N]; static int g_pe_why = -1;
@@ -121,9 +127,19 @@ static int pass_open(void) {
     if (!R.has_rt) { VRED("a draw with no render targets set: dropped"); return 0; }
     VkRenderingAttachmentInfo ca[8] = {0}, da = {0}; uint32_t w = UINT32_MAX, h = UINT32_MAX; int n = R.rt.n > 8 ? 8 : R.rt.n;
     memset(&P, 0, sizeof P);
+    // 308c: the same texture (and level / layer) at two colour slots is attached once, at the slot the core keeps (rt_dup_slot: the one the channel
+    // mask writes), as on the Metal backend; two attachments of one view would load and store it apart (nx2android 8e06fd2, MIT: Mario Kart 8
+    // Deluxe's normal target zero in 9 of 16 frames). A pending clear of the slot left out goes to the kept one
+#ifndef DM_TEST_VK_DUP_BOTH   // negative control of t_vk_be only: both slots attached, as before
+    for (int i = 0; i < n; i++) if (R.clear_c[i] && rt_dup_slot(&R.rt, i))
+        for (int j = 0; j < n; j++) if (j != i && rt_same_sub(&R.rt, i, j) && !rt_dup_slot(&R.rt, j)) { if (!R.clear_c[j]) { R.clear_c[j] = 1; R.cc[j] = R.cc[i]; } break; }
+#endif
     for (int i = 0; i < n; i++) {
         ca[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         vk_img *im = R.rt.color[i] ? vk_tex(R.rt.color[i]) : NULL;
+#ifndef DM_TEST_VK_DUP_BOTH
+        if (im && rt_dup_slot(&R.rt, i)) { ca[i].imageView = VK_NULL_HANDLE; P.dup |= (uint8_t)(1u << i); continue; }
+#endif
         if (!im || !(im->aspect & VK_IMAGE_ASPECT_COLOR_BIT)) { ca[i].imageView = VK_NULL_HANDLE; continue; }
         vk_tex_upload_now(im);
         unsigned lv = R.rt.has_cview[i] && R.rt.cview[i].set_levels ? R.rt.cview[i].base_level : 0;
@@ -133,7 +149,7 @@ static int pass_open(void) {
         if (R.clear_c[i]) ca[i].clearValue.color = clear_value(im->fmt, &R.cc[i]);
         P.col[i] = im; P.cf[i] = im->fmt; P.samples = im->t.d.samples > 1 ? (uint32_t)im->t.d.samples : 1; im->gpu_written = 1; im->uploaded = 1;
     }
-    P.n = n;
+    P.n = n; g_last_dup = P.dup;
     vk_img *dm = R.rt.depth ? vk_tex(R.rt.depth) : NULL;
     if (dm && (dm->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
         vk_tex_upload_now(dm);
@@ -253,10 +269,45 @@ typedef struct {
     const vk_prog *prog; uint32_t cf[8], df, sf; uint8_t n, samples, tclass, poly, blend_en, logic_en, logic_op, depth_clamp; uint32_t chmask; blend_st blend[8];
 } pipe_key;
 static nvn_hmap g_pipes_h = {.klen = sizeof(pipe_key)};
+// 308e: the pipeline cache kept between launches in DM_VK_PCACHE (the app: its cache folder's vk_pipeline_cache.bin; unset, none). Given to the
+// driver at start when its header is this device's (vk_rules.h vk_pcache_ok), saved when it grew, at most once a minute while pipelines are made
+// (checked as pipelines are made and with each stats line) and when the window goes (the app to the background), through a temporary file renamed over the old (LASRecomp 202916d, SkyRecomp ec367c6, MIT;
+// a first use costs 20-35 ms a graphics pipeline on an Adreno 830, nx2android 0d0468d). Not over 128 MB (LASRecomp 164b5b5: a 300 MB cache hung
+// a driver)
 static VkPipelineCache g_pcache;
+static size_t g_pcache_loaded, g_pcache_saved; static uint64_t g_pcache_at;
+static pthread_mutex_t g_pcache_mu = PTHREAD_MUTEX_INITIALIZER;
 static VkPipelineCache pcache(void) {
-    if (!g_pcache) { VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO}; VK(vkCreatePipelineCache(V.dev, &ci, NULL, &g_pcache)); }
+    if (g_pcache) return g_pcache;
+    const char *path = getenv("DM_VK_PCACHE"); uint8_t *data = NULL; size_t n = 0;
+    FILE *f = path && *path ? fopen(path, "rb") : NULL;
+    if (f) { fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+             if (sz > 0 && sz <= (128 << 20) && (data = malloc((size_t)sz)) && fread(data, 1, (size_t)sz, f) == (size_t)sz) n = (size_t)sz; fclose(f); }
+    if (n && !vk_pcache_ok(data, n, V.props.vendorID, V.props.deviceID, V.props.pipelineCacheUUID)) { VLOG("pipeline cache %s: another driver's or damaged (%zu bytes): started empty", path, n); n = 0; }
+    VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, .initialDataSize = n, .pInitialData = n ? data : NULL};
+    VkResult r = vkCreatePipelineCache(V.dev, &ci, NULL, &g_pcache);
+    if (r != VK_SUCCESS && n) { VLOG("[red] pipeline cache %s refused by the driver (%d): started empty", path, (int)r); ci.initialDataSize = 0; ci.pInitialData = NULL; n = 0; r = vkCreatePipelineCache(V.dev, &ci, NULL, &g_pcache); }
+    if (r != VK_SUCCESS) VDIE("vkCreatePipelineCache: %d", (int)r);
+    if (n) VLOG("pipeline cache %s: %zu bytes from an earlier run", path, n);
+    g_pcache_loaded = g_pcache_saved = n; g_pcache_at = now_ns(); free(data);
     return g_pcache;
+}
+size_t vk_pcache_save(int force) {   // bytes written (0: nothing to do or no path)
+    const char *path = getenv("DM_VK_PCACHE"); if (!path || !*path || !g_pcache) return 0;
+    uint64_t now = now_ns(); if (!force && now - g_pcache_at < 60000000000ull) return 0;
+    pthread_mutex_lock(&g_pcache_mu); g_pcache_at = now;
+    size_t n = 0; size_t w = 0;
+    if (vkGetPipelineCacheData(V.dev, g_pcache, &n, NULL) == VK_SUCCESS && n > g_pcache_saved && n <= (128 << 20)) {
+        uint8_t *d = malloc(n); char tmp[700]; snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        if (d && vkGetPipelineCacheData(V.dev, g_pcache, &n, d) == VK_SUCCESS) {
+            FILE *f = fopen(tmp, "wb");
+            if (f && fwrite(d, 1, n, f) == n && !fclose(f) && !rename(tmp, path)) { w = n; g_pcache_saved = n; VLOG("pipeline cache saved: %zu bytes (%zu at start)", n, g_pcache_loaded); }
+            else { if (f) fclose(f); unlink(tmp); VLOG("[red] pipeline cache %s: not saved", path); }
+        }
+        free(d);
+    }
+    pthread_mutex_unlock(&g_pcache_mu);
+    return w;
 }
 static VkPipeline pipeline(const vk_prog *g, int tclass) {
     pipe_key k; memset(&k, 0, sizeof k);
@@ -275,10 +326,14 @@ static VkPipeline pipeline(const vk_prog *g, int tclass) {
     VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = (VkSampleCountFlagBits)(P.samples ? P.samples : 1)};
     VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     VkPipelineColorBlendAttachmentState ba[8] = {0};
+    uint32_t written = 0, ints = 0; uint8_t wm[8], bon[8];   // 308a: what the pixel shader writes (its output locations), the integer targets
+    if (g->ps) for (int o = 0; o < g->ps->nout; o++) if (g->ps->vout[o].loc < 8) written |= 1u << g->ps->vout[o].loc;
+    for (int i = 0; i < P.n; i++) { if (P.cf[i] == VK_FORMAT_UNDEFINED) written &= ~(1u << i); if (vk_fmt_is_int((VkFormat)P.cf[i])) ints |= 1u << i; }   // (a slot left out: 308c)
+    vk_color_rules(P.n, S.chmask.mask, S.color.blend_en, written, ints, wm, bon);
     for (int i = 0; i < P.n; i++) {
-        const blend_st *b = &S.blend[i]; int on = S.color.blend_en >> i & 1;
-        ba[i] = (VkPipelineColorBlendAttachmentState){on, blend_factor(b->src_rgb), blend_factor(b->dst_rgb), blend_op(b->eq_rgb), blend_factor(b->src_a), blend_factor(b->dst_a), blend_op(b->eq_a),
-                                                     (VkColorComponentFlags)(S.chmask.mask >> (4 * i) & 0xf)};
+        const blend_st *b = &S.blend[i];
+        ba[i] = (VkPipelineColorBlendAttachmentState){bon[i], blend_factor(b->src_rgb), blend_factor(b->dst_rgb), blend_op(b->eq_rgb), blend_factor(b->src_a), blend_factor(b->dst_a), blend_op(b->eq_a),
+                                                     (VkColorComponentFlags)wm[i]};
     }
     VkPipelineColorBlendStateCreateInfo cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = (uint32_t)P.n, .pAttachments = ba};
     VkDynamicState dyn[24]; uint32_t nd = 0;
@@ -298,6 +353,7 @@ static VkPipeline pipeline(const vk_prog *g, int tclass) {
     VkResult r = vkCreateGraphicsPipelines(V.dev, pcache(), 1, &ci, NULL, &p);
     if (r != VK_SUCCESS) { VLOG("[red] pipeline for %016llx / %016llx: %d", (unsigned long long)g->vs->key, (unsigned long long)(g->ps ? g->ps->key : 0), (int)r); p = VK_NULL_HANDLE; }
     pipe_key *kk = malloc(sizeof *kk); *kk = k; VkPipeline *pv = malloc(sizeof *pv); *pv = p; nvn_hm_put(&g_pipes_h, kk, pv); free(kk);
+    vk_pcache_save(0);   // (at most once a minute, when it grew)
     g_pipes++; if (g_pipes <= 4 || !(g_pipes % 100)) VLOG("pipeline %llu made in %.1f ms (%016llx / %016llx)", (unsigned long long)g_pipes, (now_ns() - t0) / 1e6,
                                                          (unsigned long long)g->vs->key, (unsigned long long)(g->ps ? g->ps->key : 0));
     return p;
@@ -490,12 +546,13 @@ void nvn_be_dispatch(const p_dispatch *d) {
     if (!g_dispatches++) VLOG("first dispatch: %016llx, %d x %d x %d groups", (unsigned long long)g->cs->key, d->x, d->y, d->z);
 }
 void vk_stats_line(void) {
+    vk_pcache_save(0);   // (308e: a minute after the last save, when the cache grew; the present thread's every 600 presents)
     vk_tex_counts c; vk_tex_stats(&c);
     VLOG("so far: %llu draws and %llu dispatches (%llu dropped), %llu passes, %llu pipelines; textures sampled as zeros %llu times; images %llu alive (%.0f MB) of "
-         "%llu made, %llu uploads (%.0f MB), %llu again after CPU writes",
+         "%llu made, %llu uploads (%.0f MB), %llu again after CPU writes; staging buffers made %llu (%.1f ms)",
          (unsigned long long)g_draws, (unsigned long long)g_dispatches, (unsigned long long)g_dropped, (unsigned long long)g_passes, (unsigned long long)g_pipes,
          (unsigned long long)vk_bind_zeros(), (unsigned long long)c.live, c.live_bytes / 1e6, (unsigned long long)c.made, (unsigned long long)c.up_n, c.up_bytes / 1e6,
-         (unsigned long long)c.reup_n);
+         (unsigned long long)c.reup_n, (unsigned long long)c.stg_n, c.stg_ns / 1e6);
     const uint64_t *e = g_pe;
     VLOG("passes ended by: SetRenderTargets %llu (the same textures %llu), clears %llu, copies %llu, dispatches %llu, barriers %llu, uniform updates "
          "%llu, renamed updates written %llu, sampling the attachment %llu, submissions %llu, other %llu", (unsigned long long)e[VK_PE_RT],

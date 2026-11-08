@@ -30,8 +30,13 @@ ATTR = {   # android: attributes (public-final.xml)
     'launchMode': 0x0101001d, 'screenOrientation': 0x0101001e, 'configChanges': 0x0101001f, 'value': 0x01010024, 'minSdkVersion': 0x0101020c,
     'versionCode': 0x0101021b, 'versionName': 0x0101021c, 'targetSdkVersion': 0x01010270, 'allowBackup': 0x01010280,
     'extractNativeLibs': 0x010104ea, 'resizeableActivity': 0x010104f6, 'appCategory': 0x01010545}
-# configChanges flags (attrs_manifest.xml): keyboard, keyboardHidden, navigation, orientation, screenLayout, uiMode, screenSize, smallestScreenSize, density
+# configChanges flags (ActivityInfo.CONFIG_*, the manifest's values): keyboard, keyboardHidden, navigation, orientation, screenLayout, uiMode,
+# screenSize, smallestScreenSize, density; and since plan item 308f mcc, mnc, locale, touchscreen, layoutDirection, colorMode, grammaticalGender,
+# fontWeightAdjustment, fontScale: without them a change of language or font size mid-play recreated the activity, and onDestroy ends the host
+# (nx2android d47cb00, MIT, declares 0x50007fff)
 CONFIG_CHANGES = 0x0010 | 0x0020 | 0x0040 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x0800 | 0x1000
+if not os.environ.get('T_APK_BROKEN') == 'config':   # (the broken variant of tools/tests/t_apk.py: the old set)
+    CONFIG_CHANGES |= 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x2000 | 0x4000 | 0x8000 | 0x10000000 | 0x40000000
 SENSOR_LANDSCAPE, SINGLE_TASK, CATEGORY_GAME = 6, 2, 0
 MIN_SDK = TARGET_SDK = 35
 ICON_ID = 0x7f010000   # package 0x7f, type 1 (drawable), entry 0

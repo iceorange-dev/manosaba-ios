@@ -17,6 +17,7 @@
 //   an image slot
 // Texel buffers read zeros and lose their writes (null descriptors; a red line).
 #include "vk_bind.h"
+#include "vk_rules.h"
 #include "../nvn_hmap.h"
 #include "../core/state.h"
 #include "../core/upd.h"
@@ -62,8 +63,19 @@ static VkSamplerAddressMode wrap(int w) {
                  case NVN_WRAP_MODE_CLAMP_TO_BORDER: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; }
     return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;   // CLAMP (GL's, half border) and CLAMP_TO_EDGE
 }
-static VkSampler sampler(const samp_par *p0) {
+// Whether the GPU filters format f linearly (the optimal tiling's SAMPLED_IMAGE_FILTER_LINEAR), asked once per core format (308h)
+static int fmt_linear(VkFormat f) {
+    static _Atomic uint8_t known[256];   // 0 not asked, 1 no, 2 yes
+    if ((unsigned)f < 256) { uint8_t k = atomic_load(&known[f]); if (k) return k == 2; }
+    VkFormatProperties fp; vkGetPhysicalDeviceFormatProperties(V.pd, f, &fp); int ok = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+    if ((unsigned)f < 256) atomic_store(&known[f], ok ? 2 : 1);
+    if (!ok) { static int said; if (said++ < 4) VLOG("format %d is not filtered linearly here: sampled with nearest filters", (int)f); }
+    return ok;
+}
+// A sampler for the parameters, with nearest filters where the view's format cannot be filtered linearly (linear_ok 0; vk_rules.h)
+static VkSampler sampler(const samp_par *p0, int linear_ok) {
     samp_par p; memset(&p, 0, sizeof p); if (p0) p = *p0; else { p.minf = NVN_MIN_FILTER_LINEAR; p.magf = NVN_MAG_FILTER_LINEAR; p.lod_max = 1000; }
+    vk_filter_rules(linear_ok, &p);
     VkSampler *sp = nvn_hm_get(&g_samps, &p); if (sp) return *sp;
     int mip = p.minf >= NVN_MIN_FILTER_NEAREST_MIPMAP_NEAREST;
     VkSamplerCustomBorderColorCreateInfoEXT bc = {VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT};
@@ -232,10 +244,11 @@ static void put_null_texel(writes *p, const vk_bind *b) {   // (null descriptors
     p->w[p->nw++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = b->binding, .descriptorCount = 1, .descriptorType = (VkDescriptorType)b->dtype, .pTexelBufferView = &p->tv[p->ntv++]};
 }
 static int view_set(const view_t *v) { return v->set_levels || v->set_layers || v->set_format || v->set_target || v->set_swz; }
-static VkImageView sampled(uint32_t tid, int dim) {   // texture ID tid as a sampled view, or none
-    tex_t t; view_t v;
+static VkImageView sampled(uint32_t tid, int dim, VkFormat *vf) {   // texture ID tid as a sampled view, or none; vf: the view's format
+    tex_t t; view_t v; *vf = VK_FORMAT_UNDEFINED;
     if (!tid || !vk_tex_by_id(tid, &t, &v)) { if (tid && in_pool(tid)) VRED("texture ID %u is not registered: it reads zeros", tid); return VK_NULL_HANDLE; }
     vk_img *im = vk_tex(&t); if (!im) return VK_NULL_HANDLE;
+    *vf = im->fmt; if (view_set(&v) && v.set_format) { VkFormat f; if (vk_fmt(v.format, &f, NULL) && f) *vf = f; }
     vk_tex_upload_now(im); return vk_tex_view(im, &v, view_set(&v), 0, dim);
 }
 static void stage_resources(writes *p, const vk_sh *s, int stage) {
@@ -263,12 +276,12 @@ static void stage_resources(writes *p, const vk_sh *s, int stage) {
         case VK_K_TEX: {
             // the texture ID from the texture slot's handle, the sampler ID from the separate sampler slot's when the shader names one, else from the same handle
             uint64_t h = b->reg >= 0 && b->reg < 128 ? S.tex[stage][b->reg] : 0; uint32_t sid = b->sreg >= 0 && b->sreg < 128 ? h_sid(S.samp[stage][b->sreg]) : h_sid(h);
-            samp_par sp; int have_s = sid && vk_samp_by_id(sid, &sp);
-            VkImageView view = sampled(h_tid(h), b->off); if (!view) { view = dummy_view(b->off); g_zeros++; }
-            put_img(p, b, sampler(have_s ? &sp : NULL), view); break; }
+            samp_par sp; int have_s = sid && vk_samp_by_id(sid, &sp); VkFormat vf;
+            VkImageView view = sampled(h_tid(h), b->off, &vf); if (!view) { view = dummy_view(b->off); g_zeros++; vf = VK_FORMAT_R8G8B8A8_UNORM; }
+            put_img(p, b, sampler(have_s ? &sp : NULL, fmt_linear(vf)), view); break; }
         case VK_K_TEXI: {   // the image slot's texture, sampled (a fetch: the default sampler)
-            VkImageView view = sampled(b->reg >= 0 && b->reg < 32 ? h_tid(S.img[stage][b->reg]) : 0, b->off); if (!view) { view = dummy_view(b->off); g_zeros++; }
-            put_img(p, b, sampler(NULL), view); break; }
+            VkFormat vf; VkImageView view = sampled(b->reg >= 0 && b->reg < 32 ? h_tid(S.img[stage][b->reg]) : 0, b->off, &vf); if (!view) { view = dummy_view(b->off); g_zeros++; vf = VK_FORMAT_R8G8B8A8_UNORM; }
+            put_img(p, b, sampler(NULL, fmt_linear(vf)), view); break; }
         case VK_K_IMG: {
             if (b->dtype != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) { VRED("storage texel buffers are not bound yet: zeros read, writes lost"); put_null_texel(p, b); break; }
             uint32_t tid = b->reg >= 0 && b->reg < 32 ? h_tid(S.img[stage][b->reg]) : 0; tex_t t; view_t v; VkImageView view = VK_NULL_HANDLE;
@@ -283,7 +296,7 @@ static void stage_resources(writes *p, const vk_sh *s, int stage) {
         default:   // texel buffers
             VRED("a shader binding of kind %d is not bound yet (texel buffers): zeros read", b->kind);
             if (b->dtype == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || b->dtype == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) put_null_texel(p, b);
-            else if (b->dtype == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) put_img(p, b, sampler(NULL), dummy_view(b->off));
+            else if (b->dtype == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) put_img(p, b, sampler(NULL, 1), dummy_view(b->off));
             else put_buf(p, b, g_zero.buf, 0, 65536);
             break;
         }

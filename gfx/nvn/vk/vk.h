@@ -59,6 +59,10 @@ uint64_t vk_cur_fence(void);                    // the fence this submission com
 void vk_post_add(vk_post p);                    // lands at completion, in command order
 void vk_after(uint64_t fence, void (*fn)(void *), void *arg);   // fn(arg) on the completion thread once fence is done (already done: at once)
 void vk_barrier_all(VkCommandBuffer cb);        // every earlier access before every later one
+void vk_barrier_host(VkCommandBuffer cb);   // writes made visible to host reads (the end of a submission, 308g)
+uint64_t vk_host_barriers(void);           // how many (t_vk_be)
+uint8_t vk_pass_last_dup(void);             // colour slots the last pass left out: the same texture at another (308c)
+size_t vk_pcache_save(int force);           // the pipeline cache written to DM_VK_PCACHE (308e): bytes, 0 none
 VkCommandBuffer vk_once_begin(void);            // a command buffer of its own, outside submissions (uploads before the first, read-backs)
 void vk_once_end(VkCommandBuffer cb, int wait); // submitted after the work queued so far; wait: until it has completed
 
@@ -84,7 +88,7 @@ VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int 
 int vk_tex_by_id(uint32_t id, tex_t *t, view_t *v);   // the texture pool's entry for a texture ID (0: none registered)
 int vk_samp_by_id(uint32_t id, samp_par *p);
 void vk_tex_upload_now(vk_img *im);             // its storage's content copied in now, ahead of the submission being recorded
-typedef struct { uint64_t made, made_bytes, live, live_bytes, up_n, up_bytes, reup_n; } vk_tex_counts;   // images made so far and alive now, uploads
+typedef struct { uint64_t made, made_bytes, live, live_bytes, up_n, up_bytes, reup_n, stg_n, stg_ns; } vk_tex_counts;   // images made so far and alive now, uploads; staging buffers made and the time making them took (308j)
 void vk_tex_stats(vk_tex_counts *c);
 void vk_stats_line(void);                       // vk_draw.c: draws, pipelines, uploads so far (every 600 presents)
 // vk_ptime.c: each pass's GPU time (DM_VK_PASS_GPU=1), summed by its targets: a slot's command buffer begun (vk_submit.c), a pass's begin and end

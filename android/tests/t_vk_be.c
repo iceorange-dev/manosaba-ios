@@ -31,7 +31,11 @@
 // (-DDM_TEST_VK_UPLOAD_UNGUARDED, read as before: 1 fails, the fault caught by the test itself). Quad strips (plan item 291, nvn_quad_strip.h),
 // pairs of vertices across the target, clockwise its front and back faces culled: 6 vertices cover it all, 5 only its left half (as triangle
 // strips they drew a triangle into the right half); indexed (16-bit) the same over a restart (-DDM_TEST_QS_ABC, a plain quad's order: 3 fail).
+// 308: the 16-bit formats in NVN's bit order (-DDM_TEST_VK_FMT16_NONE, left out: 1 fails); a barrier to host reads at the end of each submission
+// (-DDM_TEST_VK_NO_HOST_BARRIER: 1 fails); one texture at two colour slots attached once (-DDM_TEST_VK_DUP_BOTH: 1 fails); the pipeline cache saved
+// with this device's header.
 #include "vk.h"
+#include "../../gfx/nvn/vk/vk_rules.h"
 #include "../../gfx/nvn/core/state.h"
 #include "../../gfx/nvn/core/pass.h"
 #include "../../gfx/nvn/core/usnap.h"
@@ -105,6 +109,12 @@ static void rec_draw(void *a) {
 }
 // full-target quads: indexed into g_rt2; then the second program (its own set) into g_rt3 and g_rt4 with two uniforms, in one submission
 static tex_t g_rt2, g_rt3, g_rt4; static prog_t g_prog3; static uint8_t *g_vb2, *g_ib, *g_ubo2;
+// 308c: a quad into a pass whose slots 0 and 1 hold the same texture
+static void rec_draw_dup(void *a) {
+    rec_draw(a);   // (the state as rec_draw sets it, its pass ended)
+    R.rt.n = 2; R.rt.color[0] = R.rt.color[1] = &g_rt; R.has_rt = 1; R.clear_c[0] = R.clear_c[1] = 0;
+    p_draw dw = {NVN_DRAW_PRIMITIVE_QUADS, 0, 4, 1, 0}; nvn_be_draw(&dw, NULL); nvn_be_pass_end();
+}
 static void target(tex_t *t) { R.rt.n = 1; R.rt.color[0] = t; R.has_rt = 1; R.clear_c[0] = 1; R.cc[0] = nvn_rgba_make(0, 0, 0, 0); }
 static void rec_draw2(void *a) {
     (void)a; st_reset(); memset(&R, 0, sizeof R);
@@ -233,6 +243,7 @@ static void rec_dispatch(void *a) {
 }
 
 int main(void) {
+    setenv("DM_VK_PCACHE", "t_vk_pcache.bin", 1);   // (308e: saved at the end, in the test folder)
     { struct sigaction sa = {.sa_sigaction = on_fault, .sa_flags = SA_SIGINFO}; sigemptyset(&sa.sa_mask); sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL); }
     setvbuf(stdout, NULL, _IONBF, 0); setenv("DM_VK_PASS_GPU", "1", 1);
     P = mmap(NULL, 4 << 20, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -398,6 +409,12 @@ int main(void) {
     Q[0] = 1;
     CHECK(Q[0] == 1 && Q[4096] == 0x5a && Q[5 * 4096 + 7] == 0x77 && Q[8 * 4096] == 0x5a && !mtl_pool_has((uint64_t)(uintptr_t)Q, 16), "... and its range holds what it held, the GPU's copy too, writable again");
     // the pool goes: its range is the CPU's again, with the content
+    // 308g: every submission that recorded commands ends with a barrier to host reads [-DDM_TEST_VK_NO_HOST_BARRIER]
+    { uint64_t hb0 = vk_host_barriers(); uint64_t f = run(rec_copy, NULL); mtl_wait(f, 5000000000ull);
+      CHECK(vk_host_barriers() - hb0 == 1, "308g: a submission ends with a barrier to host reads (%llu)", (unsigned long long)(vk_host_barriers() - hb0)); }
+    // 308c: the same texture at colour slots 0 and 1: attached once, slot 1 left out [-DDM_TEST_VK_DUP_BOTH]
+    { uint64_t f = run(rec_draw_dup, NULL); mtl_wait(f, 5000000000ull);
+      CHECK(vk_pass_last_dup() == 0x2, "308c: one texture at slots 0 and 1: attached at 0, slot 1 left out (mask %#x)", vk_pass_last_dup()); }
     uint8_t keep = P[12345]; mtl_pool_del(P);
     CHECK(P[12345] == keep && !mtl_pool_has((uint64_t)(uintptr_t)P, 16), "after the pool's removal its range holds what it held (and is in no pool)");
     // pools gone, still placed until the host gives their memory back (plan item 301f)
@@ -440,5 +457,15 @@ int main(void) {
           vk_fmt(0x94, &vf, NULL) == 1 && vf == VK_FORMAT_ASTC_12x12_SRGB_BLOCK && vk_fmt(0x7E, &vf, NULL) == 1 && vf == VK_FORMAT_ASTC_8x5_UNORM_BLOCK &&
           vk_fmt(0x6D, &vf, &cm) == 1 && cm.a == VK_COMPONENT_SWIZZLE_ONE && vk_fmt(0x35, &vf, NULL) == 1 && vf == VK_FORMAT_D24_UNORM_S8_UINT && !vk_fmt(0x19, &vf, NULL),
           "formats: RGBA8, BC1 without alpha, ASTC 12x12 sRGB and 8x5, RGBX8 (a one), D24S8; RGB8 none");
+    // 308: the 16-bit formats in NVN's order (red at the bottom of RGB565 / RGB5A1 / RGBA4, at the top of the BGR family) [-DDM_TEST_VK_FMT16_NONE]
+    VkComponentMapping c5;
+    CHECK(vk_fmt(NVN_FORMAT_RGBA4, &vf, NULL) == 1 && vf == VK_FORMAT_A4B4G4R4_UNORM_PACK16 && vk_fmt(NVN_FORMAT_RGB565, &vf, NULL) == 1 && vf == VK_FORMAT_B5G6R5_UNORM_PACK16 &&
+          vk_fmt(NVN_FORMAT_RGB5A1, &vf, &c5) == 2 && vf == VK_FORMAT_A1R5G5B5_UNORM_PACK16 && c5.r == VK_COMPONENT_SWIZZLE_B && c5.b == VK_COMPONENT_SWIZZLE_R &&
+          vk_fmt(NVN_FORMAT_BGR565, &vf, NULL) == 1 && vf == VK_FORMAT_R5G6B5_UNORM_PACK16 && vk_fmt(NVN_FORMAT_BGR5A1, &vf, NULL) == 1 && vf == VK_FORMAT_A1R5G5B5_UNORM_PACK16,
+          "308: the 16-bit formats: RGBA4 A4B4G4R4, RGB565 B5G6R5, RGB5A1 A1R5G5B5 red and blue swapped, BGR565 R5G6B5, BGR5A1 A1R5G5B5 [-DDM_TEST_VK_FMT16_NONE]");
+    // 308e: the pipeline cache written through a temporary file, with this device's header
+    { size_t w = vk_pcache_save(1); uint8_t hd[32] = {0}; FILE *pf = fopen("t_vk_pcache.bin", "rb"); size_t got = pf ? fread(hd, 1, 32, pf) : 0; if (pf) fclose(pf);
+      CHECK(w > 32 && got == 32 && vk_pcache_ok(hd, w, V.props.vendorID, V.props.deviceID, V.props.pipelineCacheUUID), "308e: the pipeline cache saved, %zu bytes, this device's header", w);
+      unlink("t_vk_pcache.bin"); }
     printf("t_vk_be: %d checks, %d failed\n", n, fail); return fail != 0;
 }

@@ -388,21 +388,12 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
   the same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); look at a shrine across a step first
   (needs a save in or by a shrine). Also MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps), checked at 90 and 120 with 292;
   the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time).
-- 308 the Vulkan backend (301e): 308a colour write mask 0 and no blending for outputs the fragment shader does not write (upstream PR #229; the
-  Metal backend's 621bd6d); 308b a view's swizzle replaces the texture's (nx2android f13ecfa); 308c a texture at two colour slots (`rt_dup_slot`,
-  nx2android 8e06fd2); 308d the swapchain through a lost surface, more than 8 images and a failed capabilities call (LASRecomp ee37681 /
-  2745a5e / 202916d); 308e the pipeline cache kept between launches (its header checked, written through a temporary file; LASRecomp 202916d,
-  SkyRecomp ec367c6); 308f the manifest's `configChanges` (nx2android d47cb00); 308g a host-read barrier at a submission's end (PKShield
-  b4002cc); 308h NEAREST for formats without linear filtering (upstream 0733eb4); 308i AAudio reopened without low latency after a stall
-  (doom-port 728dd65); 308j upload staging reused (upstream 64b5fcd), after measuring its share of 301f's `vkAllocateMemory`.
-- 309 Adreno checks on the K100: the subgroup size given to the translator for the Vulkan bundle (nx2android 44eca7e; 41 of manosaba's 2,740
-  modules shuffle by lane), NaN min / max / clamp by a probe like 260's (LASRecomp 856103b: Qualcomm's driver Maxwell-like on an 830), the
-  display frame-rate vote and the hint details for 301f (nx2android 70c8cb8).
 - 310 on the iPhone: float16 overflow on the A19 Pro (nxnative PR #1128: +inf where an M1 stores 65504; 260's precise min then gives 2048), GPU
   writes through a pool buffer made over read-only pages (nxnative 2d544e0; a probe on the Mac first), commits every 150 draws against 75
   (nxnative PR #1123), sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed), memory touched before loading (nxnative-mkw b8f81e4),
   the on-screen pad's redraw (upstream 7b62d9c).
-- 311 the next change of the translation chain (with 64g; every shader built again): TMML's negative LOD as unsigned 24.8, clamped to 0
+- 311 the next change of the translation chain (with 64g; every shader built again): the subgroup size given to the translator for the Vulkan
+  bundle (nx2android 44eca7e; 41 of manosaba's 2,740 modules shuffle by lane; Adreno waves are 64 or 128 lanes), TMML's negative LOD as unsigned 24.8, clamped to 0
   (nx2android 44eca7e), FSETP / FSET / FCMP `.FTZ` (nxnative 84dea69), an exiting thread still arriving at a barrier (nxport dc36147), split
   storage-word loads as one packed load (nxnative 1b9fbea), one translation for shaders that differ only in control bytes the translator does not
   read (MacNativeGames fb9b734), the Mac libraries' minimum system version (MacNativeGames #1845) and Xcode 27.2's Metal compiler (32023.922;
@@ -1335,3 +1326,27 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   or call those that do. gfx 174 / 174 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; the
   Android phone was not connected. Smoke: Tears of the Kingdom's two red lines as before, frames 1300 / 1800 the same scenes a moment apart
   (looked at); manosaba no red line, its shots as batch 146's.
+- [x] batch 148 · 308, 309: the Vulkan backend from the eleventh review, on the K100 (the user, 2026-11-08: the Android phone connected). Pure
+  rules in `gfx/nvn/vk/vk_rules.h`, checked on the phone by `android/tests/t_vk_rules.c` (11; each broken variant fails: mask 2, swizzle 1,
+  filter 1, cache 1, vote 2). 308a an attachment the pixel shader writes no output to gets write mask 0 and no blending, an integer target no
+  blending (upstream PR #229; the Metal backend's rule); 308b a view's swizzle replaces the texture's (nx2android f13ecfa); 308c one texture at two
+  colour slots attached once, a pending clear moved to the slot kept (`rt_dup_slot`, as on Metal; nx2android 8e06fd2; `t_vk_be` 308c,
+  `-DDM_TEST_VK_DUP_BOTH` 1 fails); 308d the swapchain through a lost surface or a refused window (made again at the next present) and up to 16
+  images (LASRecomp ee37681 / 2745a5e / 202916d, from mamcjr's LASRecompAndroid); 308e the pipeline cache kept in the app's cache folder
+  (`DM_VK_PCACHE`, its header checked, written through a temporary file a minute after the last save when it grew, and when the window goes; LASRecomp
+  202916d, SkyRecomp ec367c6): on the K100 the title and prologue saved 120,594 bytes, read back at the next launch, the first four pipelines then
+  made in 0.8 ms against 21.7; 308f the manifest's `configChanges` with mcc, mnc, locale, touchscreen, layoutDirection, colorMode,
+  grammaticalGender, fontWeightAdjustment and fontScale (0x5000ffff with the rest; the values from Android's ActivityInfo; nx2android d47cb00;
+  `t_apk` 17, `T_APK_BROKEN=config` 1 fails); 308g a barrier to host reads at the end of each submission (PKShield b4002cc; `t_vk_be`,
+  `-DDM_TEST_VK_NO_HOST_BARRIER` 1 fails); 308h nearest filters where the view's format is not filtered linearly (upstream 0733eb4): a probe on
+  the K100 (Adreno 840, driver 0x8034a02c) found every integer format and D32_SFLOAT_S8_UINT without linear filtering; 308i a low-latency AAudio
+  stream that stalled opened again without low latency, once (doom-port 728dd65; host `t_audio_extras` 11, `nolegacy` in the run 1 fails); 308j
+  measured instead: 25 staging buffers in 40 s of the title and prologue, 2.6 ms in all (the stats line), so they stay per upload. 309 the
+  game's frame rate voted for the window once it has held for 60 presents (`ANativeWindow_setFrameRate`, fixed source; nx2android 70c8cb8;
+  `DM_VK_VOTE=0` off): 60 voted and taken a second in. GLSL.std.450 FMax / FMin / FClamp with a NaN operand on the K100 (a compute probe):
+  max(0, NaN) 0, min(NaN, 1) 1, clamp(NaN, 0, 1) 0, as Maxwell, so no NMin / NMax rewrite (doom-port measured their cost at +24 %). Also 301e3's
+  16-bit formats, their order settled by 303e: RGBA4 A4B4G4R4, RGB565 B5G6R5, BGR565 R5G6B5, BGR5A1 A1R5G5B5, A1BGR5 R5G5B5A1 exactly, RGB5A1 and
+  RGB5 A1R5G5B5 with red and blue swapped (`t_vk_be`, `-DDM_TEST_VK_FMT16_NONE` 1 fails). `t_vk_be` 47 on the phone, every earlier broken variant
+  failing as before. gfx 174 / 174 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: the
+  phone's tests, manosaba headless 40 s (no red line, 60 fps from frame 600) and the app 40 s (no red line, 60 fps), then the app twice more
+  for the cache (75 s and 25 s). Smoke: Tears of the Kingdom's two red lines as before; manosaba no red line, its shots as batch 147's.

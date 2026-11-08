@@ -128,7 +128,12 @@ uint64_t mtl_sub_commit(void) {
         vkCmdWriteTimestamp2(s->cb, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, g_qp, 2 * (uint32_t)(s - g_slot) + 1);
         s->gpu_f = atomic_load(&g_cur_frame); gpu_tag_begin(s->gpu_f); s->timed = 1;
     }
-    if (s->begun) VK(vkEndCommandBuffer(s->cb));
+    if (s->begun) {
+#ifndef DM_TEST_VK_NO_HOST_BARRIER   // negative control of t_vk_be only: no barrier to host reads, as before
+        vk_barrier_host(s->cb);
+#endif
+        VK(vkEndCommandBuffer(s->cb));
+    }
     pthread_mutex_lock(&g_mu); uint64_t f = g_fence + 1; pthread_mutex_unlock(&g_mu);
     VkCommandBufferSubmitInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = s->cb};
     VkSemaphoreSubmitInfo ssi = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = g_sem, .value = f, .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
@@ -163,6 +168,17 @@ void vk_after(uint64_t fence, void (*fn)(void *), void *arg) {
     if (g_nafter == g_aftercap) { g_aftercap = g_aftercap ? 2 * g_aftercap : 64; g_after = realloc(g_after, (size_t)g_aftercap * sizeof *g_after); if (!g_after) VDIE("after list"); }
     g_after[g_nafter++] = (after_t){fn, arg, fence};
     pthread_mutex_unlock(&g_mu);
+}
+// The end of a submission: its writes made visible to the host's reads (308g). The completion thread and the game read pool memory the GPU wrote
+// once the timeline semaphore says the submission is done, and Vulkan needs this barrier for that (the host stage is not in ALL_COMMANDS);
+// Adreno showed the data without it, a Mali-G615 did not (PKShield-Android b4002cc, MIT: white screens). Counted for t_vk_be
+static _Atomic uint64_t g_host_barriers;
+uint64_t vk_host_barriers(void) { return atomic_load(&g_host_barriers); }
+void vk_barrier_host(VkCommandBuffer cb) {
+    VkMemoryBarrier2 mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT, .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT};
+    VkDependencyInfo di = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(cb, &di); atomic_fetch_add(&g_host_barriers, 1);
 }
 void vk_barrier_all(VkCommandBuffer cb) {
     VkMemoryBarrier2 mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,

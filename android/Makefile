@@ -63,7 +63,7 @@ $(B)/dmhost: $(OBJ) $(NULL_OBJ) $(B)/obj/android/front_headless.c.o
 # no text relocation; its symbols stay in the dynamic table for dladdr and dlsym (the crash report, the thread dumps)
 APP_OBJ = $(B)/obj/android/app_android.c.o $(B)/obj/android/front_android.c.o $(B)/obj/android/data_apk.c.o
 $(B)/libdmhost.so: $(OBJ) $(VK_OBJ) $(APP_OBJ)
-	$(CC) -shared -o $@ $^ -Wl,-soname,libdmhost.so -Wl,-Bsymbolic -Wl,--no-undefined -landroid -llog -laaudio -lmediandk -lvulkan -lz -lm -ldl
+	$(CC) -shared -o $@ $^ -Wl,-soname,libdmhost.so -Wl,-Bsymbolic -Wl,--no-undefined -landroid -lnativewindow -llog -laaudio -lmediandk -lvulkan -lz -lm -ldl
 
 # The APK (android/tools/apk.py): the library, the product's files the loader reads (the modules' images and what ios/tools/product_files.py lists), the icon.
 # PRODUCT: the android product (default $DM_ROOT/build/android/<game>.b301, DM_ROOT the workspace, ../work when unset); SHADERS: the Vulkan shader
@@ -113,7 +113,7 @@ apk-data: $(B)/$(GAME)-data.apk
 lib: $(B)/libdmhost.so
 
 # Unit tests of the Android parts, for the phone: build/tests/<name> (run-tests pushes them to /data/local/tmp/dm_tests and runs each)
-TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_vk_be_gcopy t_vk_be_gpart t_vk_be_unguarded t_vk_be_qsabc t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any t_crash_stderr t_crash_stderr_nodeadman
+TESTS = t_sha256 t_sha256_63 t_hthread t_hthread_nov t_slots t_input t_input_ydown t_input_three t_movie t_movie_uvswap t_vk_be t_vk_be_early t_vk_be_wind t_vk_be_grid t_vk_be_stale t_vk_be_cont t_vk_be_ubsh t_vk_be_shot t_vk_be_ts t_vk_be_pe t_vk_be_bar t_vk_be_ptime t_vk_be_arena t_vk_be_pend t_vk_be_pgall t_vk_be_gcopy t_vk_be_gpart t_vk_be_unguarded t_vk_be_qsabc t_vk_be_fmt16 t_vk_be_nohb t_vk_be_dup t_vk_rules t_vk_rules_mask t_vk_rules_swz t_vk_rules_filter t_vk_rules_pcache t_vk_rules_vote t_thermal t_thermal_raw t_settings t_settings_over t_settings_always t_data_idx t_data_idx_any t_crash_stderr t_crash_stderr_nodeadman
 TEST_DATA = build/tests/movie.mp4 build/tests/movie.webm build/tests/movie1080.mp4 build/tests/t_vk.dmvk
 test: $(addprefix build/tests/,$(TESTS)) $(TEST_DATA)
 build/tests:
@@ -168,47 +168,66 @@ build/tests/movie1080.mp4: | build/tests
 build/tests/movie.webm: | build/tests
 	ffmpeg -loglevel error -y -f lavfi -i color=c=red:s=320x240:r=30:d=1 -c:v libvpx-vp9 -g 10 -pix_fmt yuv420p $@
 # the Vulkan backend without a window, with the core modules it calls (plan item 301e1), and its draws' shaders (301e2)
-VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c upd.c frame.c guard.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
+VKT_SRC = tests/t_vk_be.c $(VK_SRC) $(addprefix ../gfx/nvn/core/,core.c state.c pend.c usnap.c tbdr.c store_index.c prog.c upd.c frame.c guard.c rt.c) ../gfx/nvn/nvn_tex.c ../gfx/nvn/nvn_dirty.c \
 	../gfx/tex/nvn_deswizzle.c
 VKT_FLAGS = -O1 -g -Wall -Wno-format -D_GNU_SOURCE -I$(H) -I../gfx/nvn/include -I../gfx/nvn/vk -Icompat -include compat/darwin.h
 build/tests/t_vk_be: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_early: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_EVENT_EARLY -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_EVENT_EARLY -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_wind: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_WINDING_SWAPPED -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_WINDING_SWAPPED -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_grid: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_GRID_ZERO -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_GRID_ZERO -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_stale: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SET_STALE -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SET_STALE -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_cont: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_CONT_NO_SPLIT -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_CONT_NO_SPLIT -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_ubsh: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_UB_NO_SHADOW -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_UB_NO_SHADOW -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_shot: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SHOT_FLIPPED -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SHOT_FLIPPED -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_ts: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_TS_NONE -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_TS_NONE -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_pe: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PE_OP_ONLY -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PE_OP_ONLY -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_bar: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_BAR_NO_SPLIT -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_BAR_NO_SPLIT -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_ptime: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PTIME_FIRST_ONLY -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PTIME_FIRST_ONLY -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_arena: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_ARENA_WAIT_OPEN -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_ARENA_WAIT_OPEN -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_pend: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PEND_KEPT -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PEND_KEPT -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_pgall: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_ALL_UNWRITTEN -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_ALL_UNWRITTEN -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_gcopy: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_COPY -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_COPY -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_gpart: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_DISCARD_PART -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_POOL_GONE_DISCARD_PART -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_unguarded: $(VKT_SRC) | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_UPLOAD_UNGUARDED -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_UPLOAD_UNGUARDED -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
 build/tests/t_vk_be_qsabc: $(VKT_SRC) ../gfx/nvn/nvn_quad_strip.h | build/tests
-	$(CC) $(VKT_FLAGS) -DDM_TEST_QS_ABC -o $@ $(VKT_SRC) -lvulkan -landroid -lz -lm
+	$(CC) $(VKT_FLAGS) -DDM_TEST_QS_ABC -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
+build/tests/t_vk_be_fmt16: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_FMT16_NONE -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
+build/tests/t_vk_be_nohb: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_NO_HOST_BARRIER -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
+build/tests/t_vk_be_dup: $(VKT_SRC) | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_DUP_BOTH -o $@ $(VKT_SRC) -lvulkan -landroid -lnativewindow -lz -lm
+# the Vulkan backend's rules without a GPU (vk_rules.h, plan items 308 / 309)
+build/tests/t_vk_rules: tests/t_vk_rules.c ../gfx/nvn/vk/vk_rules.h | build/tests
+	$(CC) $(VKT_FLAGS) -o $@ tests/t_vk_rules.c
+build/tests/t_vk_rules_mask: tests/t_vk_rules.c ../gfx/nvn/vk/vk_rules.h | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_MASK_CHMASK_ONLY -o $@ tests/t_vk_rules.c
+build/tests/t_vk_rules_swz: tests/t_vk_rules.c ../gfx/nvn/vk/vk_rules.h | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_SWZ_COMPOSE -o $@ tests/t_vk_rules.c
+build/tests/t_vk_rules_filter: tests/t_vk_rules.c ../gfx/nvn/vk/vk_rules.h | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_FILTER_ANY -o $@ tests/t_vk_rules.c
+build/tests/t_vk_rules_pcache: tests/t_vk_rules.c ../gfx/nvn/vk/vk_rules.h | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_PCACHE_ANY -o $@ tests/t_vk_rules.c
+build/tests/t_vk_rules_vote: tests/t_vk_rules.c ../gfx/nvn/vk/vk_rules.h | build/tests
+	$(CC) $(VKT_FLAGS) -DDM_TEST_VK_VOTE_EVERY -o $@ tests/t_vk_rules.c
 build/tests/t_vk.dmvk: tests/mk_vk_bundle.py ../gfx/tools/dmsh_vk.py ../games/manosaba/game.json | build/tests
 	python3 tests/mk_vk_bundle.py $@
 SERIAL ?= $(shell adb devices | awk 'NR > 1 && $$2 == "device" { print $$1; exit }')

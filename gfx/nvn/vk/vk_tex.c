@@ -6,6 +6,7 @@
 // Colour images whose format has an sRGB twin may be viewed as either, listed (VK_KHR_image_format_list) rather than any format, which keeps
 // Adreno's framebuffer compression (nx2android tex.c: UBWC lost with free MUTABLE_FORMAT; MIT, a fact taken).
 #include "vk.h"
+#include "vk_rules.h"
 #include "../nvn_dirty.h"
 #include "../nvn_hmap.h"
 #include "../nvn_tex.h"
@@ -127,7 +128,11 @@ void mtl_tex_release(tex_t *t) {
 // ---------- Uploads of what the storage holds ----------
 typedef struct { VkBuffer buf; VkDeviceMemory mem; } staging;
 static void staging_free(void *a) { staging *s = a; vkDestroyBuffer(V.dev, s->buf, NULL); vkFreeMemory(V.dev, s->mem, NULL); free(s); }
+// 308j: each upload makes its staging buffer and memory and frees them after its fence; counted with the time it takes (the stats line) to measure
+// that share of the frames that allocate memory (301f) before reusing them (upstream d2r-mobile 64b5fcd keeps 3-8 chunks)
+static _Atomic uint64_t g_stg_n, g_stg_ns;
 static staging *staging_new(uint64_t n, uint8_t **cpu) {
+    uint64_t t0 = now_ns();
     staging *s = calloc(1, sizeof *s);
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = n ? n : 4, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     VK(vkCreateBuffer(V.dev, &bi, NULL, &s->buf)); VkMemoryRequirements rq; vkGetBufferMemoryRequirements(V.dev, s->buf, &rq);
@@ -136,6 +141,7 @@ static staging *staging_new(uint64_t n, uint8_t **cpu) {
     VkMemoryAllocateInfo mai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = rq.size, .memoryTypeIndex = t};
     VK(vkAllocateMemory(V.dev, &mai, NULL, &s->mem)); VK(vkBindBufferMemory(V.dev, s->buf, s->mem, 0));
     VK(vkMapMemory(V.dev, s->mem, 0, VK_WHOLE_SIZE, 0, (void **)cpu));
+    atomic_fetch_add(&g_stg_n, 1); atomic_fetch_add(&g_stg_ns, now_ns() - t0);
     return s;
 }
 static void level_dims(const vk_img *im, unsigned lv, uint32_t *w, uint32_t *h, uint32_t *d) {
@@ -236,18 +242,13 @@ VkImageView vk_tex_view(vk_img *im, const view_t *v, int has_v, int attach, int 
     }
     VkComponentMapping cm = {0};
     const nvn_texdesc *d = &im->t.d;
-    if (!attach) {   // the format's own (RGBX: a one), then the texture's swizzle over it, then the view's
+    if (!attach) {   // the format's own (RGBX: a one), under the view's swizzle when it sets one, else the texture's (308b, vk_rules.h)
         VkComponentMapping fm; VkFormat ignore; vk_fmt(d->format, &ignore, &fm);
-        VkComponentSwizzle b[4] = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, fm.a == VK_COMPONENT_SWIZZLE_ONE ? VK_COMPONENT_SWIZZLE_ONE : VK_COMPONENT_SWIZZLE_A};
-        int sw[2][4] = {{d->swz[0], d->swz[1], d->swz[2], d->swz[3]}, {0}};
-        int nsw = 0; if (d->swz_set) nsw = 1;
-        if (has_v && v && v->set_swz) { sw[nsw][0] = v->swz_r; sw[nsw][1] = v->swz_g; sw[nsw][2] = v->swz_b; sw[nsw][3] = v->swz_a; nsw++; }
-        for (int k = 0; k < nsw; k++) {
-            VkComponentSwizzle o[4];
-            for (int c = 0; c < 4; c++) { int x = sw[k][c]; o[c] = x == NVN_TEXTURE_SWIZZLE_ZERO ? VK_COMPONENT_SWIZZLE_ZERO : x == NVN_TEXTURE_SWIZZLE_ONE ? VK_COMPONENT_SWIZZLE_ONE :
-                                                     x >= NVN_TEXTURE_SWIZZLE_R && x <= NVN_TEXTURE_SWIZZLE_A ? b[x - NVN_TEXTURE_SWIZZLE_R] : b[c]; }
-            memcpy(b, o, sizeof b);
-        }
+        VkComponentSwizzle fs[4] = {fm.r == VK_COMPONENT_SWIZZLE_B ? VK_COMPONENT_SWIZZLE_B : VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,   // (the 16-bit RGB family: red and blue swapped)
+                                    fm.b == VK_COMPONENT_SWIZZLE_R ? VK_COMPONENT_SWIZZLE_R : VK_COMPONENT_SWIZZLE_B, fm.a == VK_COMPONENT_SWIZZLE_ONE ? VK_COMPONENT_SWIZZLE_ONE : VK_COMPONENT_SWIZZLE_A}, b[4];
+        uint8_t ts[4] = {d->swz[0], d->swz[1], d->swz[2], d->swz[3]}, vs[4] = {0};
+        int vset = has_v && v && v->set_swz; if (vset) { vs[0] = v->swz_r; vs[1] = v->swz_g; vs[2] = v->swz_b; vs[3] = v->swz_a; }
+        vk_swz_rules(fs, d->swz_set, ts, vset, vs, b);
         cm = (VkComponentMapping){b[0], b[1], b[2], b[3]};
     }
     VkImageAspectFlags asp = im->aspect;
@@ -319,6 +320,7 @@ void mtl_reg_samp(int id, const samp_par *p) {
 }
 void vk_tex_stats(vk_tex_counts *c) {
     c->made = g_made; c->made_bytes = g_bytes; c->live = atomic_load(&g_live_n); c->live_bytes = atomic_load(&g_live_bytes); c->up_n = g_up_n; c->up_bytes = g_up_bytes; c->reup_n = g_reup_n;
+    c->stg_n = atomic_load(&g_stg_n); c->stg_ns = atomic_load(&g_stg_ns);
 }
 
 // The texture and sampler a handle names (texture ID: the low 20 bits, sampler ID: the high 12), as the pools registered them

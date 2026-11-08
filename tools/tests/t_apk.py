@@ -6,7 +6,8 @@ resources.arsc (drawable/icon → its path at no density), and APK Signature Sch
 the central directory, the 1 MB chunk digest with the end record's directory offset taken as the block's, the signature by openssl against the
 block's public key, the certificate's key the same). The same inputs give the same bytes. With --dex, classes.dex and hasCode true. The phone checks what this cannot (android/tests/
 run_on_phone.sh: it installs, and a damaged copy does not). T_APK_BROKEN=digest (the central directory left out of the digest): 2 fail (the data's APK too);
-T_APK_BROKEN=align (no alignment): 2 fail (3 with the data's); T_APK_BROKEN=datadeflate (the data deflated): 1 fails."""
+T_APK_BROKEN=align (no alignment): 2 fail (3 with the data's); T_APK_BROKEN=datadeflate (the data deflated): 1 fails. T_APK_BROKEN=config (configChanges without
+locale, font scale and the rest, as before 308f): 1 fails."""
 import hashlib, io, os, struct, subprocess, sys, tempfile, zipfile, zlib
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 sys.path.insert(0, os.path.join(ROOT, 'android', 'tools')); import apk
@@ -125,7 +126,7 @@ with tempfile.TemporaryDirectory() as d:
             (attr(app, 'label'), (3, '魔法少女ノ魔女裁判')), (attr(app, 'icon'), (0x01, 0x7f010000)), (attr(app, 'hasCode'), (0x12, 0)),
             (attr(app, 'debuggable'), (0x12, 0xffffffff)), (attr(app, 'extractNativeLibs'), (0x12, 0)), (attr(app, 'appCategory'), (0x10, 0)),
             (attr(act, 'name'), (3, 'android.app.NativeActivity')), (attr(act, 'screenOrientation'), (0x10, 6)), (attr(act, 'launchMode'), (0x10, 2)),
-            (attr(act, 'configChanges'), (0x11, 0x1ff0)), (attr(md, 'name'), (3, 'android.app.lib_name')), (attr(md, 'value'), (3, 'dmhost')),
+            (attr(act, 'configChanges'), (0x11, 0x5000ffff)), (attr(md, 'name'), (3, 'android.app.lib_name')), (attr(md, 'value'), (3, 'dmhost')),
             (attr(find(filt, 'action')[0], 'name'), (3, 'android.intent.action.MAIN')), (attr(find(filt, 'category')[0], 'name'), (3, 'android.intent.category.LAUNCHER'))]
     check('the manifest: package, versions, SDK 35, label, icon, no code, debuggable, the library mapped, a game; NativeActivity landscape, launcher',
           all(g == w for g, w in want), [(g, w) for g, w in want if g != w])

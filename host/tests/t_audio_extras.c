@@ -10,7 +10,7 @@
 //   StopAudioOut with two buffers queued (plan item 302: Unity's FMOD output stops it, then waits for its output thread, which waits for the
 //   event): both released unplayed in order, the count 0, the game's event signalled within a second
 // Volume not applied (-DDM_TEST_AUDIO_VOLUME_IGNORED): 3 fail; the played count not started again (-DDM_TEST_AUDIO_PLAYED_KEPT): 1 fails; Stop leaving
-// the queue as it is (-DDM_TEST_AUDIO_STOP_KEEPS): 1 fails.
+// the queue as it is (-DDM_TEST_AUDIO_STOP_KEEPS): 1 fails. A stalled low-latency AAudio stream kept so (-DDM_TEST_AUDIO_NO_LEGACY): 1 fails.
 // The output is in the registry the lifecycle and the watchdog read only once it is made (plan item 296; nxnative ce99604): in it first, as
 // before (-DDM_TEST_AUDIO_PUBLISH_EARLY): 1 fails.
 #include "../hle/hle_audio.c"
@@ -67,6 +67,9 @@ int main(void) {
     check("StopAudioOut with two queued: both released unplayed in order, count 0, the game's event signalled within a second",
           s0 == &b[0] && s1 == &b[1] && !s2 && h_au_Count(out) == 0 && atomic_load(&g_signals) > sig0 && h_au_State(out) == STATE_STOPPED);
     h_au_Close(out);
+    // 308i: a stalled low-latency stream goes to the legacy path once, then stays there [-DDM_TEST_AUDIO_NO_LEGACY]
+    { aout t; memset(&t, 0, sizeof t); int first = aa_legacy_after_stall(&t), again = aa_legacy_after_stall(&t);
+      check("a low-latency stream's stall: opened again without low latency, once (the second stall keeps it so)", first == 1 && again == 0 && t.aa_legacy == 1); }
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }
