@@ -2,8 +2,9 @@
 // a 16:9 perspective projection's x row is divided by k, row-major and column-major; a view-projection (the projection times a rotation and a
 // translation) too; an inverse projection's x row times k; the HUD's orthographic projection for 1280x720 only noted; a matrix of another shape and
 // a 4:3 projection left; a screen-size vec4 (1280, 720, 1/1280, 1/720) becomes (1564, 720, 1/1564, 1/720), the other order too; the aspect pair
-// (16/9, 9/16) widened; a block passed twice changed once; with the Duo's inner screen (ky 1.25) the y row divided by ky. Column-major matrices not
-// recognised (-DDM_TEST_WIDEN_RW_ROW_ONLY): 2 fail.
+// (16/9, 9/16) widened; a block passed twice changed once; with the Duo's inner screen (ky 1.25) the y row divided by ky; the fast test before
+// the whole ones (wrw_maybe) skips no window they accept, over 64 KB of random values with each kind planted in both orders. Column-major
+// matrices not recognised (-DDM_TEST_WIDEN_RW_ROW_ONLY): 2 fail; the fast test without the z row (-DDM_TEST_WIDEN_RW_PRE_W_ONLY): 2 fail.
 #include <stdio.h>
 #include "../nvn/core/widen_rw.h"
 static int n, fail;
@@ -14,6 +15,17 @@ static void proj(float *m, double aspect, float jx, float jy) {   // row-major, 
     double f = 1 / tan(30 * M_PI / 180), nn = 0.1, ff = 1000;
     float p[16] = {(float)(f / aspect), 0, jx, 0,  0, (float)f, jy, 0,  0, 0, (float)((ff + nn) / (nn - ff)), (float)(2 * ff * nn / (nn - ff)),  0, 0, -1, 0};
     memcpy(m, p, 64);
+}
+static int ref_kind(const float *m) {   // the whole tests on one window, without wrw_maybe
+    if (!wrw_finite(m)) return -1;
+    for (int col = 0; col < 2; col++) {
+#ifdef DM_TEST_WIDEN_RW_ROW_ONLY
+        if (col) break;
+#endif
+        int k = wrw_is_proj(m, col) ? WRW_PROJ : wrw_is_invproj(m, col) ? WRW_INVPROJ : wrw_is_viewproj(m, col) ? WRW_VIEWPROJ : wrw_is_ui_ortho(m, col) ? WRW_UI_ORTHO : -1;
+        if (k >= 0) return k;
+    }
+    return -1;
 }
 static int block1(const widen_t *w, const float *m, float *out, wrw_hits *h) { uint8_t s[64], d[64]; memcpy(s, m, 64); int c = wrw_block(w, s, 64, 0, d, h); memcpy(out, d, 64); return c; }
 int main(void) {
@@ -44,5 +56,14 @@ int main(void) {
     check("a block passed twice: changed once", c == 0 && !memcmp(o, once, 64));
     widen_t d = widen_for_screen(2670, 1878); proj(P, 16.0 / 9.0, 0, 0); transpose(P, Pc); c = block1(&d, Pc, o, &h);
     check("the Duo's inner screen: a column-major projection's y row divided by ky 1.25, x the same [-DDM_TEST_WIDEN_RW_ROW_ONLY: left]", c == 1 && fabsf(o[5] - Pc[5] / 1.25f) < 1e-6f && o[0] == Pc[0]);
+    {   // the fast test: every 16-byte window of 64 KB of random values (a third 0, some 1 and -1) with each kind planted in both orders, as the whole tests find it
+        enum { NB = 65536 }; static float buf[NB / 4]; uint32_t x = 12345;
+        for (int i = 0; i < NB / 4; i++) { x = x * 1664525u + 1013904223u; int r = x >> 28; buf[i] = r < 5 ? 0 : r < 7 ? 1 : r < 8 ? -1 : (float)((x >> 8) & 0xffff) / 16384 - 2; }
+        proj(P, 16.0 / 9.0, 0.02f, -0.01f); const float *kinds[4] = {P, VP, I, U}; int planted = 0;
+        for (int i = 0; i < 64; i++) { float t[16]; if (i & 1) transpose(kinds[(i >> 1) & 3], t); else memcpy(t, kinds[(i >> 1) & 3], 64); memcpy(&buf[(i * 1021 % (NB / 64 - 1)) * 16], t, 64); planted++; }
+        int found = 0, same = 1;
+        for (size_t p = 0; p + 64 <= NB; p += 16) { float m[16], mm[16]; memcpy(m, (uint8_t *)buf + p, 64); memcpy(mm, m, 64); int k; wrw_window(&w, mm, &k); int rk = ref_kind(m); same &= k == rk; found += rk >= 0; }
+        check("the fast test skips no window the whole tests accept (64 KB, each kind planted in both orders) [-DDM_TEST_WIDEN_RW_PRE_W_ONLY: inverses skipped]", same && found >= planted / 2);
+    }
     printf("t_widen_rw: %d checks, %d failed\n", n, fail); return fail != 0;
 }

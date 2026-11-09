@@ -178,7 +178,7 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
     // The HUD into a widened target (plan item 320d): a draw that read the HUD's orthographic projection and no projection to change is placed in the
     // centred 16:9 band at its own size instead of widened (its viewport and scissor moved by half the added width / height)
 #ifndef DM_TEST_WIDEN_HUD_WIDE   // negative control of t_widen_draw only: the HUD widened with the rest
-    if (__builtin_expect(kx != 1 || ky != 1, 0) && (g_wd_fl & 3) == 2) {
+    if (__builtin_expect(kx != 1 || ky != 1, 0) && (g_wd_fl & 7) == 2) {
         double ox = (tw - tw / kx) / 2, oy = (th - th / ky) / 2; g_wd_hud++;
         if (S.has_vp) enc_r_viewport(en, (MTLViewport){S.vp[0][0] + ox, S.vp[0][1] + oy, S.vp[0][2], S.vp[0][3], S.dr[0], S.dr[1]});
         else enc_r_viewport(en, (MTLViewport){ox, oy, tw / kx, th / ky, 0, 1});

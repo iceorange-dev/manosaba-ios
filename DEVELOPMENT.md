@@ -457,7 +457,8 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   its size stays (`DM_WIDEN_SCREEN=<w>x<h>` stands in for a phone's screen on the Mac); the render target heap's placement scaled for it.
   320c (batch 165: the mapping; the HUD's centring with 320d) viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
   full-canvas 2D page with black side bands.
-  320d (the recogniser and its measurement: batch 166; the rewrite and the HUD: batch 167) the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
+  320d (the recogniser and its measurement: batch 166; the rewrite and the HUD: batch 167; post-processing quads and the scan's cost: batch 168) the
+  projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
   found in the blocks a draw binds, their x row divided by k in a copy for the draw (reused while the block is unchanged); orthographic ones left.
   320e sampling and copies: a 16:9-geometry draw sampling a widened texture reads its middle band; copies and blits between widened and plain
   textures mapped; compute writing a widened image with its groups × k.
@@ -1704,3 +1705,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   lines; at frame 3500 a softer, brighter rectangle over Zelda's right side, where a screen-space pass is placed or sampled wrongly: 320e / 320f's.
   gfx 192 / 192 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
   connected. Smoke (no widening): Tears of the Kingdom's two red lines as before, s1800 Zelda speaking a moment apart (looked at); manosaba none.
+- [x] batch 168 · 320d (post-processing quads and the scan's cost): a draw that samples a texture with widened storage (its Metal root wider or
+  taller than the game made it) is a pass over the 3D picture and is widened even when it reads the HUD's orthographic projection (Tears of the
+  Kingdom's full-screen quads do); `gfx/tests/t_widen_draw.m` 8 (a quad with that projection sampling the widened 3D target reaches columns 100 and
+  1500; `-DDM_TEST_WIDEN_SAMPLED_HUD` 1 fails). The scan cost Tears of the Kingdom's prologue on the M5 (`DM_WIDEN_SCREEN=2868x1320`, frame 4500)
+  1,091 blocks and 2.3 MB a frame, the submit thread 7.15 ms of CPU a frame against 2.98 unwidened (146,347 instructions a draw against
+  21,703). Now: a fast test of the w row or z row first (`wrw_maybe`: what every kind needs; 3.18 → 0.95 ms a MB on mixed values, 0.42 on
+  random ones; `gfx/tests/t_widen_rw.c` 11, the fast test skipping no window the whole tests accept over 64 KB with each kind planted in both
+  orders, `-DDM_TEST_WIDEN_RW_PRE_W_ONLY` 2 fail), and across submissions a block at the guest address and of the size of one scanned before
+  with the same content (a hash) given that scan's result, the changed words patched into a copy (up to 32; `t_widen_draw.m`: the block in the
+  next submission not scanned, `-DDM_TEST_WIDEN_RW_NO_REUSE` 1 fails; a 70° projection at the same address scanned again, 168 of 255,
+  `-DDM_TEST_WIDEN_RW_REUSE_STALE` 2 fail). At frame 4500: 317 blocks scanned (1.81 MB), 764 from an earlier scan, 20.5 bound rewritten a frame;
+  the submit thread 3.20 ms of CPU, 44,383 instructions a draw, submit and present p50 3.09 ms (7.04 before, 2.82 unwidened). A timing line
+  `[nvn] widening` every 300 frames: draws widened / centred as the HUD's, blocks scanned / reused / bound rewritten. The softer, brighter
+  region at frame 3500 (batch 167) is still there, and looked at full size it is a staircase of tile-sized blocks over Zelda's right side: a
+  tiled pass whose tiles are found with a width other than the one their list was made for, 320e / 320f's. gfx 192 / 192 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture
+  and audit tests, the tool tests but `t_mtl_parts` (the encode_args part's braces unbalanced by the stale-reuse control's two `if (…) {` lines:
+  made one `if` on a flag set either way; `t_mtl_parts` 6 / 6 after it, `t_widen_draw` 8 / 8 on both again and its controls as before), both
+  IPAs; Android: built, the phone not connected. Smoke (no widening): Tears of the Kingdom's two red lines as before, s1300 and s1800 the same
+  cutscene a moment apart (looked at), instructions a draw as before (27,525-36,787; batch 167 24,849-39,556); manosaba none.

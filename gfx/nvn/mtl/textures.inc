@@ -210,6 +210,13 @@ static void tex_widen(const tex_t *t, MTLTextureDescriptor *d) {
     d.width = nw; d.height = nh;
 }
 uint64_t mtl_widen_count(void) { return atomic_load(&g_widen_n); }
+// Whether the texture (or view) t bound for the registered texture nt has widened storage: its root wider or taller than the game made it
+// (tex_desc gives the game's size, only tex_widen more; plan item 320d: a draw sampling one is a pass over the 3D picture, not the HUD)
+static int tex_is_widened(id<MTLTexture> t, const tex_t *nt) {
+    if (!t || !nt) return 0;
+    id<MTLTexture> r = t; while (r.parentTexture) r = r.parentTexture;
+    return r.textureType != MTLTextureTypeTextureBuffer && (r.width > (nt->d.width ? nt->d.width : 1) || r.height > (nt->d.height ? nt->d.height : 1));
+}
 // In-place upgrade: when the original texture was not created with PixelFormatView (off by default, to keep Apple GPU lossless compression) but a different-format view is needed, create a new one with the original spec + PixelFormatView, copy over every slice × level, and replace the registration.
 // Count: across the 4 screens character select / camp / wilderness / combat, 17473 textures needed a different-format view 0 times, so this is a fallback and does not rely on predicting which textures need it
 static id<MTLTexture> tex_upgrade_pfv(const tex_t *t, id<MTLTexture> base, MTLPixelFormat view_pf) {
