@@ -77,6 +77,8 @@ int dm_game_realtime_step(void);   // (its weak default is below)
 static int fstep_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_FRAME_STEP"); v = e && !strcmp(e, "vsync") && dm_game_realtime_step();
     if (e && !strcmp(e, "vsync") && !v) LOG("[nvn] [red] DM_FRAME_STEP=vsync needs a game whose step the host sets (Tears of the Kingdom's option realtime)");
     const char *o = getenv("DM_FSTEP_OPT"); g_fs.opt = !(o && !strcmp(o, "0"));   // trials whatever the cost, with a grace period (plan item 222)
+    const char *r = getenv("DM_FSTEP_RULES"); g_fs.no321 = r && !strcmp(r, "0");   // plan item 321's rules (the window at kmin, the probes); 0: as before, for an A/B
+    if (g_fs.no321) LOG("[nvn] frame step: plan item 321's rules off (DM_FSTEP_RULES=0): three late frames in a row step up from kmin, no probes");
     if (v) LOG("[nvn] frame step in whole vsyncs: each frame shown k vsyncs of 60 Hz, the game steps k (DM_FRAME_STEP=vsync)%s",
                g_fs.opt ? "; a trial of k - 1 every 5 s or more whatever the cost, its first second not counted late (DM_FSTEP_OPT=0 turns that off)" : ""); } return v; }
 int nvn_fstep_step(void) { return fstep_on() ? g_fs_step : 0; }   // the step for the frame the game is about to make, in vsyncs (0 = not in this mode)

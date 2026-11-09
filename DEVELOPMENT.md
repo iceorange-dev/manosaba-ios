@@ -477,7 +477,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   1,955 columns stretched over its width (batch 169's fit), and the frame 3500 staircase is in the scene target already.
   320g (iOS's switch: batch 173; the present's crop and the Air measured: batch 174; the scan of the slots read: batch 175; the setting: batch 176; the edge push in y: batch 177) the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
   then the iPhone Air and the Duo's inner screen: fps, GPU time, the HUD's proportions (a circle stays round), no black band.
-- 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
+- 321 (the window and the probes: batch 178; the critical path left) the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
   only when more than 24 of the last 120 frames were shown late (three in a row stepped up on scattered spikes, after which the GPU clock fell and
   60 never fitted again), the cost as the critical path (submits' start to the GPU's end: 27 against 35 ms at a hold of 3), a probe back to 60 when
   the CPU sits on the efficiency cores (under 30 % on performance cores in two windows of 30 presents, thermal ≤ 1, Low Power off) or the GPU time
@@ -1860,3 +1860,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   bundle), the phone not connected. Smoke on the new chain (no widening): Tears of the Kingdom's two red lines as before, frame 2100 reached
   as in batch 176 (frame time p50 33.35 ms in both), s1300 and s1800 the same scenes, instructions a draw as before (27,280-38,885); manosaba
   none, its s600 the title page (looked at).
+- [x] batch 178 · 321, the frame step's window and probes (S2Arm's measurements, written anew in `gfx/nvn/nvn_fstep.h`): steady at kmin (no trial
+  running) the step up waits for more than 24 of the last 120 frames shown late, counting frames shown late only; trials keep the three in a row.
+  A probe back to kmin starts after the hold-off while the caller reports the frames slowed for reasons other than the scene, with 30 frames of
+  grace; the run at kmin it starts must last 8 s, or the probe has failed and the hold-off doubles. Slowed (`gfx/nvn/hle/pacing.inc`): the CPU
+  under 30 % of the process's time on performance cores in each of the last two windows of 30 presents, on two kinds of core, at thermal state
+  nominal or fair, Low Power Mode off (a new `dm_low_power_now`, `host/diag/thermal.m`); or the GPU at the longer hold 1.3 times its time at
+  kmin and alone over k − 1 (`nvn_fstep_gpu_slowed`). `DM_FSTEP_RULES=0` turns these off for an A/B. `gfx/tests/t_fstep.c` 19 (22 ms frames
+  step up on their 25th late frame; bursts of three late every 30 at 60 fps stay at 60; a 30 fps scene probed back while slowed holds 60, not
+  without the report; the GPU tracker at 1.5 times slowed, at 1.2 not; the margin now checked by a scene of 0.9 vsyncs at 30 fps and 1.15 at
+  60, as the window took the jitter case's flapping away; `-DDM_TEST_FSTEP_RUN3` 2 fail, `_NO_PROBE` 1, `_NO_DEBT` 3, `_NO_MARGIN` 1,
+  `_NO_GRACE` 2). On the iPhone Air, Great Sky Island standing with `DM_FRAME_STEP=vsync`, the rules on and off in turn (four runs, frames
+  3000-6600): every run at 30 fps throughout (27.4 fps most windows), late frames +738 / +911 on and +742 / +689 off, vsyncs dropped +184 /
+  +369 on and +244 / +62 off: no difference past the runs' own spread. The scene meets neither case the rules are for (the CPU stayed 43-63 % on
+  performance cores, no probe; the hold at 2, so no window at kmin). The cost as the critical path is left: there the GPU alone took 29 ms,
+  past 0.85 of a vsync whatever the cost's measure, so no trial depended on it. `DM_FRAME_STEP=vsync` stays a switch. gfx 197 / 197 on Metal 4
+  and Metal 3, host 216 / 217: `t_sleep`'s SleepThread(5.0 ms) mean oversleep 0.434 ms against its bound 0.412 (a third of a plain nanosleep's
+  1.237 beside it), 5 of 5 runs alone after it passed (as in batch 174: the system's timer while the batch's other jobs run); sanitizer,
+  texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before,
+  s1300 an earlier moment of the same scene (looked at), instructions a draw as before (25,435-39,703); manosaba none.

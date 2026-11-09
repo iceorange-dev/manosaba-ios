@@ -145,6 +145,26 @@ static void fpt_present(const win_t *o) {
     }
     mtl_ts_factor(f * dvfs_emu(win_interval(o), now));
 }
+// Plan item 321: whether the frames run slowed for reasons other than the scene (nvn_fstep.slow, which lets the frame step probe back to kmin): the
+// CPU under 30 % of the process's CPU time on performance cores in each of the last two windows of 30 presents, on a system with two kinds of core,
+// at thermal state nominal or fair and Low Power Mode off (S2Arm: Tears of the Kingdom on an iPhone parked at 6 % on performance cores at 1.6 GHz
+// while it waited out a long hold, where the cost never fitted k − 1 again; one window alone dips that low on a Mac at 30 fps now and then); or the
+// GPU at the longer hold 1.3 times its time at kmin and alone over k − 1 (nvn_fstep_gpu_slowed: its clock lowered to the hold)
+int dm_low_power_now(void);
+static int g_fs_pshare = -1;   // the last window's share on performance cores, percent (-1: not measured)
+static int fstep_cpu_slowed(void) {
+    static int levels = -1, slowed, low_was; static uint64_t pc, pp, n;
+    if (levels < 0) levels = dm_perf_levels();
+    if (levels < 2) return 0;
+    if (++n % 30) return slowed;
+    dm_power pw; if (!dm_power_now(&pw)) return slowed;
+    if (pc && pw.cpu_ns > pc) g_fs_pshare = (int)(100 * (pw.pcpu_ns - pp) / (pw.cpu_ns - pc));
+    pc = pw.cpu_ns; pp = pw.pcpu_ns;
+    int low = g_fs_pshare >= 0 && g_fs_pshare < 30;
+    slowed = low && low_was && dm_thermal_now() <= 1 && !dm_low_power_now(); low_was = low;
+    return slowed;
+}
+static nvn_fgpu g_fs_gpu;   // the GPU time at kmin and at the current hold (nvn_fstep_gpu_slowed)
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     uint64_t tr = trace_now();
     if (fstep_on()) {   // the step for the next frame from this one's time on screen and cost (nvn_fstep.h), before the game's hook stores it
@@ -152,10 +172,15 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         double shown = g_fs_prev_start && g_fs_start > g_fs_prev_start ? (g_fs_start - g_fs_prev_start) / vs : 0, cpu = g_fs_start && now > g_fs_start ? (now - g_fs_start) / vs : 0;
         double gpu = g_frame >= 8 ? mtl_gpu_ms(g_frame - 8) : -1, cost = gpu * 1e6 / vs > cpu ? gpu * 1e6 / vs : cpu;
         if (shown > 0) { g_fs_game += g_fs_step; g_fs_real += shown; }
-        g_fs_step = nvn_fstep_next(&g_fs, shown, cost, nvn_hold_interval(1, 60, nvn_pace_hold(atomic_load(&g_fps_hold), mtl_fps_target())), FSTEP_MAX);
+        int kmin = nvn_hold_interval(1, 60, nvn_pace_hold(atomic_load(&g_fps_hold), mtl_fps_target()));
+        int gslow = nvn_fstep_gpu_slowed(&g_fs_gpu, gpu > 0 ? gpu * 1e6 / vs : 0, g_fs.k, kmin, g_fs.probe), cslow = fstep_cpu_slowed();   // plan item 321
+        if ((cslow || gslow) != g_fs.slow) LOG("[frame step] the frames %s (CPU %d%% on performance cores, GPU at the hold %.2f against %.2f vsyncs at kmin)", cslow || gslow ? "slowed: a probe back to kmin may start" : "no longer slowed",
+                                               g_fs_pshare, g_fs_gpu.cur, g_fs_gpu.ref);
+        g_fs.slow = cslow || gslow;
+        g_fs_step = nvn_fstep_next(&g_fs, shown, cost, kmin, FSTEP_MAX);
         g_fs_started = 0;
-        if (g_fs.frames % 300 == 0) LOG("[frame step] vsync step at frame %llu: k %d, step %d; %llu late, %llu up, %llu down (%llu failed), %llu paid back, %.0f vsyncs dropped; game time / real time %.4f",
-            (unsigned long long)g_fs.frames, g_fs.k, g_fs_step, (unsigned long long)g_fs.late, (unsigned long long)g_fs.ups, (unsigned long long)g_fs.downs, (unsigned long long)g_fs.failed,
+        if (g_fs.frames % 300 == 0) LOG("[frame step] vsync step at frame %llu: k %d, step %d; %llu late, %llu up, %llu down (%llu failed, %llu probes), %llu paid back, %.0f vsyncs dropped; game time / real time %.4f",
+            (unsigned long long)g_fs.frames, g_fs.k, g_fs_step, (unsigned long long)g_fs.late, (unsigned long long)g_fs.ups, (unsigned long long)g_fs.downs, (unsigned long long)g_fs.failed, (unsigned long long)g_fs.probes,
             (unsigned long long)g_fs.paid, g_fs.dropped, g_fs_real > 0 ? g_fs_game / g_fs_real : 0);
     }
     dm_game_present(); dm_sdk_test_present(g_frame);
