@@ -422,10 +422,12 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   mode: 0 shared core numbers on the Mac where none gave 671): `DM_SCHED_STATS` counts the calls and masks per thread first; 315g (from 315d's
   counts) where the NaNs in Tears of the Kingdom's low-resolution two-channel half-float targets come from (on the M5 and the A19 Pro alike: the
   game's own, Maxwell's 0 × x = 0 where Metal gives NaN, or a reused heap's old contents), traced before anything is changed.
-- 316 manosaba's short sleeps (88: about 24,000 SleepThread calls of 20 µs-1 ms a second) backed off: a run of sleeps under 1 ms from one return
+- 316 (batch 158) manosaba's short sleeps (88: about 24,000 SleepThread calls of 20 µs-1 ms a second) backed off: a run of sleeps under 1 ms from one return
   address with no other system call and at most 20 µs of guest code between them, each sleep after 2 ms of the run max(asked, run / 8) up to 100 µs
   (S2Arm on a Unity game: 5.13 W for the device, 4.03 W at 100 µs with 0.03 % slow frames; 250 µs gave 1.72 W but moved its threads to the
-  efficiency cores); the sleeps counted per return address first, on the iPhone and the K100.
+  efficiency cores); the sleeps counted per return address first, on the iPhone and the K100. 316b (from 316's counts): Tears of the Kingdom's
+  64,000-122,000 SleepThread(20 µs) calls a second return at once (`sleep_precise` does not sleep within 20 µs of the deadline; none of them in a
+  run): what sleeping them does to its frame and its CPU, measured on the Mac and the iPhone first.
 - 317 diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
   span (counted once when delivered again) and named at the next launch (ours knows only that a session ended in the foreground; whether a
   free-account install receives payloads is to be seen); 317b the signature's expiry shown in the app 48 hours ahead (`embedded.mobileprovision`;
@@ -1560,3 +1562,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   shares that memory as the Switch does, rtheap.inc), read as half floats; nothing reads them so. gfx 183 / 183 on Metal 4 and Metal 3, host 207 /
   207, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as
   before, s1300 Zelda with the torch as in batch 155 (batch 156's another moment), s1800 Zelda speaking (looked at); manosaba none.
+- [x] batch 158 · 316: short sleeps backed off (S2Arm 4c0bec5, Apache-2.0, written anew). `DM_SLEEP_STATS=1` logs every 5 s the SleepThread calls
+  under 1 ms by where they come from (the address the call returns to and its caller's, from the frame record), with the share that continued a
+  run (the same thread's last system call a short sleep from the same place, at most 20 µs of guest code between) and the share 2 ms or more into
+  one (`host/sleepstats.h`, `host/tests/t_sleepstats.c` 8, `-DDM_TEST_SLEEP_RUN_ANY_SVC` 2 and `-DDM_TEST_SLEEP_BACKOFF_DEFAULT_OFF` 1 fail).
+  manosaba's are nearly all one place (`sdk+0xc9e9f8 < main+0x4f9b5c`, asked 25 µs, slept 39 µs): on the M5 24,000 a second, all in runs, 92 %
+  2 ms or more into them; on the iPhone Air 17,700, 97 % in runs, 40 % 2 ms or more in. Now such a sleep sleeps max(asked, run / 8) up to 100 µs
+  (`DM_SLEEP_BACKOFF=<µs>`, 0 off). The M5, the title and the first dialogue, alternating: 24,000 → 9,200 short sleeps a second, wakeups 24,700 →
+  10,000, CPU 0.34 / 0.22 / 0.50 → 0.28 / 0.18 / 0.45 W in the same windows, frame time p50 16.4-16.65 / p95 22.1-24.8 ms either way, the shots the
+  same. The Air (thermal 0, the first run after the install not counted): 17,700 → 12,300 (slept 89 µs), wakeups 19,500-20,600 → 13,600-15,700,
+  CPU 0.13 → 0.10 W and 0.30 → 0.27-0.28 W in the busier windows (0.03 W either way in the quiet ones), frame time p95 17.0-18.3 → 16.9-17.1 ms,
+  no red line, the shots the same. Tears of the Kingdom's short sleeps are never in a run (it is not touched): 316b. The K100 was not connected;
+  the leftover manosaba process on the phone (pid 2386, no log since 11-08) was ended with the user's consent. gfx 183 / 183 on Metal 4 and Metal
+  3, host 210 / 210, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two
+  red lines as before, s1300 the cave behind Zelda again (looked at); manosaba none, its shots as batch 157's, wakeups 25,500-27,000 → 9,800-9,900
+  a second and CPU 0.30 / 0.20 / 0.49 → 0.27 / 0.17 / 0.45 W against batch 157's run.

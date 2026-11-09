@@ -11,6 +11,7 @@
 // All waits hang on one global lock G, with one condition variable per thread; correctness first, performance to be measured later.
 #include "dm.h"
 #include "schedstats.h"
+#include "sleepstats.h"
 #include "game.h"
 #include <errno.h>
 #include <sched.h>
@@ -98,6 +99,7 @@ typedef struct thr {
     int preempt;               // A higher-priority thread waits for this thread's core: give it up at the next svc
     uint64_t cseq; struct thr *cnext;   // Core wait chain
     uint64_t ncpu, cw_n, cw_ns, ncpu_seen, cw_n_seen, cw_ns_seen; int cpu_ever;   // DM_SCHED_STATS: 0x10 calls, waits for a core and their time (plan item 315f)
+    sleep_run srun;            // DM_SLEEP_STATS: its last short sleep (sleepstats.h, plan item 316)
 } thr_t;
 static thr_t *g_all;
 
@@ -815,6 +817,33 @@ void dm_thread_cpu(char *out, size_t n, double secs) {
 // SleepThread sleeps to its deadline in steps: macOS timer slack made one nanosleep of 5 ms take 6.17 ms and one of 33.3 ms 37.6 ms on this M5
 // (default QoS, mean of 60 / 20), and a game pacing itself with SleepThread ran slow (nxnative a9c56fd: Metroid Dread's 30 Hz sound thread drives its
 // cutscenes, 27 fps instead of 30). Each step sleeps three quarters of what is left, until within 20 µs: within 0.03 ms here
+// DM_SLEEP_STATS=1: short sleeps by where they come from, a line every 5 s (sleepstats.h, plan item 316)
+static int sleep_stats_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_SLEEP_STATS"); v = e && atoi(e) > 0; } return v; }
+static sleep_stats g_sl; static pthread_mutex_t g_sl_mu = PTHREAD_MUTEX_INITIALIZER;
+static void sl_name(uint64_t a, char *out, size_t n) {   // module+offset, or the address
+    module_t *m = a ? module_of((const void *)(uintptr_t)a) : NULL;
+    if (m) snprintf(out, n, "%s+%#llx", m->name, (unsigned long long)(a - (uint64_t)(uintptr_t)m->base)); else snprintf(out, n, "%#llx", (unsigned long long)a);
+}
+static uint64_t sl_caller(const thr_t *t, const uint64_t *regs) {   // the caller's return address from the frame record, when the frame pointer is inside the thread's stack
+    uint64_t fp = regs[29];
+    return t->stack_bot && fp >= t->stack_bot && fp + 16 <= t->stack_top && !(fp & 7) ? *(const uint64_t *)(uintptr_t)(fp + 8) : 0;
+}
+// DM_SLEEP_BACKOFF=<cap µs>, 100 by default, 0 off (S2Arm's, plan item 316; sleepstats.h): a short sleep that continues a run of 2 ms or more
+// sleeps max(asked, run / 8), at most the cap
+static uint64_t sleep_backoff_cap(void) {
+    static int64_t v = -1;
+    if (v < 0) { v = (int64_t)sleep_backoff_parse(getenv("DM_SLEEP_BACKOFF"));
+                 if (v) LOG("short sleeps back off: after 2 ms of a run from one place each sleeps an eighth of the run, at most %lld µs (DM_SLEEP_BACKOFF=0 turns it off)", (long long)(v / 1000)); }
+    return (uint64_t)v;
+}
+static void sleep_stat(thr_t *t, const uint64_t *regs, uint64_t asked, uint64_t a, uint64_t b) {
+    pthread_mutex_lock(&g_sl_mu);
+    if (!g_sl.t0) g_sl.t0 = a;
+    sleep_note(&g_sl, &t->srun, regs[30], sl_caller(t, regs), t->nsvc, a, b, asked);
+    char line[1200]; line[0] = 0; if (b - g_sl.t0 >= 5000000000ull) sleep_report(&g_sl, b, sl_name, line, sizeof line);
+    pthread_mutex_unlock(&g_sl_mu);
+    if (line[0]) LOG("[sleep] %s", line);
+}
 static void sleep_precise(uint64_t deadline) {
     for (int i = 0; i < 16; i++) {
         uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); if (now + 20000 >= deadline) return;
@@ -916,6 +945,8 @@ int svc_thread(int num, uint64_t *regs) {
         int64_t ns = (int64_t)regs[0];
         uint64_t t0 = g_flag.bootprof ? now_ns() : 0;
         thr_t *self = pthread_getspecific(g_keythr);
+        uint64_t asked = ns > 0 ? (uint64_t)ns : 0, cap = sleep_backoff_cap(), sl0 = ns > 0 && self && (sleep_stats_on() || cap) ? now_ns() : 0;
+        if (sl0 && cap && asked < 1000000) ns = (int64_t)sleep_backoff_ns(sleep_run_age(&self->srun, regs[30], sl_caller(self, regs), self->nsvc, sl0), asked, cap);
         if (ns > 0 && self && self->cur_core >= 0) { pthread_mutex_lock(&G); core_put(self); pthread_mutex_unlock(&G); }   // a sleeping thread leaves its core
         if (ns > 0 && dm_detclock_enabled()) {
             uint64_t deadline = guest_ns() + (uint64_t)ns;
@@ -938,6 +969,7 @@ int svc_thread(int num, uint64_t *regs) {
             }
             if (me && me->handle == 0x1001) { g_main_yield_ns += now_ns() - y0; g_main_yield_n++; }
         }
+        if (sl0) { if (sleep_stats_on()) sleep_stat(self, regs, asked, sl0, now_ns()); else sleep_run_update(&self->srun, regs[30], sl_caller(self, regs), self->nsvc, sl0, now_ns(), asked); }
         if (ns > 0 && self && cores_enabled()) { pthread_mutex_lock(&G); core_take(self); pthread_mutex_unlock(&G); }
         if (g_flag.bootprof) { uint64_t d = now_ns() - t0; dm_prof_add(PROF_SLEEP, d, 0); thr_t *me = pthread_getspecific(g_keythr); if (me && me->handle == 0x1001) dm_prof_add(PROF_MAIN_WAIT, d, 0); }
         return 1;
