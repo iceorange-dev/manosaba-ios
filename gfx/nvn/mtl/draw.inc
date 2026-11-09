@@ -189,6 +189,7 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
         if (x1 <= x0 || y1 <= y0) return 1;
         enc_r_scissor(en, (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)});
     } else if (__builtin_expect(kx != 1 || ky != 1, 0)) g_wd_wide++;
+    if (__builtin_expect(g_wd_fl & 8, 0)) g_wce[WCE_PLAIN_SAMPLES_WIDE]++;
 #endif
     // Binding them can end the pass: a texture bound through a view of another format is made again with format views allowed and copied there on
     // a blit encoder (tex_upgrade_pfv), which ends the render pass first. Encoded on that ended encoder, the draw crashed in the driver (seedds/nxnative
@@ -404,6 +405,13 @@ static void dispatch(const p_dispatch *dp) {
     CENC ce = blit(); [ce setArgumentTable:g_ct]; args_dirty_all(); g_disp_n++; g_disp_shared += open;
 #endif
     enc_c_pso(ce, ps);
+    if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0)) {   // the census (320e): the images it writes
+        int f16 = 0, fw = 0; pthread_mutex_lock(&g_rmu);
+        for (int i = 0; i < cs->rf.nb; i++) { const nvn_rbind *b = &cs->rf.b[i]; if (b->kind != NVN_RB_IMG || b->reg >= 32) continue;
+            int tid = h_tid(S.img[5][b->reg]); if (tid <= 0 || tid >= g_ntreg || !g_treg[tid].ok) continue;
+            const tex_t *it = &g_treg[tid].t; if (!widen_family((int)it->d.width, (int)it->d.height)) continue;
+            f16 = 1; void *tv = NULL; tex_fast_rid(tid, &tv); if (tv && tex_is_widened((__bridge id<MTLTexture>)tv, it)) fw = 1; }
+        pthread_mutex_unlock(&g_rmu); g_wce[WCE_DISP16] += f16; g_wce[WCE_DISP16_WIDE] += fw; }
     g_dispatch_grid[0] = (uint32_t)dp->x; g_dispatch_grid[1] = (uint32_t)dp->y; g_dispatch_grid[2] = (uint32_t)dp->z;   // c0 + 0x200 (drv_fill)
     encode_args(ce, cs, 5, 0);
 #if !DM_NVN_M3

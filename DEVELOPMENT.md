@@ -460,10 +460,21 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   320d (the recogniser and its measurement: batch 166; the rewrite and the HUD: batch 167; post-processing quads and the scan's cost: batch 168) the
   projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
   found in the blocks a draw binds, their x row divided by k in a copy for the draw (reused while the block is unchanged); orthographic ones left.
-  320e sampling and copies: a 16:9-geometry draw sampling a widened texture reads its middle band; copies and blits between widened and plain
-  textures mapped; compute writing a widened image with its groups × k.
+  320e (batch 169: the census, clears and copies) sampling and copies: a 16:9-geometry draw sampling a widened texture reads its middle band; copies and blits between widened and plain
+  textures mapped; compute writing a widened image with its groups × k. Counted first (the `[nvn] widening's census` line): in Tears of the
+  Kingdom's prologue no dispatch writes a 16:9 image and no copy or clear meets widened storage, 0-1.2 draws a frame into targets not widened
+  sample it; clears and copies mapped (batch 169); compute and a copy's destination widened after its source (S2Arm's rules) when a frame
+  needs them, the census watching.
   320f the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
-  the screen's edge, the UV extension of translucent overlays.
+  the screen's edge, the UV extension of translucent overlays. Found in batch 169: the chain already carries Ryujinx's resolution scale (the
+  support buffer's `render_scale`): 3,028 fragment shaders divide the fragment coordinate by `render_scale[0]`, integer texel reads go through
+  `TexelFetchScale` and size queries through `TextureSizeUnscale` with `render_scale[1 + i]`, i the texture's descriptor index (images after
+  the textures; `Translation/Transforms/TexturePass.cs`), all 1 now (`mtl/args.inc` `support_buf`). Both axes take the one value, so a screen
+  only wider needs a y table (S2Arm's translator change), and the descriptor index of each texture binding in the reflection; then per draw the
+  target's k at 0 and each sampled texture's storage ratio (negative when it is the target's k: Ryujinx's pixel-exact form), and the
+  screen-size constants left as the game's in draws reading the fragment coordinate. Tears of the Kingdom needs it: its upscale into the
+  1920x1080 output reads texels at its pixel x 0.8333 + c of the game's 1920 columns, so the widened output shows the scene's left 1,603 of
+  1,955 columns stretched over its width (batch 169's fit), and the frame 3500 staircase is in the scene target already.
   320g the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
   then the iPhone Air and the Duo's inner screen: fps, GPU time, the HUD's proportions (a circle stays round), no black band.
 - 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
@@ -1724,3 +1735,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   made one `if` on a flag set either way; `t_mtl_parts` 6 / 6 after it, `t_widen_draw` 8 / 8 on both again and its controls as before), both
   IPAs; Android: built, the phone not connected. Smoke (no widening): Tears of the Kingdom's two red lines as before, s1300 and s1800 the same
   cutscene a moment apart (looked at), instructions a draw as before (27,525-36,787; batch 167 24,849-39,556); manosaba none.
+- [x] batch 169 · 320e (the census, clears and copies): a `[nvn] widening's census` line every 300 frames counts dispatches writing an image of
+  the 16:9 family (and whether its storage is widened), clears and copies meeting widened storage (both widened / only the source / only the
+  destination) and draws into targets not widened that sample widened storage. Tears of the Kingdom's prologue on the M5 widened to frame 4500:
+  no such dispatch, clear or copy, 0-1.2 such draws a frame. A texture clear of the game's whole level on widened storage clears the whole level
+  (it was refused with the clear-shape red line and left as it was), and a copy between textures widened by the same ratio has its regions
+  mapped by it as scissors are (two ratios: a red line of its own, 123, and the game's region as before); `gfx/tests/t_widen_copy.m` 6 (A's
+  whole 1280x720 copied into B reaches column 1560 of 1564, A's columns 640-1279 copied to C at 0 fill 0-781; `-DDM_TEST_WIDEN_COPY_GAME` 2 fail,
+  `-DDM_TEST_WIDEN_CLEAR_GAME` 2 fail). Compute's widening and a copy's destination widened after its source wait for a frame that has them.
+  Looked at again, frame 3500's texture dump: the staircase is in the 1955x896 scene target already, and the 2346x1080 output shows the
+  scene's left 1,603 columns stretched over its width (the best fit of the output to the scene, blurred: 0.82 of the width from column 0,
+  correlation 0.965 against 0.28 for the whole width), so batch 167's "in proportion" was wrong: the upscale pass (one triangle into the
+  1920x1080 target, `ac58fc18eda5f387`) reads texels at the game's pixel x 0.8333 + c through Ryujinx's `TexelFetchScale` with its scale 1.
+  What 320f needs from the chain for it is written there. gfx 193 / 193 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture,
+  audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (no widening): Tears of the Kingdom's two red lines as before,
+  s1300 and s1800 the same scenes a moment apart (looked at), instructions a draw as before (26,788-39,481); manosaba none.

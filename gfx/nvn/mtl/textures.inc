@@ -212,6 +212,11 @@ static void tex_widen(const tex_t *t, MTLTextureDescriptor *d) {
 uint64_t mtl_widen_count(void) { return atomic_load(&g_widen_n); }
 // Whether the texture (or view) t bound for the registered texture nt has widened storage: its root wider or taller than the game made it
 // (tex_desc gives the game's size, only tex_widen more; plan item 320d: a draw sampling one is a pass over the 3D picture, not the HUD)
+// The widening's census (320e, a measurement): dispatches writing an image of the 16:9 family (its storage widened or not), texture clears and
+// copies touching widened storage (both widened / only the source / only the destination), draws into a target not widened sampling widened storage
+static uint64_t g_wce[9];
+enum { WCE_DISP16, WCE_DISP16_WIDE, WCE_CLEAR_WIDE, WCE_T2T_BOTH, WCE_T2T_SRC, WCE_T2T_DST, WCE_PLAIN_SAMPLES_WIDE, WCE_T2T_MAPPED, WCE_CLEAR_MAPPED, WCE_N };
+void mtl_widen_census(uint64_t out[9]) { memcpy(out, g_wce, sizeof g_wce); }
 static int tex_is_widened(id<MTLTexture> t, const tex_t *nt) {
     if (!t || !nt) return 0;
     id<MTLTexture> r = t; while (r.parentTexture) r = r.parentTexture;

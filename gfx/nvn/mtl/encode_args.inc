@@ -188,6 +188,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
 #ifndef DM_TEST_WIDEN_SAMPLED_HUD   // negative control of t_widen_draw only: a draw sampling a widened texture taken for the HUD when it reads its projection
             if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && t && tid < g_ntreg && tex_is_widened(t, &g_treg[tid].t)) wfl |= 4;   // samples a widened texture (320d)
+            else if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && nvn_stage != 5 && t && tid < g_ntreg && tex_is_widened(t, &g_treg[tid].t)) wfl |= 8;   // the census (320e)
 #endif
             if (t && tid < g_ntreg) use_rec("tex", (uint64_t)g_treg[tid].t.mem, g_treg[tid].t.size, tid, &g_treg[tid].t);
             if (t && passdump() && tid < g_ntreg) PD("R %llu st%d ser=%llu", g_stat_pass, nvn_stage, g_treg[tid].t.serial);

@@ -39,5 +39,6 @@ uint64_t mtl_upload_gpu_ns_take(void) { return 0; }
 uint64_t mtl_upload_ns_take(void) { return 0; }
 void mtl_vis_state(int *open, uint64_t *folded) { *open = 0; *folded = 0; }
 void mtl_widen_draw_stats(uint64_t out[2]) { out[0] = out[1] = 0; }
+void mtl_widen_census(uint64_t out[9]) { memset(out, 0, 9 * sizeof *out); }
 void mtl_widen_rw_stats(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }
 void mtl_widen_scan_stats(uint64_t out[10]) { memset(out, 0, 10 * sizeof *out); }

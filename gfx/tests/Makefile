@@ -197,6 +197,8 @@ t_upbound: t_upbound.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_upbound.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_widen_draw: t_widen_draw.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_widen_draw.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_widen_copy: t_widen_copy.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_widen_copy.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_widen_vp: t_widen_vp.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_widen_vp.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_widen_tex: t_widen_tex.m $(CRASH) $(GFX) $(GFX_H)
@@ -486,6 +488,7 @@ run: \
 	t_widen_tex \
 	t_widen_vp \
 	t_widen_draw \
+	t_widen_copy \
 	t_upwait \
 	t_usnap \
 	t_vfetch \
@@ -687,6 +690,7 @@ run: \
 	DM_WIDEN_SCREEN=2868x1320 MTL_DEBUG_LAYER=1 ./t_widen_vp
 	DM_WIDEN_SCREEN=2868x1320 MTL_DEBUG_LAYER=1 ./t_widen_draw
 	DM_WIDEN_SCREEN=2868x1320 ./t_widen_draw --norw
+	DM_WIDEN_SCREEN=2868x1320 MTL_DEBUG_LAYER=1 ./t_widen_copy
 	./t_upwait
 	MTL_DEBUG_LAYER=1 ./t_restart
 	MTL_DEBUG_LAYER=1 ./t_qstrip

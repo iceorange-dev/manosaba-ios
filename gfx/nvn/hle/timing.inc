@@ -48,10 +48,10 @@ void mtl_pp_stats(uint64_t out[12]);
 void mtl_chunk_stats(uint64_t out[2]);
 void mtl_pool_stats(uint64_t out[6]);
 void mtl_widen_scan_stats(uint64_t out[10]);
-void mtl_widen_draw_stats(uint64_t out[2]); void mtl_widen_rw_stats(uint64_t out[4]);
+void mtl_widen_draw_stats(uint64_t out[2]); void mtl_widen_rw_stats(uint64_t out[4]); void mtl_widen_census(uint64_t out[9]);
 __attribute__((weak)) void dm_gate_counts(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }   // host/hle/hle.c; the graphics unit tests link without it
 static void power_line(uint64_t frame) {
-    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6], pws[10], pwd[2], pwr[4];
+    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6], pws[10], pwd[2], pwr[4], pwc[9];
     static int counts = -1; if (counts < 0) counts = getenv("DM_NVN_COUNTS") && strcmp(getenv("DM_NVN_COUNTS"), "0");
     dm_power pw; int have_pw = dm_power_now(&pw);   // (plat.h: none on Android yet, the other lines still come)
     uint64_t t = now_ns(), cpu = pw.cpu_ns, p = pw.pcpu_ns, e = pw.energy_nj, iw = pw.wakeups;
@@ -89,7 +89,13 @@ static void power_line(uint64_t frame) {
         { uint64_t wd[2], wr[4]; mtl_widen_draw_stats(wd); mtl_widen_rw_stats(wr);   // the widening (DM_WIDEN_SCREEN), plan item 320d
           if (wd[0] + wd[1] > pwd[0] + pwd[1]) LOG("[nvn] widening up to frame %llu: draws into widened targets a frame %.1f widened, %.1f centred as the HUD's; uniform blocks a frame %.1f scanned (%.2f MB), "
                                                 "%.1f the content of an earlier scan, %.1f bound rewritten",
-                                                frame, (wd[1] - pwd[1]) / nf, (wd[0] - pwd[0]) / nf, (wr[0] - pwr[0]) / nf, (wr[2] - pwr[2]) / 1048576.0 / nf, (wr[3] - pwr[3]) / nf, (wr[1] - pwr[1]) / nf); }
+                                                frame, (wd[1] - pwd[1]) / nf, (wd[0] - pwd[0]) / nf, (wr[0] - pwr[0]) / nf, (wr[2] - pwr[2]) / 1048576.0 / nf, (wr[3] - pwr[3]) / nf, (wr[1] - pwr[1]) / nf);
+          uint64_t wc[9]; mtl_widen_census(wc);   // plan item 320e's census
+          if (wd[0] + wd[1] > pwd[0] + pwd[1]) LOG("[nvn] widening's census up to frame %llu, a frame: dispatches writing a 16:9 image %.1f (its storage widened %.1f); widened storage cleared %.1f (%.1f a whole level of the game's size, cleared whole); "
+                                                "texture copies widened to widened %.1f (%.1f mapped onto the storage), widened to plain %.1f, plain to widened %.1f; draws into targets not widened sampling widened storage %.1f",
+                                                frame, (wc[0] - pwc[0]) / nf, (wc[1] - pwc[1]) / nf, (wc[2] - pwc[2]) / nf, (wc[8] - pwc[8]) / nf, (wc[3] - pwc[3]) / nf, (wc[7] - pwc[7]) / nf, (wc[4] - pwc[4]) / nf,
+                                                (wc[5] - pwc[5]) / nf, (wc[6] - pwc[6]) / nf);
+          memcpy(pwc, wc, sizeof wc); }
         { uint64_t po[6]; mtl_pool_stats(po);   // memory pools' residency (mtl/upload.inc up_texsrc), plan item 315c
           if (po[2] != ppo[2] || po[4] > ppo[4]) LOG("[nvn] memory pools up to frame %llu: %llu of %llu resident, %.0f of %.0f MB; %.1f texture uploads a frame read a pool not resident through their own pages (%.1f MB a frame; DM_NVN_UP_TEXBUF=0 makes the pool resident)",
                                                      frame, (unsigned long long)po[2], (unsigned long long)po[0], po[3] / 1048576.0, po[1] / 1048576.0, (po[4] - ppo[4]) / nf, (po[5] - ppo[5]) / 1048576.0 / nf); }

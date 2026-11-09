@@ -20,7 +20,7 @@
 #define MLOG(...) do { fprintf(stderr, "[dm] [nvn-mtl] " __VA_ARGS__); fputc('\n', stderr); } while (0)
 #define MDIE(...) do { MLOG("FATAL " __VA_ARGS__); abort(); } while (0)
 // A red line printed once per tag (plan item 125; tools/tests/t_red_once.py: one message a tag, every tag within the array)
-extern int g_red_once[123];
+extern int g_red_once[124];
 #define RED_ONCE(k, ...) do { if (!g_red_once[k]++) MLOG("[red] " __VA_ARGS__); } while (0)
 // A monotonic clock in nanoseconds for statistics: the uptime clock on Apple's systems (as the backend measures), the monotonic one elsewhere
 static inline uint64_t core_now_ns(void) {

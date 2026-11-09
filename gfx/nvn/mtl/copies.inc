@@ -331,6 +331,8 @@ static void copy_t2t(const p_copy_t2t *c) {
     }
     tex_gpu_write(c->dst);
     id<MTLTexture> s = tex_mtl(c->src), d = tex_mtl(c->dst);
+    if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && s && d) {   // the census (320e)
+        int ws = tex_is_widened(s, c->src), wd = tex_is_widened(d, c->dst); g_wce[WCE_T2T_BOTH] += ws && wd; g_wce[WCE_T2T_SRC] += ws && !wd; g_wce[WCE_T2T_DST] += !ws && wd; }
     PD("T src=%llu dst=%llu %dx%dx%d→%dx%dx%d flags=%#x", c->src->serial, c->dst->serial, c->sr.width, c->sr.height, c->sr.depth, c->dr.width, c->dr.height, c->dr.depth, c->flags);
     if (!s || !d) return;
     unsigned sl = c->has_sv && c->sv.set_levels ? c->sv.base_level : 0, dl = c->has_dv && c->dv.set_levels ? c->dv.base_level : 0;
@@ -350,12 +352,32 @@ static void copy_t2t(const p_copy_t2t *c) {
                  c->flags, (unsigned long)s.pixelFormat, (unsigned long)d.pixelFormat, s3, d3);
         return;
     }
+    // Widened storage (plan item 320e): the regions are the game's texels; a texture whose storage is wider or taller has its own ratio at the level
+    // (the Metal level's size over the game's), and the regions are mapped by it as scissors are (the start floored, the end ceiled; one size for
+    // both, kept inside both levels). Two different ratios (widened to plain, plain to widened) would scale: reported once, copied as before
+    long sx = c->sr.xoffset, sy = c->sr.yoffset, dx = c->dr.xoffset, dy = c->dr.yoffset, cw = c->sr.width, ch = c->sr.height;
+#ifndef DM_TEST_WIDEN_COPY_GAME   // negative control of t_widen_copy only: the game's region copied as it is
+    if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && !s3 && !d3) {
+        double rsx = (double)mip_extent(s.width, sl) / mip_extent(c->src->d.width, sl), rsy = (double)mip_extent(s.height, sl) / mip_extent(c->src->d.height, sl);
+        double rdx = (double)mip_extent(d.width, dl) / mip_extent(c->dst->d.width, dl), rdy = (double)mip_extent(d.height, dl) / mip_extent(c->dst->d.height, dl);
+        if (rsx != 1 || rsy != 1 || rdx != 1 || rdy != 1) {
+            if (fabs(rsx - rdx) < 1e-9 && fabs(rsy - rdy) < 1e-9) {
+                long x1 = (long)ceil((sx + cw) * rsx), y1 = (long)ceil((sy + ch) * rsy);
+                sx = (long)floor(sx * rsx); sy = (long)floor(sy * rsy); dx = (long)floor(dx * rdx); dy = (long)floor(dy * rdy); cw = x1 - sx; ch = y1 - sy;
+                cw = MIN(cw, MIN((long)mip_extent(s.width, sl) - sx, (long)mip_extent(d.width, dl) - dx)); ch = MIN(ch, MIN((long)mip_extent(s.height, sl) - sy, (long)mip_extent(d.height, dl) - dy));
+                g_wce[WCE_T2T_MAPPED]++;
+                if (cw <= 0 || ch <= 0) return;
+            } else RED_ONCE(123, "texture copy between storage widened by different ratios (%.4g x %.4g → %.4g x %.4g, textures %llu → %llu %dx%d): the game's region copied as it is (first case)",
+                            rsx, rsy, rdx, rdy, (unsigned long long)c->src->serial, (unsigned long long)c->dst->serial, c->sr.width, c->sr.height);
+        }
+    }
+#endif
     BENC b = blit();
     if (s3)
         enc_b_copy_texture(b, s, 0, sl, MTLOriginMake(c->sr.xoffset, c->sr.yoffset, c->sr.zoffset), MTLSizeMake(c->sr.width, c->sr.height, nz), d, 0, dl, MTLOriginMake(c->dr.xoffset, c->dr.yoffset, c->dr.zoffset));
     else
         for (int z = 0; z < nz; z++)
-            enc_b_copy_texture(b, s, sz0 + c->sr.zoffset + z, sl, MTLOriginMake(c->sr.xoffset, c->sr.yoffset, 0), MTLSizeMake(c->sr.width, c->sr.height, 1), d, dz0 + c->dr.zoffset + z, dl, MTLOriginMake(c->dr.xoffset, c->dr.yoffset, 0));
+            enc_b_copy_texture(b, s, sz0 + c->sr.zoffset + z, sl, MTLOriginMake((NSUInteger)sx, (NSUInteger)sy, 0), MTLSizeMake((NSUInteger)cw, (NSUInteger)ch, 1), d, dz0 + c->dr.zoffset + z, dl, MTLOriginMake((NSUInteger)dx, (NSUInteger)dy, 0));
 }
 
 // GPU: clear a texture region with the given value (previously mislisted as a no-op, called 5 times at initialization; the initial value of a Metal private texture is undefined, and the game relies on the cleared initial value).
@@ -366,6 +388,7 @@ static void clear_tex(const p_clear_tex *c) {
     if (c->tex) zskip_del(c->tex->serial);
     tex_gpu_write(c->tex);
     id<MTLTexture> t = tex_mtl(c->tex);
+    if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && t && tex_is_widened(t, c->tex)) g_wce[WCE_CLEAR_WIDE]++;   // the census (320e)
     PD("X ser=%llu view format %#x region %d,%d,%d %dx%dx%d mask %#x %s %g,%g,%g,%g", c->tex->serial, c->has_view && c->view.set_format ? c->view.format : -1, c->r.xoffset, c->r.yoffset, c->r.zoffset, c->r.width, c->r.height, c->r.depth, c->mask,
        c->is_uint ? "ui" : "f", c->is_uint ? (double)c->c.u[0] : c->c.f[0], c->is_uint ? (double)c->c.u[1] : c->c.f[1], c->is_uint ? (double)c->c.u[2] : c->c.f[2], c->is_uint ? (double)c->c.u[3] : c->c.f[3]);
     if (!t) return;
@@ -383,9 +406,15 @@ static void clear_tex(const p_clear_tex *c) {
             t = v;
         }
     }
+    // Widened storage (plan item 320e): a region of the game's whole level is the whole level of the storage
+    int whole_game = !c->r.xoffset && !c->r.yoffset && (NSUInteger)c->r.width == mip_extent(c->tex->d.width, lv) && (NSUInteger)c->r.height == mip_extent(c->tex->d.height, lv);
+#ifdef DM_TEST_WIDEN_CLEAR_GAME   // negative control of t_widen_copy only: the region compared with the storage's size alone, as before
+    whole_game = 0;
+#endif
+    if (whole_game && (w != (NSUInteger)c->r.width || h != (NSUInteger)c->r.height)) g_wce[WCE_CLEAR_MAPPED]++;
     MTLPixelFormat pf = t.pixelFormat;
     int depth = pf == MTLPixelFormatDepth32Float || pf == MTLPixelFormatDepth16Unorm || pf == MTLPixelFormatDepth32Float_Stencil8, stencil = pf == MTLPixelFormatStencil8 || pf == MTLPixelFormatDepth32Float_Stencil8;
-    if (c->r.xoffset || c->r.yoffset || (NSUInteger)c->r.width != w || (NSUInteger)c->r.height != h || (c->mask & 0xf) != 0xf
+    if ((!whole_game && (c->r.xoffset || c->r.yoffset || (NSUInteger)c->r.width != w || (NSUInteger)c->r.height != h)) || (c->mask & 0xf) != 0xf
         || !(t.usage & MTLTextureUsageRenderTarget)) {
         RED_ONCE(44, "clear-texture shape not implemented: region %d,%d %dx%d (this level %lux%lu) mask %#x renderable %d", c->r.xoffset, c->r.yoffset, c->r.width, c->r.height,
                  (unsigned long)w, (unsigned long)h, c->mask, !!(t.usage & MTLTextureUsageRenderTarget));
