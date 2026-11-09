@@ -483,10 +483,16 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   the CPU sits on the efficiency cores (under 30 % on performance cores in two windows of 30 presents, thermal ≤ 1, Low Power off) or the GPU time
   at the longer hold is 1.3× its time at 60.
 
-- 322 what the translator's warnings showed (317c, batch 179): 324 of Tears of the Kingdom's compute shaders are decoded from 0x8 through 24 zero
-  words, each an "invalid instruction" (where their code starts, against the capture's offset); one vertex shader (588e242a52f5f7aa) stores to
-  global memory 5 times with no storage buffer found (the stores are dropped); two of manosaba's pixel shaders (a1fe71290083482a,
-  45eb69b3b99c6600) use PIXLD, which the translator leaves out. Each looked at in a frame that draws with it before anything is changed.
+- 322 what the translator's warnings showed (317c, batch 179; looked at in batch 180): 324 of Tears of the Kingdom's compute shaders are
+  decoded from 0x8 through 24 zero words, each an "invalid instruction" (where their code starts, against the capture's offset): the translator
+  emits nothing for an instruction without an emitter (`Translator.cs` EmitOps), so the words do nothing and the code after them is translated
+  as it is. One vertex shader (588e242a52f5f7aa) reads a 64-bit address a vertex from storage slot 0 and stores 0, 1, 0, 0, 0 into the 5
+  words there; with no storage buffer found for them the translator's function is empty (`GlobalToStorage.cs`: a store with no target does
+  nothing, a load returns 0). Two of manosaba's pixel shaders (a1fe71290083482a, 45eb69b3b99c6600, one functional key) read a multisample
+  texture at their pixel with the sample index from PIXLD.MY_INDEX (the sample being shaded), which the translator leaves out: the MSL reads
+  sample 0. `DM_NVN_KEY_WATCH` (batch 180) found none of the three drawn in the runs there are: Tears of the Kingdom's prologue (6,900 frames),
+  Great Sky Island standing (go_save0, 3,600 frames after the first shot), manosaba from a new game for 600 s (A every 3 s, a dialogue at
+  frame 33,000). Each is changed when a run draws with it (the watch names the frame and pass).
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -1891,3 +1897,13 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs (the new libraries); Android: built (the new bundle), the phone
   not connected. Smoke on the new chain: Tears of the Kingdom's two red lines as before, s1300 and s1800 the same scenes, instructions a draw as
   before (27,130-36,365); manosaba none, its s600 the title page (looked at).
+- [x] batch 180 · 322, looked at: a diagnostic `DM_NVN_KEY_WATCH=<key>[,<key>...]` (`gfx/nvn/mtl/draw.inc` key_watch_check, in gfx/README.md):
+  the first draw or dispatch with each listed shader (its 16-digit key, the `_b` of its library ignored; at most 16) logged with the frame,
+  pass, draw and target size, each shader object looked at once (`NvShader.kw`); unset, nothing is looked at. `gfx/tests/t_key_watch.m` 9 (two
+  programs drawn twice and a kernel dispatched: a vertex, a fragment and a compute shader found once each, a key sharing a watched key's first
+  half not; `-DDM_TEST_KEY_WATCH_VERTEX_ONLY` 3 fail). With it none of the three shaders item 322 names is drawn: Tears of the Kingdom's
+  prologue for 240 s (6,900 frames), Great Sky Island standing (go_save0, 3,600 frames after the first shot), manosaba from a new game for
+  600 s (A every 3 s, a dialogue at frame 33,000; looked at). What each does is in item 322; nothing in the translation is changed. gfx 199 /
+  199 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
+  Smoke: Tears of the Kingdom's two red lines as before, s1300 and s1800 slightly different moments of the same scenes (looked at),
+  instructions a draw as before (27,234-38,852); manosaba none.

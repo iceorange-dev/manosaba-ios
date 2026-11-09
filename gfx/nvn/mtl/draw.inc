@@ -113,7 +113,25 @@ static void vb_past_note(__unsafe_unretained NvShader *vs, const p_draw *dw) {
     }
 }
 // 0 when binding the draw's arguments ended its render pass (nothing encoded: the caller begins it again), 1 otherwise
+// DM_NVN_KEY_WATCH=<key>[,<key>...] (plan item 322, a diagnostic): the first draw or dispatch with each listed shader (its 16-digit key, with or
+// without the _b of its library) logged with the frame, the pass and the target, so a shader the translator warned about is found in a frame
+static int key_watch_n = -1, key_watch_hits; static char key_watch[16][17];   // hits: the watched shaders found (the unit test t_key_watch)
+static void key_watch_check(__unsafe_unretained NvShader *sh, int stage) {
+    if (key_watch_n < 0) { key_watch_n = 0; const char *e = getenv("DM_NVN_KEY_WATCH");
+        for (const char *p = e; p && *p && key_watch_n < 16; ) { size_t l = strcspn(p, ","); if (l >= 16) { memcpy(key_watch[key_watch_n], p, 16); key_watch[key_watch_n++][16] = 0; } p += l; if (*p) p++; }
+        if (key_watch_n) MLOG("[key watch] %d shader(s) watched (DM_NVN_KEY_WATCH)", key_watch_n); }
+    if (!key_watch_n || !sh || sh->kw) return;
+    sh->kw = 2;
+    for (int i = 0; i < key_watch_n; i++) if (!strncmp(sh->key, key_watch[i], 16)) {
+        sh->kw = 1; key_watch_hits++; MLOG("[key watch] shader %s (stage %d) first used at frame %llu, pass %llu, draw %llu; target %lux%lu", sh->key, stage,
+                         (unsigned long long)atomic_load(&g_cur_frame), g_stat_pass, g_stat_draw, (unsigned long)g_pass.tw, (unsigned long)g_pass.th); }
+}
 static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
+#ifndef DM_TEST_KEY_WATCH_VERTEX_ONLY   // negative control of t_key_watch only: the fragment stage not looked at
+    if (__builtin_expect(key_watch_n != 0, 0)) { key_watch_check(pr->sh[0], 0); key_watch_check(pr->sh[1], 1); }
+#else
+    if (__builtin_expect(key_watch_n != 0, 0)) key_watch_check(pr->sh[0], 0);
+#endif
     // The pipeline depends only on (program, render pass targets, blend / color / write mask / multisample state, vertex layout): if these did not change, reuse the previous one
     static id<MTLRenderPipelineState> cur_ps; static NvProg *cur_pr; static uint64_t cur_ps_pass;
     if (g_fz.active && !g_defer_replaying) { g_pso_lmap = g_fz.phase == 1 ? g_fz.lmap1 : g_fz.lmap2; g_pso_fsfn = g_fz.phase == 1 ? nil : g_draw_fz_fn; g_pso_fz = g_fz.phase == 1 ? (pso_fz_desc){0} : g_fz_desc; g_pso_dirty = 1; }
@@ -390,6 +408,7 @@ static void dispatch(const p_dispatch *dp) {
     if (!S.prog) { RED_ONCE(27, "no program bound before dispatch"); return; }
     NvShader *cs = prog_get(S.prog)->sh[5];
     if (!cs) { RED_ONCE(28, "dispatched program has no compute shader (or it is not mapped)"); return; }
+    if (__builtin_expect(key_watch_n != 0, 0)) key_watch_check(cs, 5);   // DM_NVN_KEY_WATCH (322)
     const void *k = (__bridge const void *)cs;
     id<MTLComputePipelineState> ps = hm_get_id(&g_cps, &k);
     if (!ps) {

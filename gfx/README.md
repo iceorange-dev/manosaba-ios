@@ -223,6 +223,7 @@ All are environment variables. The Mac host fills `DM_NVN_SHMAP` and `DM_MSL_DIR
 | `DM_NVN_UBLOG=1` | Log the raw arguments of every `UpdateUniformBuffer` and `BindUniformBuffer` call |
 | `DM_NVN_REUPLOG=<n>` | Log the first n re-uploads of memory-backed textures (which textures does the CPU keep rewriting?) |
 | `DM_NVN_PASSDUMP=<frame>` or `<a>-<b>` | Log each render pass (attachments, loads / stores, samples) for those frames to stderr; `DM_NVN_PASSDUMP_ALL=1` adds every draw |
+| `DM_NVN_KEY_WATCH=<key>[,<key>…]` | Log the first draw or dispatch with each listed shader (its 16-digit key, `_b` ignored): frame, pass, draw, target size. Finds the frames a shader is used in (plan item 322) |
 | `DM_NVN_PROF=1` | Time every implemented NVN function |
 | `DM_NVN_PASSGPU=<file>` | GPU time of each render pass and dispatch as TSV (timestamps: an `MTL4CounterHeap` on Metal 4, stage-boundary samples on Metal 3); every 300 frames a line with the GPU time a frame and the kinds of pass that took the most |
 | `DM_NVN_PASSGPU_EVERY=<n>`, `DM_NVN_PASSGPU_FROM=<frame>`, `DM_NVN_PASSGPU_FRAMES=<n>` | With `DM_NVN_PASSGPU`: time every nth submission only, and none before that frame or from n frames after it (plan item 256: the iPhone's first minute runs on burst power) |
