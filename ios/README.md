@@ -12,10 +12,15 @@ Requirements: iOS 26 (the graphics backend uses Metal 4; `DM_IOS_M3=1` builds fo
 
 Copy `local.env.example` to `local.env` (ignored by git) and fill in: `DM_GAME`, the device (`DM_DEVICE` from `xcrun devicectl list devices`,
 and `DM_IOS_UDID` for a free account), `DM_TEAM_ID`, your own `DM_BUNDLE_ID`, and `DM_FREE_ACCOUNT=1` for a free (personal team) account.
+Without them (`ios/tools/acct.py`): the team is the one Xcode is signed in with (Xcode → Settings → Accounts; a paid one first, a free personal
+team taken as such), the device the one phone connected by cable (paired, developer mode on; what is missing is said), the bundle ID
+`dm.<game>.<team ID in lower case>`. When signing stops, the reason is said: a keychain prompt nobody answered (click Always Allow on the Mac's
+screen), no iOS platform in Xcode (`xcodebuild -downloadPlatform iOS`), a locked phone.
 
 A free account cannot sign iCloud, extended virtual addressing or sustained execution entitlements; the build leaves them out. It does sign the
-increased memory limit (on an iPhone 17 Pro the limit went from about 3.4 to 6.1 GB, 2026-10-21). Its profiles expire after 7 days (rebuild and
-reinstall), and before the first launch you trust the developer in Settings → General → VPN & Device Management.
+increased memory limit (on an iPhone 17 Pro the limit went from about 3.4 to 6.1 GB, 2026-10-21). Its profiles expire after 7 days
+(`ios/run.sh resign` signs the built app again with a fresh one and installs it, no build: 4-9 s of signing on the M5, then the install), and
+before the first launch you trust the developer in Settings → General → VPN & Device Management.
 
 ## run.sh
 
@@ -25,7 +30,10 @@ ios/run.sh build            # generate Gen/ and the Xcode project, build (log: $
 ios/run.sh ipa              # the same build unsigned: $DM_ROOT/run/ios/<game>-ios26.ipa (-ios18 with DM_IOS_M3=1), see below
                             # DM_IPA_DATA=1: with the RomFS, system fonts and RomFS overlay inside (<game>-ios26-data.ipa)
 ios/run.sh install          # install on DM_DEVICE
-ios/run.sh push-data [what] # copy the profile's RomFS, system fonts and RomFS overlay into Library/Application Support
+ios/run.sh resign           # sign the built app again with a fresh development profile (Xcode asked for one when there is none, or first
+                            # with DM_RESIGN_RENEW=1), then install it
+ios/run.sh push-data [what] # copy the profile's RomFS, system fonts and RomFS overlay into Library/Application Support: only what the phone
+                            # lacks, holds at another size or what changed since the last push (SHA-256, ios/tools/push_hash.py)
                             # (what: some of romfs sysfont overlay; e.g. push-data overlay after games/totk/romfs_overlay.py)
 ios/run.sh launch [s]       # launch, wait s seconds (default 30), fetch Documents/boot.txt
 ios/run.sh log              # fetch the log now

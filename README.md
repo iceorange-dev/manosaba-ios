@@ -201,7 +201,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   the title per language, the phone's haptics-only engine; the unwritten attachments' stores dropped with the TBDR rewrites off; mid-submission
   commits held while the GPU is busy; texture uploads from a pool not yet resident read through a buffer of their own pages; how a half-float
   target rounds; the on-screen stick and camera ring as layers of their own; runs of short sleeps backed off; MetricKit's reports kept and named;
-  the signature's expiry shown in the app; whether the GPU applies a sampler's LOD bias and min / max reduction.
+  the signature's expiry shown in the app; whether the GPU applies a sampler's LOD bias and min / max reduction; the install without local.env,
+  the renewal by signing again, the data pushed by content.
 - **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): a stamp of the
   rewriter in the product, the rewriter refusing system registers it does not know, the SDK's abort text at a Break.
 - **[LibHac](https://www.nuget.org/packages/LibHac/0.19.0)** ([Alex Barney](https://github.com/Thealexbarney), MIT; the NuGet package, as its

@@ -438,7 +438,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   bias ignored on the M3; `descriptors.inc` sets both on any GPU from OS 26, Tears of the Kingdom biases 861 samplers; item 4 assumed the OS version
   enough): a probe at start (two mips, LOD bias 1), the GPU family and a red line; the bias emulated in the shader next, the reduction only when
   counted.
-- 319 the install with the player's own free account (S2Arm's flow, `ios/run.sh` against it): the team and the one paired phone found without
+- 319 (batch 162) the install with the player's own free account (S2Arm's flow, `ios/run.sh` against it): the team and the one paired phone found without
   `local.env`, `-allowProvisioningDeviceRegistration -destination-timeout 120`, a weekly renewal by signing again instead of building (27 s, 7 s and
   3 s there), data pushed by content hash, readable errors for an unclicked keychain prompt and a missing iOS platform.
 - 320 Tears of the Kingdom filling the iPhone's and the iPhone Duo's screen with the HUD at its own size (ours puts a 16:9 picture between bars on
@@ -1616,3 +1616,25 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   184 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke:
   Tears of the Kingdom's two red lines as before and the probe's line, s1300 the cave behind Zelda (batch 160's the torch; looked at before);
   manosaba none.
+- [x] batch 162 · 319: the install without local.env and the weekly renewal without a build (S2Arm 4c0bec5, Apache-2.0, written anew; the user
+  asked for all of it). `ios/tools/acct.py`: the team from Xcode's own preferences (a paid one first, a free personal team taken as such and built
+  with `DM_FREE_ACCOUNT=1`; signed in with no team yet and not signed in each say what to do), the phone the one wired (or its tunnel connected),
+  paired and in developer mode (two, an untrusted one and developer mode off each say what to do), the bundle ID `dm.<game>.<team in lower case>`;
+  the keys are the ones this Mac's Xcode 27 and devicectl write, read here (`tools/tests/t_acct.py` 9, `T_ACCT_ANY_DEVICE=1` 1 fails). A build for
+  a device passes `-allowProvisioningDeviceRegistration -destination-timeout 120`, and a stopped build says why: a keychain prompt nobody answered
+  (BUILD INTERRUPTED), no iOS platform in Xcode, a locked phone. `ios/run.sh resign` (`ios/tools/resign.py`): the development profile for the app
+  and the phone lasting longest with more than a day left, the keychain identity whose certificate it holds (never a distribution one), the app's
+  entitlements with the team's identifiers and only what the profile allows (named), the profile embedded and the app signed again, then
+  installed; with none, Xcode is asked for one through the minimal app of `ios/tools/prov` (`DM_RESIGN_RENEW=1` asks first) (`tools/tests/
+  t_resign.py` 5, `T_RESIGN_ANY_PROFILE=1` 1 fails). On the M5 with Tears of the Kingdom's app and the iPhone Air: signed again in 4-9 s (6 s with
+  Xcode asked for the profile first; S2Arm: 27 s, 7 s), no keychain prompt, the increased memory limit kept, then backed up and installed in
+  about 100 s; the app opened ("the signature expires ... 154 hours from now") and quit through the command channel. `push-data` by content
+  (`ios/tools/push_hash.py`): only what the phone lacks, holds at another size or what changed since the last push (SHA-256 in
+  `$DM_ROOT/run/ios/pushed`, a file of unchanged size and time not read again) is linked into a staging directory and copied, the source itself
+  when every file is (`tools/tests/t_push_hash.py` 8, `T_PUSH_SIZE_ONLY=1` 2 fail); devicectl merges a copied directory and replaces a file of the
+  same size (checked on the Air). Tears of the Kingdom's overlay: all 3 files the first time, 0 of 3 the second. gfx 184 / 184 on Metal 4; on
+  Metal 3 184 with `DM_NVN_UB_RENAME=0 ./t_nvn` failing under the batch's load and passing alone; host: batch 159's `t_sleepshort` asked a 200 µs
+  sleep for at least 200 µs, which `sleep_precise` never promised (it stops within 20 µs of the deadline, as before: 190 µs here under load), so
+  the check is now at least 180 µs (3 runs passed, `-DDM_TEST_SLEEP_SHORT_SKIP` 2 fail) and the host suite ran again whole: passed; sanitizer,
+  texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s1300
+  the torch (batch 161's the cave); manosaba none.

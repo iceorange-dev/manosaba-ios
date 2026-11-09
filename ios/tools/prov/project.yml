@@ -1,0 +1,22 @@
+# A minimal app that only asks Xcode for a development profile (ios/run.sh resign, plan item 319; S2Arm's ensure_profile.sh idea, written anew):
+# DMBID, DMTEAM and the entitlements are filled in a copy; it is built once with -allowProvisioningUpdates and thrown away
+name: Prov
+options:
+  deploymentTarget:
+    iOS: "18.0"
+targets:
+  Prov:
+    type: application
+    platform: iOS
+    sources: [main.m]
+    info:
+      path: Info.plist
+      properties:
+        UILaunchScreen: {}
+    entitlements:
+      path: Prov.entitlements
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: DMBID
+      DEVELOPMENT_TEAM: DMTEAM
+      CODE_SIGN_STYLE: Automatic
+      GENERATE_INFOPLIST_FILE: NO

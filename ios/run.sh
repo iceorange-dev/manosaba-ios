@@ -5,6 +5,11 @@
 #   run.sh ipa                the same build unsigned, packaged as $DM_ROOT/run/ios/<game>-ios26.ipa (-ios18 with DM_IOS_M3=1) to sign yourself;
 #                             DM_IPA_DATA=1 also puts the workspace's RomFS, shared fonts and RomFS overlay into the app (<game>-ios26-data.ipa)
 #   run.sh install            install the built app: its signature checked (expiry, this device), the app's Documents backed up first (ios/tools/install_check.py)
+#   run.sh resign             sign the built app again with a fresh development profile instead of building it again (a free account's lasts 7 days;
+#                             ios/tools/resign.py; Xcode is asked for a new profile through ios/tools/prov when there is none, or first with
+#                             DM_RESIGN_RENEW=1), then install it
+# Without local.env (plan item 319): the team is the one Xcode is signed in with (a paid one first), the phone the one connected (ios/tools/acct.py),
+# the bundle ID dm.<game>.<team in lower case>, a free team's build with DM_FREE_ACCOUNT=1
 #   run.sh launch [seconds]   launch it (ends a running instance), wait, then fetch Documents/boot.txt
 #   run.sh log                fetch Documents/boot.txt (or boot.launch.txt) now
 #   run.sh lifecycle [at] [len]  launch with a trip to the background simulated in the app at <at> s for <len> s (DM_TEST_BG, default 40 and 20),
@@ -35,6 +40,27 @@ GAME=${DM_GAME:-manosaba}; GJ=../games/$GAME/game.json
 get() { python3 ../tools/gen_game.py "$GJ" --get "$1"; }
 ws() { local v; v=$(get "workspace.$1") || return 1; echo "$ROOT/$v"; }
 R=$ROOT/run/ios; mkdir -p "$R"
+# What local.env does not say (plan item 319, ios/tools/acct.py): the team Xcode is signed in with, the bundle ID derived from it, the phone connected
+if [ -z "${DM_TEAM_ID:-}" ] && [ "${1:-}" != ipa ] && [ "${1:-}" != sim-build ] && [ "${1:-}" != sim-run ] && [ "${1:-}" != sim-stop ]; then
+  if read -r DM_TEAM_ID _free < <(python3 tools/acct.py team); then
+    export DM_TEAM_ID; [ "$_free" = 1 ] && [ -z "${DM_FREE_ACCOUNT:-}" ] && export DM_FREE_ACCOUNT=1
+    t "team: the one Xcode is signed in with ($([ "$_free" = 1 ] && echo "a free personal team" || echo "a paid team"); set DM_TEAM_ID in local.env to choose)"
+  fi
+fi
+if [ -z "${DM_BUNDLE_ID:-}" ] && [ -n "${DM_TEAM_ID:-}" ]; then DM_BUNDLE_ID=$(python3 tools/acct.py bundle "$GAME" "$DM_TEAM_ID"); export DM_BUNDLE_ID; t "bundle ID $DM_BUNDLE_ID (set DM_BUNDLE_ID in local.env to choose)"; fi
+find_phone() {   # DM_DEVICE / DM_IOS_UDID from the one phone connected, when local.env names none
+  [ -n "${DM_DEVICE:-}" ] && return 0
+  xcrun devicectl list devices --json-output "$R/devices.json" > /dev/null 2>&1
+  read -r DM_DEVICE DM_IOS_UDID < <(python3 tools/acct.py device "$R/devices.json") || return 1
+  export DM_DEVICE DM_IOS_UDID; t "the phone connected: $DM_DEVICE"
+}
+# Why xcodebuild stopped, in words (plan item 319; S2Arm's findings): a keychain prompt nobody answered, a missing iOS platform, a locked phone
+xcb_explain() {
+  grep -aq 'BUILD INTERRUPTED' "$1" && t "[red] the keychain asked to let Xcode use your signing key and nobody answered: on this Mac's screen click Always Allow in the keychain dialog (your Mac login password if it asks), then run again"
+  grep -aq 'is not installed. Please download and install the platform' "$1" && t "[red] this Xcode has no iOS platform (an Xcode update does not bring it): run xcodebuild -downloadPlatform iOS, then again"
+  grep -aqi 'The device needs to be unlocked' "$1" && t "[red] unlock the phone and run again"
+  return 0
+}
 DD=${DM_IOS_DD:-$R/dd}
 APP=$DD/Build/Products/Release-iphoneos/DmIOS.app
 CMD=${1:-}
@@ -138,14 +164,17 @@ if [ "$CMD" = build ] || [ "$CMD" = ipa ] || [ "$CMD" = sim-build ]; then
     t "stored without deflate ($ZS): $(zipinfo "$IPA" | awk '$6 == "stor" && $NF !~ /\/$/' | wc -l | tr -d ' ') files"
     rm -rf "$W"; t "packaged $IPA ($(python3 tools/ipa_sign.py size "$IPA"))"; exit 0
   fi
-  DEST='generic/platform=iOS'
+  DEST='generic/platform=iOS'; REG=()
   if [ -n "$FREE" ]; then
+    [ -n "${DM_IOS_UDID:-}" ] || find_phone
     if [ -n "${DM_IOS_UDID:-}" ]; then DEST="id=$DM_IOS_UDID"; else t "free account: set DM_IOS_UDID and connect the phone, or signing has no device to target"; fi
   fi
+  # a device to sign for: Xcode may register it with the team and waits 2 minutes for it (a locked phone has time to be unlocked; S2Arm's flags)
+  [ "$DEST" != 'generic/platform=iOS' ] && REG=(-allowProvisioningDeviceRegistration -destination-timeout 120)
   t "building $TITLE ($GAME), build number $BN"
-  xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" -derivedDataPath "$DD" -allowProvisioningUpdates \
+  xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" -derivedDataPath "$DD" -allowProvisioningUpdates ${REG[@]+"${REG[@]}"} \
     DM_BUILD_NUMBER=$BN ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || {
-      t "[red] build failed (see $R/build.log)"; grep -E 'error:|BUILD FAILED' "$R/build.log" | head -20; exit 1; }
+      t "[red] build failed (see $R/build.log)"; grep -E 'error:|BUILD FAILED' "$R/build.log" | head -20; xcb_explain "$R/build.log"; exit 1; }
   t "built $APP"; exit 0
 fi
 
@@ -184,6 +213,7 @@ if [ "$CMD" = sim-run ]; then
   exit 0
 fi
 
+find_phone
 local_env_need DM_DEVICE DM_BUNDLE_ID || exit 1
 D=$DM_DEVICE; B=$DM_BUNDLE_ID
 pull() {   # $1 = file under Documents, $2 = destination
@@ -204,6 +234,26 @@ install)
   fi
   xcrun devicectl device install app --device "$D" "$APP" > "$R/install.log" 2>&1 || { t "[red] install failed"; tail -5 "$R/install.log"; exit 1; }
   t "installed"; exit 0 ;;
+resign)
+  # Signed again instead of built again (plan item 319): a fresh development profile for this app and phone, else Xcode is asked for one through
+  # the minimal app of tools/prov (with the entitlements of the last build), and resign.py tried again
+  [ -d "$APP" ] || { t "[red] no built app at $APP: run.sh build first"; exit 1; }
+  local_env_need DM_TEAM_ID || exit 1
+  U=${DM_IOS_UDID:-}; [ -n "$U" ] || { xcrun devicectl list devices --json-output "$R/devices.json" > /dev/null 2>&1; U=$(python3 tools/install_check.py udid "$R/devices.json" "$D"); }
+  T0=$(date +%s); rc=3; [ "${DM_RESIGN_RENEW:-0}" = 1 ] || { python3 tools/resign.py "$APP" "$B" "$DM_TEAM_ID" "$U"; rc=$?; }   # DM_RESIGN_RENEW=1: ask Xcode first
+  if [ $rc = 3 ]; then
+    t "asking Xcode for a development profile (the minimal app of tools/prov)"
+    PV=$(mktemp -d "$R/prov.XXXXXX"); cp tools/prov/project.yml tools/prov/main.m "$PV/" || exit 1
+    if [ -f Sources/DmIOS.entitlements ]; then cp Sources/DmIOS.entitlements "$PV/Prov.entitlements"; else printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n' > "$PV/Prov.entitlements"; fi
+    sed -i '' -e "s/DMBID/$B/" -e "s/DMTEAM/$DM_TEAM_ID/" "$PV/project.yml"
+    (cd "$PV" && xcodegen generate -q > /dev/null && xcodebuild -project Prov.xcodeproj -scheme Prov -configuration Debug -destination "id=$U" -derivedDataPath dd \
+       -allowProvisioningUpdates -allowProvisioningDeviceRegistration -destination-timeout 120 build > "$R/prov.log" 2>&1) || {
+      t "[red] Xcode made no profile (see $R/prov.log)"; grep -a 'error:' "$R/prov.log" | tail -3; xcb_explain "$R/prov.log"; mv "$PV" "$R/prov.failed" 2>/dev/null; exit 1; }
+    mv "$PV" ~/.Trash/ 2>/dev/null
+    python3 tools/resign.py "$APP" "$B" "$DM_TEAM_ID" "$U"; rc=$?
+  fi
+  [ $rc = 0 ] || { t "[red] signing again failed"; exit 1; }
+  t "signed again in $(( $(date +%s) - T0 )) s; installing"; exec bash ./run.sh install ;;   # (run.sh is in the directory it changed to)
 launch)
   WAIT=${2:-30}
   xcrun devicectl device process launch --device "$D" --terminate-existing "$B" > "$R/launch.log" 2>&1
@@ -230,10 +280,18 @@ push-data)
     if [ "${x%%:*}" = overlay ]; then src=$ROOT/build/$GAME/romfs_overlay; else src=$(ws "${x%%:*}") || continue; fi
     [ -d "$src" ] || { t "skipped ${x%%:*}: no $src"; continue; }
     src=$(cd "$src" && pwd -P)   # the workspace often links to the data elsewhere; devicectl does not follow a symlinked source directory ("Is a directory")
-    t "copying $src → Library/Application Support/${x##*:}"
-    xcrun devicectl device copy to --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "$src" \
-      --destination "Library/Application Support/${x##*:}" > "$R/push.log" 2>&1 || {
-      t "[red] copy failed; run push-data again to go on: devicectl skips the files already there, a file cut short is copied again"; tail -5 "$R/push.log"; exit 1; }
+    # By content (plan item 319, tools/push_hash.py): only what the phone lacks, holds at another size, or what changed since the last push
+    # (its SHA-256 in $R/pushed) is linked into a staging directory and copied; devicectl merges it into the destination
+    DST="Library/Application Support/${x##*:}"; M=$R/pushed/${D}_${B}_${x##*:}.json; mkdir -p "$R/pushed"
+    xcrun devicectl device info files --device "$D" --domain-type appDataContainer --domain-identifier "$B" --subdirectory "$DST" --json-output "$R/have.json" > /dev/null 2>&1 || echo '{}' > "$R/have.json"
+    ST=$(mktemp -d "$R/stage.XXXXXX")
+    MSG=$(python3 tools/push_hash.py stage "$src" "$M" "$R/have.json" "$ST") || { t "[red] staging the files to copy failed"; exit 1; }; t "$src → $DST: $MSG"
+    SRC=$ST; [ -f "$ST/.dm_all" ] && SRC=$src   # every file to copy: the source itself
+    if [ -n "$(ls -A "$ST")" ]; then
+      xcrun devicectl device copy to --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "$SRC" --destination "$DST" > "$R/push.log" 2>&1 || {
+        t "[red] copy failed; run push-data again to go on (what is on the phone at its size and not changed is not copied again)"; tail -5 "$R/push.log"; mv "$ST" ~/.Trash/ 2>/dev/null; exit 1; }
+    fi
+    python3 tools/push_hash.py commit "$M"; mv "$ST" ~/.Trash/ 2>/dev/null
   done
   t "done"; exit 0 ;;
 *)
