@@ -47,9 +47,10 @@ void mtl_fbx_stats(uint64_t out[3]); void mtl_fbx_split_stats(uint64_t out[2]); 
 void mtl_pp_stats(uint64_t out[12]);
 void mtl_chunk_stats(uint64_t out[2]);
 void mtl_pool_stats(uint64_t out[6]);
+void mtl_widen_scan_stats(uint64_t out[10]);
 __attribute__((weak)) void dm_gate_counts(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }   // host/hle/hle.c; the graphics unit tests link without it
 static void power_line(uint64_t frame) {
-    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6];
+    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6], pws[10];
     static int counts = -1; if (counts < 0) counts = getenv("DM_NVN_COUNTS") && strcmp(getenv("DM_NVN_COUNTS"), "0");
     dm_power pw; int have_pw = dm_power_now(&pw);   // (plat.h: none on Android yet, the other lines still come)
     uint64_t t = now_ns(), cpu = pw.cpu_ns, p = pw.pcpu_ns, e = pw.energy_nj, iw = pw.wakeups;
@@ -79,6 +80,11 @@ static void power_line(uint64_t frame) {
         { uint64_t ck[2]; mtl_chunk_stats(ck);   // mid-submission commits (mtl/chunks.inc), plan item 315b
           if (ck[0] > pck[0] || ck[1] > pck[1]) LOG("[nvn] mid-submission commits up to frame %llu: %.1f a frame; %.1f encoder boundaries a frame held a due one, the GPU still on the game's work (DM_NVN_CHUNK_BUSY=0 commits there)",
                                                    frame, (ck[0] - pck[0]) / nf, (ck[1] - pck[1]) / nf); }
+        { uint64_t ws[10]; mtl_widen_scan_stats(ws);   // DM_WIDEN_SCAN=1 (mtl/encode_args.inc), plan item 320d
+          if (ws[9] > pws[9]) LOG("[nvn] widen scan up to frame %llu: draws into 16:9 targets a frame %.1f reading a projection to change, %.1f only the HUD's orthographic one, %.1f neither; "
+                                  "found a frame: %.1f projections, %.1f view-projections, %.1f inverse projections, %.1f HUD orthographic, %.1f screen sizes, %.1f aspect pairs; %.1f MB scanned a frame",
+                                  frame, (ws[0] - pws[0]) / nf, (ws[1] - pws[1]) / nf, (ws[2] - pws[2]) / nf, (ws[3] - pws[3]) / nf, (ws[4] - pws[4]) / nf, (ws[5] - pws[5]) / nf, (ws[6] - pws[6]) / nf,
+                                  (ws[7] - pws[7]) / nf, (ws[8] - pws[8]) / nf, (ws[9] - pws[9]) / 1048576.0 / nf); }
         { uint64_t po[6]; mtl_pool_stats(po);   // memory pools' residency (mtl/upload.inc up_texsrc), plan item 315c
           if (po[2] != ppo[2] || po[4] > ppo[4]) LOG("[nvn] memory pools up to frame %llu: %llu of %llu resident, %.0f of %.0f MB; %.1f texture uploads a frame read a pool not resident through their own pages (%.1f MB a frame; DM_NVN_UP_TEXBUF=0 makes the pool resident)",
                                                      frame, (unsigned long long)po[2], (unsigned long long)po[0], po[3] / 1048576.0, po[1] / 1048576.0, (po[4] - ppo[4]) / nf, (po[5] - ppo[5]) / 1048576.0 / nf); }
@@ -102,7 +108,7 @@ static void power_line(uint64_t frame) {
     { uint64_t rep[32], rst[32]; int open; mtl_counter_stats(rep, rst); mtl_vis_state(&open, &pfold); prep = rep[NVN_COUNTER_TYPE_SAMPLES_PASSED]; prst = rst[NVN_COUNTER_TYPE_SAMPLES_PASSED]; }
     if (counts) { mtl_counts(pc); dm_gate_counts(pg); }
     mtl_pp_stats(ppr);
-    mtl_fbx_stats(pfx); mtl_fbx_fetch_stats(pff); mtl_fbx_split_stats(psp); mtl_chunk_stats(pck); mtl_pool_stats(ppo); { void nvn_syncwait_stats(uint64_t out[3]); nvn_syncwait_stats(psw); }
+    mtl_fbx_stats(pfx); mtl_fbx_fetch_stats(pff); mtl_fbx_split_stats(psp); mtl_chunk_stats(pck); mtl_pool_stats(ppo); mtl_widen_scan_stats(pws); { void nvn_syncwait_stats(uint64_t out[3]); nvn_syncwait_stats(psw); }
 }
 static void tsummary(uint64_t frame) {
     char line[1024]; size_t o = 0;

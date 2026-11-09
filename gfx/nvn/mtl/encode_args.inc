@@ -1,4 +1,29 @@
 // gfx/nvn/mtl/encode_args.inc, part of nvn_mtl.m (included there in order, one translation unit): Draws that sample what their own pass draws (plan item 42), argument encoding
+#include "../core/widen_rw.h"
+// What widening would change in the uniform blocks (plan item 320d, a measurement before the rewrite): DM_WIDEN_SCAN=1 scans each uniform block a
+// draw into a 16:9-family target binds (core/widen_rw.h, into a scratch copy: nothing changes) with DM_WIDEN_SCREEN's widening, or 2868x1320's
+// without it, and counts per draw whether it reads a projection, view-projection or inverse to change, only the HUD's orthographic projection, or
+// neither, and the kinds found; the timing line every 300 frames (hle/timing.inc) gives them
+static int widen_scan_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_WIDEN_SCAN"); v = e && atoi(e) > 0; if (v) MLOG("DM_WIDEN_SCAN=1: the uniform blocks of draws into 16:9 targets scanned for what widening would change (nothing is changed)"); } return v; }
+static uint64_t g_ws_draw = ~0ull, g_ws_n[3], g_ws_kind[WRW_N], g_ws_bytes; static int g_ws_flags;
+static void widen_scan_close(void) { if (g_ws_draw != ~0ull) g_ws_n[g_ws_flags & 1 ? 0 : g_ws_flags & 2 ? 1 : 2]++; }
+static void widen_scan_cb(const p_bind_buf *u) {
+    if (!u || !u->addr || !u->size) return;
+    NSUInteger tw = (NSUInteger)(g_pass.tw / (g_pass.kx > 0 ? g_pass.kx : 1) + 0.5), th = (NSUInteger)(g_pass.th / (g_pass.ky > 0 ? g_pass.ky : 1) + 0.5);
+    if (!widen_family((int)tw, (int)th)) return;
+    if (g_stat_draw != g_ws_draw) { widen_scan_close(); g_ws_draw = g_stat_draw; g_ws_flags = 0; }
+    static widen_t w; static int wi; if (!wi) { wi = 1; w = *widen_get(); if (!w.extra_w && !w.extra_h) w = widen_for_screen(2868, 1320); }
+    static uint8_t scratch[65536]; size_t n = u->size < sizeof scratch ? (size_t)u->size : sizeof scratch;
+    wrw_hits h = {{0}}; int c = wrw_block(&w, (const uint8_t *)(uintptr_t)u->addr, n, u->addr, scratch, &h);
+    for (int k = 0; k < WRW_N; k++) g_ws_kind[k] += h.n[k];
+    g_ws_bytes += n;
+    if (h.n[WRW_PROJ] || h.n[WRW_VIEWPROJ] || h.n[WRW_INVPROJ]) g_ws_flags |= 1;
+    if (h.n[WRW_UI_ORTHO]) g_ws_flags |= 2;
+    (void)c;
+}
+void mtl_widen_scan_stats(uint64_t out[10]) {   // draws reading a projection to change / only a HUD orthographic / neither; kinds found; bytes scanned
+    out[0] = g_ws_n[0]; out[1] = g_ws_n[1]; out[2] = g_ws_n[2]; for (int k = 0; k < WRW_N; k++) out[3 + k] = g_ws_kind[k]; out[9] = g_ws_bytes;
+}
 // ---------- Draws that sample what their own pass draws (plan item 42; after tomodachi-native's attachment copies 4dbd30f / da08d11, MIT) ----------
 // Tears of the Kingdom samples the level and layer a pass draws into in about 59 draws a frame in the prologue (full-screen passes at 1600x896,
 // 800x448 and 400x224; DM_NVN_COUNTS). In a Metal render pass that is undefined; on the M5 such a draw reads the attachment as it was in memory
@@ -67,6 +92,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
     if (bl) { bl_pass[nvn_stage] = g_stat_pass; PD("K %llu st%d key=%s nb=%d", g_stat_pass, nvn_stage, sh->key, sh->rf.nb); }
     pthread_mutex_lock(&g_rmu);   // The texture / sampler registration tables may be being grown or rewritten by the game thread
     for (int i = 0; i < sh->rf.nb; i++) {
+        if (__builtin_expect(widen_scan_on(), 0) && sh->rf.b[i].kind == NVN_RB_CBUF && sh->rf.b[i].reg < 16) widen_scan_cb(&S.ubo[nvn_stage][sh->rf.b[i].reg]);   // plan item 320d
         const nvn_rbind *b = &sh->rf.b[i];
         int reg = b->reg, aid = b->aid;
         if (b->kind == NVN_RB_CBUF) {

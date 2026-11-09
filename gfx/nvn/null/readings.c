@@ -38,3 +38,4 @@ uint64_t mtl_upload_bytes(void) { return 0; }
 uint64_t mtl_upload_gpu_ns_take(void) { return 0; }
 uint64_t mtl_upload_ns_take(void) { return 0; }
 void mtl_vis_state(int *open, uint64_t *folded) { *open = 0; *folded = 0; }
+void mtl_widen_scan_stats(uint64_t out[10]) { memset(out, 0, 10 * sizeof *out); }

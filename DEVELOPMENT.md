@@ -457,7 +457,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   its size stays (`DM_WIDEN_SCREEN=<w>x<h>` stands in for a phone's screen on the Mac); the render target heap's placement scaled for it.
   320c (batch 165: the mapping; the HUD's centring with 320d) viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
   full-canvas 2D page with black side bands.
-  320d the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
+  320d (the recogniser and its measurement: batch 166) the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
   found in the blocks a draw binds, their x row divided by k in a copy for the draw (reused while the block is unchanged); orthographic ones left.
   320e sampling and copies: a 16:9-geometry draw sampling a widened texture reads its middle band; copies and blits between widened and plain
   textures mapped; compute writing a widened image with its groups × k.
@@ -1680,3 +1680,16 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (without
   the switch, so nothing mapped): Tears of the Kingdom's two red lines as before, the shots the same scenes as batch 164's (a moment apart); manosaba
   none.
+- [x] batch 166 · 320d's recogniser and a measurement: `gfx/nvn/core/widen_rw.h` finds in a uniform block, by shape, row- or column-major, a 16:9
+  perspective projection (w row 0, 0, ±1, 0; only the diagonal and the off-centre column; |P11| / P00 = 16/9 within 1 %), a view-projection (the
+  x, y and w rows' xyz of lengths 9 : 16 : 1, orthogonal to a temporal jitter's off-centre terms, z parallel to w), an inverse projection, the
+  HUD's orthographic projection for a 16:9 pixel canvas (noted only), a screen-size vec4 and the aspect pair, and rewrites them for the widening
+  (x row ÷ k, inverse × k, the width widened; ÷ ky / × ky on a taller screen); a block passed twice changes once (`gfx/tests/t_widen_rw.c` 10,
+  `-DDM_TEST_WIDEN_RW_ROW_ONLY` 2 fail; S2Arm's core rules, Apache-2.0, written anew; its camera-pair, depth-matched and tilted-orthographic kinds
+  left for when a frame needs them). `DM_WIDEN_SCAN=1` scans the blocks each draw into a 16:9 target binds and counts, nothing changed: Tears of
+  the Kingdom's prologue on the M5 at frames 4200-4500, a frame: 504-548 draws read a projection to change, 62-99 only the HUD's orthographic one,
+  45-47 neither; found 875-900 projections, 1,029-1,091 view-projections, 57-58 inverse projections, 66-105 HUD orthographic, 866-887 screen sizes,
+  403-415 aspect pairs, 5.5 MB scanned a frame, which took the frame from 16.7 to 33 ms: the rewrite must scan a block only when it changed. gfx
+  190 / 190 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
+  Smoke (no scan): Tears of the Kingdom's two red lines as before; manosaba none, its s600 the same title page with the butterflies elsewhere
+  (looked at).
