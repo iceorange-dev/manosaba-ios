@@ -465,7 +465,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   Kingdom's prologue no dispatch writes a 16:9 image and no copy or clear meets widened storage, 0-1.2 draws a frame into targets not widened
   sample it; clears and copies mapped (batch 169); compute and a copy's destination widened after its source (S2Arm's rules) when a frame
   needs them, the census watching.
-  320f (the chain's part: batch 170) the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
+  320f (the chain's part: batch 170; the scales per draw: batch 171) the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
   the screen's edge, the UV extension of translucent overlays. Found in batch 169: the chain already carries Ryujinx's resolution scale (the
   support buffer's `render_scale`): 3,028 fragment shaders divide the fragment coordinate by `render_scale[0]`, integer texel reads go through
   `TexelFetchScale` and size queries through `TextureSizeUnscale` with `render_scale[1 + i]`, i the texture's descriptor index (images after
@@ -1764,3 +1764,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   both IPAs (with the new libraries); Android: built (the new bundle), the phone not connected. Smoke on the new chain (no widening): Tears of
   the Kingdom's two red lines as before, s1300 and s1800 the same scenes a moment apart, instructions a draw as before (27,091-39,280);
   manosaba none, its s600 the same title page (looked at).
+- [x] batch 171 · 320f, the scales per draw: a draw widened into a widened target (not the HUD's, centred) gets a copy of the support buffer
+  with `render_scale[0]` = k and `render_scale_y[0]` = ky, so a shader reading the fragment coordinate sees the game's pixels, and each sampled
+  texture with widened storage its ratio at its scale index (the storage's size at the view's level over the game's; negative in the fragment
+  stage when it is the target's: Ryujinx's read at the pixel's own texel); a texture's ratio is taken before any substitute (MetalFX's, the
+  attachment copy). A fragment shader reading the fragment coordinate keeps its blocks' screen sizes as the game's (both caches keyed on it).
+  The vertex stage gets texture ratios but no fragment scale. `gfx/tests/t_widen_scale.m` 5 (k 156 of 255, the texture's −k, y 1, the screen
+  size 1280 for a fragment-coordinate reader, the HUD's scale 1; `-DDM_TEST_WIDEN_SCALE_ONE` 2 fail). Tears of the Kingdom's prologue on the M5
+  widened: 52.4 fragment stages a frame given scales (frames 3300-3600); at frame 3500 the 2346x1080 output now matches the whole 1955x896
+  scene (the best fit the whole width from column 0, correlation 0.967, as the identity; batch 169's 0.82), Zelda in proportion and more of the
+  cave at the right, and the staircase over her right side gone (looked at full size). 44,952 instructions a draw against 44,383 (53.76 against
+  52.78 M a frame); the submit thread 4.42 ms at 2.97 GHz against 3.20 ms at 4.24 GHz, the clock macOS gave it. gfx 195 / 195 on Metal 4
+  and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (no
+  widening): Tears of the Kingdom's two red lines as before, s1300 Zelda with the torch a moment apart (looked at), instructions a draw as
+  before (27,187-39,111); manosaba none.

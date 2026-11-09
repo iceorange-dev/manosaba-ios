@@ -90,7 +90,9 @@ static inline int wrw_window(const widen_t *w, float *m, int *kind) {
 }
 // A block of n bytes at offset off within its buffer (matrices at 16-byte alignment of the buffer): dst gets the block with what is to change
 // changed; the count of changes returned, hits counted per kind
-static inline int wrw_block(const widen_t *w, const uint8_t *src, size_t n, uint64_t off, uint8_t *dst, wrw_hits *h) {
+// keep_screen (plan item 320f): screen-size vec4s left as the game's, for a fragment shader reading the fragment coordinate, which then sees the
+// game's pixels (the support buffer's render_scale divides it); still counted
+static inline int wrw_block_k(const widen_t *w, const uint8_t *src, size_t n, uint64_t off, uint8_t *dst, wrw_hits *h, int keep_screen) {
     memcpy(dst, src, n); int changed = 0;
     if (!w->extra_w && !w->extra_h) return 0;
     for (size_t p = (16 - (off & 15)) & 15; p + 64 <= n; ) {
@@ -106,6 +108,7 @@ static inline int wrw_block(const widen_t *w, const uint8_t *src, size_t n, uint
         if (p + 16 <= n) for (int sw = 0; sw < 2; sw++) {   // (W, H, 1/W, 1/H) or (1/W, 1/H, W, H)
             float W = sw ? v[2] : v[0], H = sw ? v[3] : v[1], iW = sw ? v[0] : v[2], iH = sw ? v[1] : v[3];
             if (!(W >= 16 && W <= 16384 && H >= 8 && H <= 16384) || W != roundf(W) || H != roundf(H) || !widen_family((int)W, (int)H) || !wrw_near(iW * W, 1, 1e-5) || !wrw_near(iH * H, 1, 1e-5)) continue;
+            if (keep_screen) { if (h) h->n[WRW_SCREEN]++; p += 12; goto next; }
             float nW = (float)widen_width(w, (int)W, (int)H), nH = (float)widen_height(w, (int)W, (int)H);
             float o[4] = {sw ? 1 / nW : nW, sw ? 1 / nH : nH, sw ? nW : 1 / nW, sw ? nH : 1 / nH};
             memcpy(dst + p, o, 16); changed++; if (h) h->n[WRW_SCREEN]++; p += 12; goto next;
@@ -117,3 +120,4 @@ static inline int wrw_block(const widen_t *w, const uint8_t *src, size_t n, uint
     }
     return changed;
 }
+static inline int wrw_block(const widen_t *w, const uint8_t *src, size_t n, uint64_t off, uint8_t *dst, wrw_hits *h) { return wrw_block_k(w, src, n, off, dst, h, 0); }

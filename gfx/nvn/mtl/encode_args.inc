@@ -27,31 +27,32 @@ static void widen_scan_cb(const p_bind_buf *u) {
 // scanned once a submission. Its flags: 1 a projection, view-projection or inverse was changed (a 3D draw), 2 the HUD's orthographic projection
 // read, 4 a widened texture sampled (a pass over the 3D picture: Tears of the Kingdom's post-processing quads read the HUD's orthographic projection
 // too); a draw with 2 and neither 1 nor 4 is centred instead of widened (draw.inc). DM_WIDEN_RW=0: nothing rewritten (the projections stay 16:9)
-typedef struct { uint64_t gpu, ngpu; uint32_t size; int fl; __unsafe_unretained id<MTLBuffer> nb; } wrw_ent;
+typedef struct { uint64_t gpu, ngpu; uint32_t size; int fl, keep; __unsafe_unretained id<MTLBuffer> nb; } wrw_ent;
 static wrw_ent g_wrw[4096]; static uint64_t g_wrw_sub = ~0ull, g_wrw_scans, g_wrw_copies, g_wrw_bytes, g_wrw_hits;
 // Across submissions: a block at the guest address and of the size of one scanned before, with the same content (pkg_hash), has that scan's result
 // without a scan: its flags and the 4-byte words the rewrite changed (up to 32; more: not kept). One entry an address and size, 8,192 of them
 // (a scan is 0.4-1 ms a MB on the M5, a hash about a tenth of that)
-typedef struct { uint64_t addr, hash; uint32_t size; int fl, np; uint32_t po[32], pv[32]; } wrc_ent;
+typedef struct { uint64_t addr, hash; uint32_t size; int fl, np, keep; uint32_t po[32], pv[32]; } wrc_ent;
 static wrc_ent *g_wrc;
-static wrc_ent *wrc_slot(uint64_t addr, uint32_t n) {
+static wrc_ent *wrc_slot(uint64_t addr, uint32_t n, int keep) {
     if (!g_wrc && !(g_wrc = calloc(8192, sizeof *g_wrc))) return NULL;
-    return &g_wrc[(size_t)(((addr ^ ((uint64_t)n << 40)) * 0x9E3779B97F4A7C15ull) >> 51) & 8191];
+    return &g_wrc[(size_t)(((addr ^ ((uint64_t)n << 40) ^ ((uint64_t)keep << 63)) * 0x9E3779B97F4A7C15ull) >> 51) & 8191];
 }
 static int widen_rw_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_WIDEN_RW"); v = !(e && !strcmp(e, "0")); if (!v) MLOG("DM_WIDEN_RW=0: uniform blocks not rewritten for the widening"); } return v; }
-static int widen_cb_rewrite(const p_bind_buf *u, uint64_t gpu, void *mb, uint64_t *ngpu, id<MTLBuffer> __unsafe_unretained *nb) {
+// keep: screen sizes left as the game's (a fragment shader reading the fragment coordinate, plan item 320f)
+static int widen_cb_rewrite(const p_bind_buf *u, uint64_t gpu, void *mb, uint64_t *ngpu, id<MTLBuffer> __unsafe_unretained *nb, int keep) {
     *ngpu = 0; *nb = nil;
     if (!widen_rw_on() || !u || !u->size) return 0;
     if (g_wrw_sub != g_sub_serial) { memset(g_wrw, 0, sizeof g_wrw); g_wrw_sub = g_sub_serial; }
     uint32_t n = u->size < 65536 ? (uint32_t)u->size : 65536;
     size_t hix = (size_t)((gpu * 0x9E3779B97F4A7C15ull) >> 52) & 4095;
-    for (size_t j = 0; j < 8; j++) { wrw_ent *e = &g_wrw[(hix + j) & 4095]; if (e->gpu == gpu && e->size == n) { *ngpu = e->ngpu; *nb = e->nb; return e->fl; } if (!e->gpu) break; }
+    for (size_t j = 0; j < 8; j++) { wrw_ent *e = &g_wrw[(hix + j) & 4095]; if (e->gpu == gpu && e->size == n && e->keep == keep) { *ngpu = e->ngpu; *nb = e->nb; return e->fl; } if (!e->gpu) break; }
     id<MTLBuffer> b = (__bridge id<MTLBuffer>)mb; const uint8_t *src = (const uint8_t *)b.contents + (gpu - b.gpuAddress);
-    uint64_t hs = pkg_hash(src, n); wrc_ent *ce = u->addr ? wrc_slot(u->addr, n) : NULL; int fl;
+    uint64_t hs = pkg_hash(src, n); wrc_ent *ce = u->addr ? wrc_slot(u->addr, n, keep) : NULL; int fl;
 #ifndef DM_TEST_WIDEN_RW_REUSE_STALE   // negative control of t_widen_draw only: the content not compared (a changed block given its old result)
-    int seen = ce && ce->addr == u->addr && ce->size == n && ce->hash == hs;   // scanned before with this content
+    int seen = ce && ce->addr == u->addr && ce->size == n && ce->keep == keep && ce->hash == hs;   // scanned before with this content
 #else
-    int seen = ce && ce->addr == u->addr && ce->size == n;
+    int seen = ce && ce->addr == u->addr && ce->size == n && ce->keep == keep;
 #endif
 #ifndef DM_TEST_WIDEN_RW_NO_REUSE   // negative control of t_widen_draw only: every block scanned
     if (seen) {
@@ -63,16 +64,16 @@ static int widen_cb_rewrite(const p_bind_buf *u, uint64_t gpu, void *mb, uint64_
 #endif
     {
         static uint8_t scratch[65536]; wrw_hits h = {{0}};
-        int c = wrw_block(widen_get(), src, n, u->addr, scratch, &h); g_wrw_scans++; g_wrw_bytes += n;
+        int c = wrw_block_k(widen_get(), src, n, u->addr, scratch, &h, keep); g_wrw_scans++; g_wrw_bytes += n;
         fl = (h.n[WRW_PROJ] || h.n[WRW_VIEWPROJ] || h.n[WRW_INVPROJ] ? 1 : 0) | (h.n[WRW_UI_ORTHO] ? 2 : 0);
         if (c) { ARENA_OUT id<MTLBuffer> ab; size_t off = arena_alloc(n, &ab); memcpy(g_cur_arena->cpu + off, scratch, n); *ngpu = g_cur_arena->gpu + off; *nb = ab; g_wrw_copies++; }
         if (ce) {   // kept for the next submissions: the words that differ
             int np = 0;
             if (c) for (uint32_t i = 0; i + 4 <= n && np <= 32; i += 4) if (memcmp(src + i, scratch + i, 4)) { if (np < 32) { ce->po[np] = i; memcpy(&ce->pv[np], scratch + i, 4); } np++; }
-            if (np <= 32) { ce->addr = u->addr; ce->size = n; ce->hash = hs; ce->fl = fl; ce->np = np; } else ce->addr = 0;
+            if (np <= 32) { ce->addr = u->addr; ce->size = n; ce->hash = hs; ce->fl = fl; ce->np = np; ce->keep = keep; } else ce->addr = 0;
         }
     }
-    for (size_t j = 0; j < 8; j++) { wrw_ent *e = &g_wrw[(hix + j) & 4095]; if (!e->gpu) { *e = (wrw_ent){gpu, *ngpu, n, fl, *nb}; break; } }
+    for (size_t j = 0; j < 8; j++) { wrw_ent *e = &g_wrw[(hix + j) & 4095]; if (!e->gpu) { *e = (wrw_ent){gpu, *ngpu, n, fl, keep, *nb}; break; } }
     return fl;
 }
 void mtl_widen_rw_stats(uint64_t out[4]) { out[0] = g_wrw_scans; out[1] = g_wrw_copies; out[2] = g_wrw_bytes; out[3] = g_wrw_hits; }
@@ -147,6 +148,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
     int bl = passdump() && (bl_all || bl_pass[nvn_stage] != g_stat_pass);
     if (bl) { bl_pass[nvn_stage] = g_stat_pass; PD("K %llu st%d key=%s nb=%d", g_stat_pass, nvn_stage, sh->key, sh->rf.nb); }
     int wfl = 0;   // what this stage's uniform blocks held for the widening (320d)
+    int sup_aid = -1, nsc = 0; uint8_t sc_ix[NVN_REFL_MAXB]; float sc_x[NVN_REFL_MAXB], sc_y[NVN_REFL_MAXB];   // the support buffer's slot, the sampled textures' storage ratios (320f)
     pthread_mutex_lock(&g_rmu);   // The texture / sampler registration tables may be being grown or rewritten by the game thread
     for (int i = 0; i < sh->rf.nb; i++) {
         if (__builtin_expect(widen_scan_on(), 0) && sh->rf.b[i].kind == NVN_RB_CBUF && sh->rf.b[i].reg < 16) widen_scan_cb(&S.ubo[nvn_stage][sh->rf.b[i].reg]);   // plan item 320d
@@ -171,7 +173,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             const us_ent *sc = rg_ ? NULL : us_find(u->addr, u->size);   // contents as of the submit call
             if (rg_) { gpu = rg_; mb = rb_; } else if (sc) { gpu = sc->gpu + (u->addr - sc->lo); mb = sc->buf; }
             if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && nvn_stage != 5) {   // a widened target (320d): a rewritten copy when the block holds what changes
-                uint64_t ng; id<MTLBuffer> __unsafe_unretained nb; wfl |= widen_cb_rewrite(u, gpu, mb, &ng, &nb);
+                uint64_t ng; id<MTLBuffer> __unsafe_unretained nb; wfl |= widen_cb_rewrite(u, gpu, mb, &ng, &nb, nvn_stage == 1 && sh->rf.frag_coord);
                 if (ng) { gpu = ng; mb = (__bridge void *)nb; }
             }
             slots[aid] = gpu;
@@ -188,6 +190,10 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
 #ifndef DM_TEST_WIDEN_SAMPLED_HUD   // negative control of t_widen_draw only: a draw sampling a widened texture taken for the HUD when it reads its projection
             if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && t && tid < g_ntreg && tex_is_widened(t, &g_treg[tid].t)) wfl |= 4;   // samples a widened texture (320d)
+            if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && b->six && t && tid < g_ntreg && nsc < NVN_REFL_MAXB) {   // its storage's ratio at the view's level (320f)
+                const treg_t *tr = &g_treg[tid]; unsigned lv = tr->has_v && tr->v.set_levels ? tr->v.base_level : 0;
+                double rx = (double)t.width / mip_extent(tr->t.d.width ? tr->t.d.width : 1, lv), ry = (double)t.height / mip_extent(tr->t.d.height ? tr->t.d.height : 1, lv);
+                if (rx != 1 || ry != 1) { sc_ix[nsc] = b->six; sc_x[nsc] = (float)rx; sc_y[nsc] = (float)ry; nsc++; } }
             else if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && nvn_stage != 5 && t && tid < g_ntreg && tex_is_widened(t, &g_treg[tid].t)) wfl |= 8;   // the census (320e)
 #endif
             if (t && tid < g_ntreg) use_rec("tex", (uint64_t)g_treg[tid].t.mem, g_treg[tid].t.size, tid, &g_treg[tid].t);
@@ -268,7 +274,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             slots[aid] = (sh->c1buf ? sh->c1_gpu : zero_bank_gpu()) + (sh->c1buf ? sh->c1off : 0);
             USE(cb, MTLResourceUsageRead);
         } else if (b->kind == NVN_RB_SUPPORT) {   // support_buffer: scale 1.0, BGRA swap 0, viewport transform not disabled (viewport fields are not read)
-            slots[aid] = support_gpu();
+            slots[aid] = support_gpu(); sup_aid = aid;   // (a copy with this draw's scales after the loop, 320f)
             USE(support_buf(), MTLResourceUsageRead);
         } else if (b->kind == NVN_RB_DRV0 || b->kind == NVN_RB_DRV2) {
             // NVN driver constant segments: those proven unread by static analysis at packaging time are supplied as 0; those read are filled on the spot from the current bindings - c0 = storage buffer table (base + 0x10 r: address 64 bits, size 32 bits),
@@ -285,6 +291,26 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             }
         } else RED_ONCE(46, "binding kind %d not implemented", b->kind);
     }
+    // The resolution scale per draw (plan item 320f; Ryujinx's render_scale, as S2Arm's direct path fills it): a draw widened into a widened target
+    // (not the HUD's, centred) divides the fragment coordinate by the target's k (x) and ky (y), so a shader reading it sees the game's pixels;
+    // each sampled texture with widened storage has its ratio for its scale index (integer reads times it, size queries divided by it), negative
+    // in the fragment stage when it is the target's (Ryujinx: the read at the pixel's own texel). A copy of the static buffer for the draw, else
+    // the static one (every scale 1). DM_TEST_WIDEN_SCALE_ONE (t_widen_scale only): the static one always
+#ifndef DM_TEST_WIDEN_SCALE_ONE
+    if (sup_aid >= 0 && __builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0)) {
+        int frag = nvn_stage == 1 && (g_pass.kx != 1 || g_pass.ky != 1) && ((g_wd_fl | wfl) & 7) != 2;
+        if (frag || nsc) {
+            ARENA_OUT id<MTLBuffer> sb; size_t so = arena_alloc(SUPPORT_LEN, &sb); uint8_t *d = g_cur_arena->cpu + so; memcpy(d, support_buf().contents, SUPPORT_LEN);
+            float kx = frag ? (float)g_pass.kx : 1.0f, ky = frag ? (float)g_pass.ky : 1.0f;
+            memcpy(d + 192, &kx, 4); memcpy(d + SUPPORT_RENDER_SCALE_Y, &ky, 4);
+            for (int i = 0; i < nsc; i++) {
+                float rx = frag && sc_x[i] != 1.0f && fabsf(sc_x[i] - kx) < 1e-6f ? -sc_x[i] : sc_x[i], ry = frag && sc_y[i] != 1.0f && fabsf(sc_y[i] - ky) < 1e-6f ? -sc_y[i] : sc_y[i];
+                memcpy(d + 192 + 16 * sc_ix[i], &rx, 4); memcpy(d + SUPPORT_RENDER_SCALE_Y + 16 * sc_ix[i], &ry, 4);
+            }
+            slots[sup_aid] = g_cur_arena->gpu + so; { int reg = -1; (void)reg; USE(sb, MTLResourceUsageRead); } g_wce[WCE_SCALED] += nvn_stage == 1;
+        }
+    }
+#endif
     #undef USE
     #undef USE_SAMP
     pthread_mutex_unlock(&g_rmu);
