@@ -475,7 +475,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   screen-size constants left as the game's in draws reading the fragment coordinate. Tears of the Kingdom needs it: its upscale into the
   1920x1080 output reads texels at its pixel x 0.8333 + c of the game's 1920 columns, so the widened output shows the scene's left 1,603 of
   1,955 columns stretched over its width (batch 169's fit), and the frame 3500 staircase is in the scene target already.
-  320g (iOS's switch: batch 173; the present's crop and the Air measured: batch 174) the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
+  320g (iOS's switch: batch 173; the present's crop and the Air measured: batch 174; the scan of the slots read: batch 175) the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
   then the iPhone Air and the Duo's inner screen: fps, GPU time, the HUD's proportions (a circle stays round), no black band.
 - 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
   only when more than 24 of the last 120 frames were shown late (three in a row stepped up on scattered spikes, after which the GPU clock fell and
@@ -1820,3 +1820,23 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   plain nanosleep 2.1-9.2 ms: the system's timer, no change here touches sleeping); sanitizer, texture, audit and tool tests, both IPAs;
   Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, instructions a draw as before
   (27,085-39,808); manosaba none.
+- [x] batch 175 · 320g, the scan of the slots read: chain 28614768c859 → 36a510fd7866 (`dmsh_build.py` only; every shader built again, the
+  translation as it was). Each uniform binding's reflection gives the 16-byte slots its shader reads (`cb_slots`: the constant indices of its
+  `_m0[i]` reads as up to 8 ranges, the nearest gaps closed first; none when an index is not a constant or the binding is used another way):
+  91,539 of the 98,961 bindings, 8.8 slots each on average. The rewrite scans only those slots (`widen_rw.h` `wrw_block_r`: a matrix window at
+  each slot read, a vec4 or pair at each 4 bytes of one), hashes only them (and the 48 bytes after each), copies and compares only them, and
+  both caches key on them; a binding without slots is scanned whole as before. A texture's storage ratio is kept with its registration while
+  the texture and the storage generation stay (no Metal call a binding); in doing so a fault from batch 171 was found and fixed: the census's
+  count of plain targets sampling widened storage had come under the scale's `if` (an `else` that moved), so it counted almost nothing.
+  `gfx/tests/t_widen_rw.c` 13 (a projection at slot 4 with 4-7 read changed, one at slot 8 with 0-3 read left, 64 of 256 bytes looked at; all
+  slots the same as the whole block; `-DDM_TEST_WIDEN_RW_ALL_SLOTS` 1 fails); `t_scale_msl.py` 6 (the upscale's uniform binding [[0, 1], [4,
+  4]], as its MSL reads `_m0[0]`, `_m0[1]`, `_m0[4]`; chain 28614768c859 fails that one). The fast tests measured on a frame's real blocks
+  (`DM_NVN_CBDUMP` at frame 4400 of the widened prologue: 2,026 blocks, 4.32 MB): 0.41 ms a MB on the M5 (6.4 % of the windows past the
+  matrix test, 2 % of the positions past the first value); a test of the four values' products instead was twice as slow and is not taken.
+  Tears of the Kingdom widened on the M5 at frame 4500: 0.51 MB scanned a frame (1.83 before), 38,013 instructions a draw (45,353; 22,464
+  unwidened). On the iPhone Air, Great Sky Island standing: widened 27.3 fps (frame time p50 36.4 ms, GPU p50 30.5 ms, the submit thread 12.4
+  ms, 89.9 M instructions a frame) against 28.3 fps unwidened (35.2 ms, 29.3 ms, 10.3 ms, 54.5 M); batch 174's widened run took 22 ms on the
+  submit thread and held 15-25 fps. The shots as batch 174's (looked at). gfx 196 / 196 on Metal 4 and Metal 3, host 217 / 217, sanitizer,
+  texture, audit and tool tests, both IPAs (the new libraries); Android: built (the new bundle), the phone not connected. Smoke on the new
+  chain (no widening): Tears of the Kingdom's two red lines as before, s1300 and s1800 the same scenes, instructions a draw as before
+  (26,934-39,513); manosaba none, its s600 the title page (looked at).

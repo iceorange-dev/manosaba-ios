@@ -49,7 +49,14 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
             { id si = b[@"scale_ix"]; int v = [si isKindOfClass:[NSNumber class]] ? [si intValue] : -1;   // plan item 320f: render_scale[1 + v]
               if (v > 71) FAIL("B binding %s: resolution-scale index %d past render_scale's 73", [b[@"msl_name"] UTF8String], v);
               r->six = v >= 0 ? (uint8_t)(v + 1) : 0; }
-            if ([k isEqualToString:@"cbuf"]) r->kind = NVN_RB_CBUF;
+            if ([k isEqualToString:@"cbuf"]) { r->kind = NVN_RB_CBUF;
+                NSArray *cs = b[@"cb_slots"]; r->ncr = 0; r->crh = 0;   // plan item 320g: the slots read (absent or null: not known, the whole block)
+                if ([cs isKindOfClass:[NSArray class]] && cs.count > 0 && cs.count <= 8) {
+                    uint32_t h = 2166136261u;
+                    for (NSArray *p in cs) { if (![p isKindOfClass:[NSArray class]] || p.count != 2) { r->ncr = 0; break; }
+                        int lo = [p[0] intValue], hi = [p[1] intValue]; if (lo < 0 || hi < lo || hi > 4095) FAIL("B binding %s: slot range %d-%d", [b[@"msl_name"] UTF8String], lo, hi);
+                        r->cr[r->ncr][0] = (uint16_t)lo; r->cr[r->ncr][1] = (uint16_t)hi; r->ncr++; h = (h ^ (uint32_t)lo) * 16777619u; h = (h ^ (uint32_t)hi) * 16777619u; }
+                    r->crh = r->ncr ? h : 0; } }
             else if ([k isEqualToString:@"samp"]) r->kind = NVN_RB_SAMP;
             else if ([k isEqualToString:@"samp_tex"]) r->kind = NVN_RB_SAMPT;
             else if ([k isEqualToString:@"tex"]) { r->kind = NVN_RB_TEX; dummy_kind(b[@"msl_type"], &r->dtt, &r->dpf); r->decl_tt = decl_type(b[@"msl_type"]); }

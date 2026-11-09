@@ -372,6 +372,22 @@ def scale_index(nm, res):
     if len(hits) != 1: return None
     return hits[0] + (sum(1 for t in res['textures'] if t['array'] <= 1) if m.group(1) == 'i' else 0)
 
+def cb_slots(nm, msl):
+    """The 16-byte slots a uniform binding's shader reads (plan item 320g: the widening scans only these): the constant indices of its
+    (*spvDescriptorSet0.<nm>)._m0[i] reads as up to 8 ranges [lo, hi] (the nearest gaps closed first), or None when an index is not a constant or
+    the binding is used another way (the whole block then)"""
+    uses = re.findall(r'\b%s\b' % re.escape(nm), msl)
+    reads = re.findall(r'\(\*spvDescriptorSet0\.%s\)\._m0\[([^\]]+)\]' % re.escape(nm), msl)
+    decl = len(re.findall(r'^\s*constant \w+\* %s \[\[id\(\d+\)\]\];' % re.escape(nm), msl, re.M))
+    if not reads or len(reads) + decl != len(uses) or any(not r.isdigit() for r in reads): return None
+    sl = sorted(set(int(r) for r in reads)); rg = [[sl[0], sl[0]]]
+    for x in sl[1:]:
+        if x == rg[-1][1] + 1: rg[-1][1] = x
+        else: rg.append([x, x])
+    while len(rg) > 8:   # the nearest gap closed
+        i = min(range(len(rg) - 1), key=lambda j: rg[j + 1][0] - rg[j][1]); rg[i][1] = rg[i + 1][1]; del rg[i + 1]
+    return rg
+
 def reflect(key, stage, msl, res):
     """MSL argument buffer struct member → replay reflection: kind (same as nvn_refl.h) + NVN slot number + argument buffer member index"""
     body = re.search(r'struct spvDescriptorSetBuffer0\s*\{(.*?)\};', msl, re.S)
@@ -383,7 +399,7 @@ def reflect(key, stage, msl, res):
         if nm == 'support_buffer': e.update(kind='support')
         elif re.fullmatch(r'[a-z]+_c(\d+)', nm):
             n = int(re.fullmatch(r'[a-z]+_c(\d+)', nm).group(1))
-            e.update(kind='cbuf', reg=n - 3) if 3 <= n <= 16 else e.update(kind='c1' if n == 1 else 'drvcb', bank=n)
+            e.update(kind='cbuf', reg=n - 3, cb_slots=cb_slots(nm, msl)) if 3 <= n <= 16 else e.update(kind='c1' if n == 1 else 'drvcb', bank=n)
         elif re.fullmatch(r'[a-z]+_s(\d+)', nm):
             e.update(kind='sbuf', index=int(re.fullmatch(r'[a-z]+_s(\d+)', nm).group(1)))
         elif nm.endswith('Smplr'):   # handle type 0 = texture and sampler combined in one handle: the sampler index is taken from the high bits of that texture slot's handle

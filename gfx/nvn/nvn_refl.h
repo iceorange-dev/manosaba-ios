@@ -20,6 +20,9 @@ typedef struct {
     uint16_t reg, aid;       // D3D register number, index within the argument buffer
     uint16_t off;            // SBUFU: byte offset of the address in the uniform buffer
     uint8_t six;             // TEX / IMG: Ryujinx's resolution-scale index + 1 (render_scale[six] / render_scale_y[six]; 0: none; plan item 320f)
+    uint8_t ncr;             // CBUF: the slot ranges its shader reads (cr), 0: not known (the whole block; plan item 320g)
+    uint16_t cr[8][2];       // CBUF: [first, last] 16-byte slots read
+    uint32_t crh;            // CBUF: a hash of cr (the widening's caches key on it)
 } nvn_rbind;
 typedef struct {
     int nb, abi, nv;         // Binding count, argument buffer slot, vertex input count

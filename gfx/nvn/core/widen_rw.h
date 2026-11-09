@@ -58,9 +58,11 @@ static inline int wrw_is_ui_ortho(const float *m, int col) {   // w row 0001, ax
 // What every kind above needs of the w row or the z row, tested first (plan item 320d: the whole tests on every 16-byte step cost 3.2 ms a MB on
 // the M5, 2.3 MB a frame in Tears of the Kingdom): the w row's xyz of length 1 (a projection, a view-projection: 1 %), or zero with w 1 (an
 // orthographic projection), or the z row (0, 0, 0, ±1) (an inverse projection). It passes everything a kind accepts; most windows fail it
-static inline int wrw_maybe(const float *m, int col) {
+static inline __attribute__((always_inline)) int wrw_maybe(const float *m, int col) {
     float a = wrw_e(m, col, 3, 0), b = wrw_e(m, col, 3, 1), c = wrw_e(m, col, 3, 2), d = wrw_e(m, col, 3, 3), l = a * a + b * b + c * c;
-    if (fabsf(l - 1) < 0.021f || (l < 1e-9f && fabsf(d - 1) < 1e-3f)) return 1;
+    if (fabsf(l - 1) < 0.021f) return 1;
+    if (l < 1e-9f && fabsf(d - 1) < 1e-3f) { float p00 = fabsf(wrw_e(m, col, 0, 0)), p11 = fabsf(wrw_e(m, col, 1, 1));   // (an orthographic projection's x and y rows axis-aligned)
+        if (fabsf(wrw_e(m, col, 0, 1)) <= 1.01e-5f * p00 && fabsf(wrw_e(m, col, 1, 0)) <= 1.01e-5f * p11) return 1; }
 #ifdef DM_TEST_WIDEN_RW_PRE_W_ONLY   // negative control of t_widen_rw only: the z row not looked at (inverse projections skipped)
     return 0;
 #endif
@@ -92,6 +94,30 @@ static inline int wrw_window(const widen_t *w, float *m, int *kind) {
 // changed; the count of changes returned, hits counted per kind
 // keep_screen (plan item 320f): screen-size vec4s left as the game's, for a fragment shader reading the fragment coordinate, which then sees the
 // game's pixels (the support buffer's render_scale divides it); still counted
+// What the first value of a screen size or the aspect pair must be (a width, a reciprocal width of 1/16 or less, or 16/9), inlined in the loops
+// (320g: on Tears of the Kingdom's blocks of a frame 2 % of the positions pass it; a test of the four values' products was twice as slow)
+static inline __attribute__((always_inline)) int wrw_vec_maybe(const uint8_t *p) {
+    float v0; memcpy(&v0, p, 4); return (v0 >= 16 && v0 <= 16384) || (v0 > 0 && v0 <= 0.0625001f) || (v0 > 1.77f && v0 < 1.78f);
+}
+// The vec4 or pair at byte p of a block of n (in place): a screen size (W, H, 1/W, 1/H) or (1/W, 1/H, W, H) widened (left with keep_screen), the
+// aspect pair (16/9, 9/16) widened; the bytes to skip past it beyond the next 4 returned
+static inline __attribute__((always_inline)) size_t wrw_vec_at(const widen_t *w, uint8_t *dst, size_t p, size_t n, wrw_hits *h, int keep_screen, int *changed) {
+    float v0; memcpy(&v0, dst + p, 4);   // first what the first value must be: a width, a reciprocal width (1/16 or less) or 16/9
+    if (!((v0 >= 16 && v0 <= 16384) || (v0 > 0 && v0 <= 0.0625001f) || (v0 > 1.77f && v0 < 1.78f))) return 0;
+    float v[4] = {0}; memcpy(v, dst + p, p + 16 <= n ? 16 : 8);
+    if (p + 16 <= n) for (int sw = 0; sw < 2; sw++) {   // (W, H, 1/W, 1/H) or (1/W, 1/H, W, H)
+        float W = sw ? v[2] : v[0], H = sw ? v[3] : v[1], iW = sw ? v[0] : v[2], iH = sw ? v[1] : v[3];
+        if (!(W >= 16 && W <= 16384 && H >= 8 && H <= 16384) || W != roundf(W) || H != roundf(H) || !widen_family((int)W, (int)H) || !wrw_near(iW * W, 1, 1e-5) || !wrw_near(iH * H, 1, 1e-5)) continue;
+        if (keep_screen) { if (h) h->n[WRW_SCREEN]++; return 12; }
+        float nW = (float)widen_width(w, (int)W, (int)H), nH = (float)widen_height(w, (int)W, (int)H);
+        float o[4] = {sw ? 1 / nW : nW, sw ? 1 / nH : nH, sw ? nW : 1 / nW, sw ? nH : 1 / nH};
+        memcpy(dst + p, o, 16); (*changed)++; if (h) h->n[WRW_SCREEN]++; return 12;
+    }
+    if (wrw_near(v[0], 16.0 / 9.0, 1e-5) && wrw_near(v[1], 9.0 / 16.0, 1e-5)) {
+        float a = (float)(16.0 / 9.0 * w->k / w->ky), o[2] = {a, 1 / a}; memcpy(dst + p, o, 8); (*changed)++; if (h) h->n[WRW_ASPECT]++; return 4;
+    }
+    return 0;
+}
 static inline int wrw_block_k(const widen_t *w, const uint8_t *src, size_t n, uint64_t off, uint8_t *dst, wrw_hits *h, int keep_screen) {
     memcpy(dst, src, n); int changed = 0;
     if (!w->extra_w && !w->extra_h) return 0;
@@ -101,23 +127,31 @@ static inline int wrw_block_k(const widen_t *w, const uint8_t *src, size_t n, ui
         if (kind >= 0 && h) h->n[kind]++;
         if (c) { memcpy(dst + p, m, 64); changed++; p += 64; } else p += 16;
     }
-    for (size_t p = (4 - (off & 3)) & 3; p + 8 <= n; p += 4) {
-        float v0; memcpy(&v0, dst + p, 4);   // first what the first value must be: a width, a reciprocal width (1/16 or less) or 16/9
-        if (!((v0 >= 16 && v0 <= 16384) || (v0 > 0 && v0 <= 0.0625001f) || (v0 > 1.77f && v0 < 1.78f))) continue;
-        float v[4] = {0}; memcpy(v, dst + p, p + 16 <= n ? 16 : 8);
-        if (p + 16 <= n) for (int sw = 0; sw < 2; sw++) {   // (W, H, 1/W, 1/H) or (1/W, 1/H, W, H)
-            float W = sw ? v[2] : v[0], H = sw ? v[3] : v[1], iW = sw ? v[0] : v[2], iH = sw ? v[1] : v[3];
-            if (!(W >= 16 && W <= 16384 && H >= 8 && H <= 16384) || W != roundf(W) || H != roundf(H) || !widen_family((int)W, (int)H) || !wrw_near(iW * W, 1, 1e-5) || !wrw_near(iH * H, 1, 1e-5)) continue;
-            if (keep_screen) { if (h) h->n[WRW_SCREEN]++; p += 12; goto next; }
-            float nW = (float)widen_width(w, (int)W, (int)H), nH = (float)widen_height(w, (int)W, (int)H);
-            float o[4] = {sw ? 1 / nW : nW, sw ? 1 / nH : nH, sw ? nW : 1 / nW, sw ? nH : 1 / nH};
-            memcpy(dst + p, o, 16); changed++; if (h) h->n[WRW_SCREEN]++; p += 12; goto next;
-        }
-        if (wrw_near(v[0], 16.0 / 9.0, 1e-5) && wrw_near(v[1], 9.0 / 16.0, 1e-5)) {
-            float a = (float)(16.0 / 9.0 * w->k / w->ky), o[2] = {a, 1 / a}; memcpy(dst + p, o, 8); changed++; if (h) h->n[WRW_ASPECT]++; p += 4;
-        }
-    next:;
-    }
+    for (size_t p = (4 - (off & 3)) & 3; p + 8 <= n; p += 4) if (wrw_vec_maybe(dst + p)) p += wrw_vec_at(w, dst, p, n, h, keep_screen, &changed);
     return changed;
 }
 static inline int wrw_block(const widen_t *w, const uint8_t *src, size_t n, uint64_t off, uint8_t *dst, wrw_hits *h) { return wrw_block_k(w, src, n, off, dst, h, 0); }
+// Only the 16-byte slots the shader reads (plan item 320g; cr: nr [first, last] ranges from its reflection, slot 0 at the block's start): a matrix
+// window at each slot read (its 64 bytes, read or not), a vec4 or pair at each 4 bytes of a slot read; dst holds the bytes only there (each range
+// and the 48 after it), the rest neither copied nor looked at. nr 0: the whole block (wrw_block_k, dst all of it). *seen: the bytes looked at
+static inline int wrw_block_r(const widen_t *w, const uint8_t *src, size_t n, uint8_t *dst, wrw_hits *h, int keep_screen, const uint16_t (*cr)[2], int nr, size_t *seen) {
+#ifdef DM_TEST_WIDEN_RW_ALL_SLOTS   // negative control of t_widen_rw only: every slot looked at
+    nr = 0;
+#endif
+    if (!nr) { if (seen) *seen = n; return wrw_block_k(w, src, n, 0, dst, h, keep_screen); }
+    int changed = 0; size_t s = 0;
+    for (int r = 0; r < nr; r++) {   // dst holds the block's bytes only within the ranges and the 48 bytes after each (the rest is not written)
+        size_t lo = (size_t)cr[r][0] * 16, e = ((size_t)cr[r][1] + 1) * 16 + 48; if (lo >= n) continue; if (e > n) e = n; memcpy(dst + lo, src + lo, e - lo); }
+    if (!w->extra_w && !w->extra_h) { if (seen) *seen = 0; return 0; }
+    for (int r = 0; r < nr; r++) {
+        size_t lo = (size_t)cr[r][0] * 16, hi = ((size_t)cr[r][1] + 1) * 16; if (lo >= n) continue; if (hi > n) hi = n; s += hi - lo;
+        for (size_t p = lo; p < hi && p + 64 <= n; p += 16) {   // matrices
+            float m[16]; memcpy(m, dst + p, 64); int kind; int c = wrw_window(w, m, &kind);
+            if (kind >= 0 && h) h->n[kind]++;
+            if (c) { memcpy(dst + p, m, 64); changed++; p += 48; }
+        }
+        for (size_t p = lo; p < hi && p + 8 <= n; p += 4) if (wrw_vec_maybe(dst + p)) p += wrw_vec_at(w, dst, p, n, h, keep_screen, &changed);   // screen sizes, the aspect pair
+    }
+    if (seen) *seen = s;
+    return changed;
+}

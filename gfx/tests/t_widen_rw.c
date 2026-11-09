@@ -3,7 +3,9 @@
 // translation) too; an inverse projection's x row times k; the HUD's orthographic projection for 1280x720 only noted; a matrix of another shape and
 // a 4:3 projection left; a screen-size vec4 (1280, 720, 1/1280, 1/720) becomes (1564, 720, 1/1564, 1/720), the other order too; the aspect pair
 // (16/9, 9/16) widened; a block passed twice changed once; with the Duo's inner screen (ky 1.25) the y row divided by ky; the fast test before
-// the whole ones (wrw_maybe) skips no window they accept, over 64 KB of random values with each kind planted in both orders. Column-major
+// the whole ones (wrw_maybe) skips no window they accept, over 64 KB of random values with each kind planted in both orders; only the slots a
+// shader reads (wrw_block_r, plan item 320g): a projection at slot 4 with slots 4-7 read changed, one at slot 8 with slots 0-3 read left (64 of
+// 256 bytes looked at), every slot read the same as the whole block's scan. Every slot looked at (-DDM_TEST_WIDEN_RW_ALL_SLOTS): 1 fails. Column-major
 // matrices not recognised (-DDM_TEST_WIDEN_RW_ROW_ONLY): 2 fail; the fast test without the z row (-DDM_TEST_WIDEN_RW_PRE_W_ONLY): 2 fail.
 #include <stdio.h>
 #include "../nvn/core/widen_rw.h"
@@ -64,6 +66,16 @@ int main(void) {
         int found = 0, same = 1;
         for (size_t p = 0; p + 64 <= NB; p += 16) { float m[16], mm[16]; memcpy(m, (uint8_t *)buf + p, 64); memcpy(mm, m, 64); int k; wrw_window(&w, mm, &k); int rk = ref_kind(m); same &= k == rk; found += rk >= 0; }
         check("the fast test skips no window the whole tests accept (64 KB, each kind planted in both orders) [-DDM_TEST_WIDEN_RW_PRE_W_ONLY: inverses skipped]", same && found >= planted / 2);
+    }
+    {   // plan item 320g: only the slots read
+        static uint8_t blk[256], out[256], ref[256]; proj(P, 16.0 / 9.0, 0, 0); memset(blk, 0, sizeof blk); memcpy(blk + 64, P, 64);
+        uint16_t r47[1][2] = {{4, 7}}, r03[1][2] = {{0, 3}}, all[1][2] = {{0, 15}}; size_t seen = 0; wrw_hits hh = {{0}};
+        int c1 = wrw_block_r(&w, blk, 256, out, &hh, 0, r47, 1, &seen); float o1[16]; memcpy(o1, out + 64, 64);
+        memset(blk, 0, sizeof blk); memcpy(blk + 128, P, 64); int c2 = wrw_block_r(&w, blk, 256, out, &hh, 0, r03, 1, &seen); size_t seen2 = seen;
+        int c3 = wrw_block_r(&w, blk, 256, out, &hh, 0, all, 1, &seen); int c4 = wrw_block(&w, blk, 256, 0, ref, &hh);
+        check("only the slots read: a projection at slot 4 with 4-7 read changed; at slot 8 with 0-3 read left, 64 bytes looked at [-DDM_TEST_WIDEN_RW_ALL_SLOTS: changed]",
+              c1 == 1 && fabsf(o1[0] - P[0] / 1.221875f) < 1e-6f && c2 == 0 && seen2 == 64);
+        check("... every slot read: the same as the whole block's scan", c3 == c4 && !memcmp(out, ref, 256));
     }
     printf("t_widen_rw: %d checks, %d failed\n", n, fail); return fail != 0;
 }

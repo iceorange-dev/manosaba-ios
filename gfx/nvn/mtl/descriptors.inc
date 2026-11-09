@@ -3,7 +3,8 @@
 // At registration the whole texture object is snapshotted (NVN semantics: the descriptor has been written into the pool); view: the MTLTexture for that ID (a view or the base texture, held via CFBridgingRetain) and the serial-table / guest-write generations at the time it was obtained
 // fin: the texture this entry names was released after nvnTextureFinalize (fin_drain) while the ID stayed registered, at submission fin_sub
 typedef struct { tex_t t; int ok, fin; view_t v; int has_v; void *view; uint64_t view_id, view_rid, view_ser, view_dirty, fin_sub, live_gen; int view_kind;
-                 void *alt, *alt_of; uint64_t alt_rid; uint8_t alt_type; } treg_t;   // alt: a view of another texture type for shaders that declare one (tex_fit), built from the view alt_of
+                 void *alt, *alt_of; uint64_t alt_rid; uint8_t alt_type;
+                 float wr_x, wr_y; uint64_t wr_rid, wr_gen; } treg_t;   // wr_*: the bound texture's storage ratio (the widening, plan item 320g), for the texture wr_rid while g_ser_gen is wr_gen   // alt: a view of another texture type for shaders that declare one (tex_fit), built from the view alt_of
 static void treg_alt_drop(treg_t *r) { if (r->alt) { defer_obj_unref((__bridge id)r->alt); CFRelease(r->alt); r->alt = r->alt_of = NULL; r->alt_rid = 0; } }
 static treg_t *g_treg; static int g_ntreg; static uint64_t g_treg_same;   // g_treg_same: identical registrations skipped
 // Lock-free copy of texture ID → serial (the replay hot path only needs the serial: store lookahead index, binding set of the clear-only hoist): texture IDs are 20 bits, fixed 1M entries (BSS, only touched pages are used),
