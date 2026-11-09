@@ -96,6 +96,21 @@ CAVES = {
          'scene size: scvtf s0, w11 → x17 = host page; str x19, [x17, #48] (the renderer, for a live size)', 'scene'),
         (0x580920, '794012e8', [('orig',), ('adrp_host', 10), 0xb940394a, 0x2a0a0108],
          'display state flags: ldrh w8, [x23, #8]; x10 = host page; ldr w10, [x10, #56]; orr w8, w8, w10 (0x80 from the host: one pick)', 'scene'),
+        # Fade steps above about 63.5 fps (plan item 292; MacNativeGames 3e9e7f67 / PR #1112 found the sites, PR #1134 the rule, MIT, written anew):
+        # the distance / LOD mesh fades (0x0a7ac4, 0x95dd24) and the fades before an actor appears (0x6155e4, 0x615660) add trunc(2.1 × ratio)
+        # to a byte counter each frame (ratio = the step, 1 at 30 fps: 2, at 60: 1); with realtime above 63.5 fps the product is under 1, the
+        # counter stops and the rock, lantern or wall stays invisible or translucent (MacNativeGames #466, #538, #556). Each conversion is kept and
+        # a positive input that truncated to 0 gives 1; 0 stays 0 (a paused frame does not fade), as do negative and NaN inputs. No scratch: the
+        # flags are dead after each site (0x0a7ac4 / 0x95dd24 reach ret without a flag read; 0x6155e4 / 0x615660 reach cmp first).
+        # games/totk/check_fade_step.py runs the four in Unicorn
+        (0x0a7ac4, '1e380008', [('orig',), 0x1e202008, 0x7a40c900, 0x1a9f1508],
+         'mesh fade step: fcvtzs w8, s0; fcmp s0, #0.0; ccmp w8, #0, #0, gt; csinc w8, w8, wzr, ne (positive and 0 → 1)', 'realtime'),
+        (0x95dd24, '1e380008', [('orig',), 0x1e202008, 0x7a40c900, 0x1a9f1508],
+         'mesh fade step: fcvtzs w8, s0; fcmp s0, #0.0; ccmp w8, #0, #0, gt; csinc w8, w8, wzr, ne (positive and 0 → 1)', 'realtime'),
+        (0x6155e4, '1e38000a', [('orig',), 0x1e202008, 0x7a40c940, 0x1a9f154a],
+         'actor fade step: fcvtzs w10, s0; fcmp s0, #0.0; ccmp w10, #0, #0, gt; csinc w10, w10, wzr, ne (positive and 0 → 1)', 'realtime'),
+        (0x615660, '1e38000a', [('orig',), 0x1e202008, 0x7a40c940, 0x1a9f154a],
+         'actor fade step: fcvtzs w10, s0; fcmp s0, #0.0; ccmp w10, #0, #0, gt; csinc w10, w10, wzr, ne (positive and 0 → 1)', 'realtime'),
         # The wide picture (plan item 154, see _aspect above)
         (0x628c74, 'bd414260', _aspect(0), 'camera update: ldr s0, [x19, #0x140]' + _ASPECT_WHY, 'aspect'),
         (0xb43460, 'bd406ac0', _aspect(0), 'camera setup: ldr s0, [x22, #0x68]' + _ASPECT_WHY, 'aspect'),
@@ -124,8 +139,16 @@ OPTIONS = {
         'hold60': [
             (0x2db214, '0c050054', '1f2003d5', 'frame-rate controller: b.gt 0x2db2b4 (desired above the current interval: raise it) → nop'),
         ],
+        # The tier held too (plan item 294; TOTKRecompAndroid 1e56bfb's finding, facts only): with only the scale held the controller's tier (an id
+        # into its list, -1 none, at ctl+0x134) kept stepping (40 steps in 3 min there), and with it what the caller is told. Its three stores (a
+        # step down, a step up, a reset) are left out, so the tier stays what it was made with; the scale is 1.0 whatever it is (the epilogue above).
+        # TOTKRecompAndroid takes only a tier of higher scale, which from -1 (100 %) is none: the same. The flag beside the scale compares the tier
+        # with the low byte the call kept at its start (ctl+0x138, ldrb at 0x584344): for -1, 0xff against 0xffffffff, as the game has it there
         'fixedres': [
             (0x5848a8, 'e903172a', '09f0a752', 'dynamic resolution controller epilogue: mov w9, w23 (the tier\'s scale) → mov w9, #0x3f800000 (1.0)'),
+            (0x584a70, '783601b9', '1f2003d5', 'dynamic resolution controller, a step: str w24, [x19, #0x134] (the tier) → nop'),
+            (0x584b70, '603601b9', '1f2003d5', 'dynamic resolution controller, a reset: str w0, [x19, #0x134] (the tier) → nop'),
+            (0x584b94, '783601b9', '1f2003d5', 'dynamic resolution controller, a step: str w24, [x19, #0x134] (the tier) → nop'),
         ],
         'fps60': [
             (0x2db204, '5f01086b', '5f050071', 'frame-rate controller clamp: cmp w10, w8 (minimum) → cmp w10, #1'),

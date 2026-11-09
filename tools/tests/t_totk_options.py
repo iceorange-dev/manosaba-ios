@@ -4,7 +4,8 @@
 # kept; the option's original word is the epilogue's `mov w9, w23` and, when the workspace's product is here, the word main holds at 0x5848a8.
 # The interval held (option hold60, plan item 285): `cmp w10, w9` and the option's word in Unicorn with desired 2 above the current interval 1: the
 # original b.gt goes to the raising (0x2db2b4), the option falls through; its original word is the workspace's at 0x2db214.
-# Negative controls: T_FIXEDRES_ORIGINAL=1 runs the original word: 1 fails; T_HOLD60_ORIGINAL=1 likewise: 1 fails.
+# The tier held (fixedres, plan item 294): its three stores `str wN, [x19, #0x134]` are nops; run with -1 in memory and 3 in the register, the
+# tier stays -1. Negative controls: T_FIXEDRES_ORIGINAL=1 runs the original words: 2 fail; T_HOLD60_ORIGINAL=1 likewise: 1 fails.
 import os, struct, sys, importlib.util
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 total = fails = 0
@@ -14,7 +15,9 @@ def check(name, ok):
     print(('✓ ' if ok else '✗ ') + name)
 spec = importlib.util.spec_from_file_location('totk_rules', os.path.join(ROOT, 'games', 'totk', 'rules.py'))
 rules = importlib.util.module_from_spec(spec); spec.loader.exec_module(rules)
-(addr, orig, repl, _), = rules.OPTIONS['277178b7dba1b6d4949a84778d4abc58']['fixedres']
+fx = rules.OPTIONS['277178b7dba1b6d4949a84778d4abc58']['fixedres']
+(addr, orig, repl, _), = [e for e in fx if e[0] == 0x5848a8]
+tiers = [e for e in fx if e[0] != 0x5848a8]   # the tier's three stores (plan item 294)
 import capstone
 md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
 dis = lambda h, at=None: ' '.join(f'{i.mnemonic} {i.op_str}'.strip() for i in md.disasm(bytes.fromhex(h), addr if at is None else at))
@@ -32,6 +35,20 @@ img = os.path.join(ROOT, 'work', 'build', 'totk', 'product60', 'main.patched.bin
 if os.path.exists(img):
     with open(img, 'rb') as f: f.seek(addr); have = f.read(4).hex()
     check(f'the workspace\'s main holds the original word there ({have})', have == orig)
+# Plan item 294: each tier store is `str wN, [x19, #0x134]` made a nop; run with the tier -1 in memory and 3 in the register: kept -1 (the original: 3)
+check(f'fixedres holds the tier: three stores at {", ".join(hex(e[0]) for e in tiers)} → nop', [e[0] for e in tiers] == [0x584a70, 0x584b70, 0x584b94]
+      and all(dis(o, a).startswith('str w') and dis(o, a).endswith('[x19, #0x134]') and dis(r, a) == 'nop' for a, o, r, _ in tiers))
+from unicorn.arm64_const import UC_ARM64_REG_X19, UC_ARM64_REG_X24
+held = []
+for a, o, r, _ in tiers:
+    uc = Uc(UC_ARCH_ARM64, UC_MODE_ARM); uc.mem_map(0x100000, 0x1000); uc.mem_map(0x200000, 0x1000)
+    uc.mem_write(0x100000, bytes.fromhex(o if os.environ.get('T_FIXEDRES_ORIGINAL') == '1' else r)); uc.mem_write(0x200134, struct.pack('<i', -1))
+    uc.reg_write(UC_ARM64_REG_X19, 0x200000); uc.reg_write(UC_ARM64_REG_X24, 3); uc.reg_write(UC_ARM64_REG_X0, 3)
+    uc.emu_start(0x100000, 0x100004); held.append(struct.unpack('<i', uc.mem_read(0x200134, 4))[0])
+check(f'a step to tier 3 from -1: the tier stays {held} [T_FIXEDRES_ORIGINAL=1: 3]', held == [-1, -1, -1])
+if os.path.exists(img):
+    with open(img, 'rb') as f: have = [(f.seek(a), f.read(4).hex())[1] for a, o, r, _ in tiers]
+    check(f'the workspace\'s main holds the stores\' original words ({" ".join(have)})', have == [o for a, o, r, _ in tiers])
 (haddr, horig, hrepl, _), = rules.OPTIONS['277178b7dba1b6d4949a84778d4abc58']['hold60']
 check(f'hold60 is one word at {haddr:#x}: {dis(horig, haddr)} → {dis(hrepl, haddr)}', haddr == 0x2db214 and dis(horig, haddr) == 'b.gt #0x2db2b4' and dis(hrepl, haddr) == 'nop')
 from unicorn.arm64_const import UC_ARM64_REG_W9, UC_ARM64_REG_W10, UC_ARM64_REG_PC

@@ -54,6 +54,13 @@ namespace Ryujinx.Graphics.Shader.Instructions
                 }
             }
 
+            // dm (plan item 295; nx2android 02e336f's finding, MIT, written anew): the chained form is not used. Where the target blocks end by jumping
+            // past the later targets (a switch's cases), the structured program lost the jumps to the next target (nx2android: Xenoblade Chronicles 3's
+            // movie shader left two of its three cases unreachable); the sequential branches below are right for every shape. Logged into the
+            // reflection's notes (317c), which name the shaders the chained form would have taken
+            context.TranslatorContext.GpuAccessor.Log($"BRX at 0x{currOp.Address:X} with {total} targets: sequential branches{(allTargetsSinglePred ? " (the chained form would have been taken)" : "")}");
+            allTargetsSinglePred = false;
+
             if (allTargetsSinglePred)
             {
                 // Chain blocks, each target block will check if the BRX target address

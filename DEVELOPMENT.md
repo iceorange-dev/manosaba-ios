@@ -313,18 +313,28 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
 
 From the tenth review (2026-10-30, [docs/sources.md](docs/sources.md); 288 and 289 done in batch 122, 290, 291 and 298 in batch 141, 296
 and 297 in batch 142, the user's order: 301 next):
-- 292 fade steps that truncate to 0 above about 63.5 fps (MacNativeGames 3e9e7f67 / PR #1112, #1134's rule: a positive step at least 1, zero
-  stays zero): main 0x0a7ac4, 0x95dd24, 0x6155e4, 0x615660, met at `DM_PRESENT_HZ` 90 / 120 with realtime.
-- 293 cutscenes at 60 fps (71c; mamcjr/TOTKRecompAndroid da06d5a, facts only): four functions run once a frame only in cutscenes (main 0x45c700,
-  0x2b23c7c, 0x42c3bc, 0xa5a188); while one ran in the last 200 ms the interval chosen at 0x2db238 is at least 2.
-- 294 fixedres: the tier stores at 0x584a70, 0x584b70, 0x584b94 held too (TOTKRecompAndroid 1e56bfb, facts only); ours holds the scale at 0x5848a8.
-- 295 the translator's BRX chained form (nx2android 02e336f, MIT): 86 of Tears of the Kingdom's 28,652 shaders and 5 of manosaba's 2,740 have a
-  BRX; translate them both ways and compare. The other two nx2android translator fixes are not needed with our `XLATE_DEBUG=1` (plan item 200),
-  which the Android chain keeps.
+- 292 (batch 182) fade steps that truncate to 0 above about 63.5 fps (MacNativeGames 3e9e7f67 / PR #1112, #1134's rule: a positive step at
+  least 1, zero stays zero): main 0x0a7ac4, 0x95dd24, 0x6155e4, 0x615660, under realtime.
+- [-] 293 cutscenes at 60 fps (71c; mamcjr/TOTKRecompAndroid da06d5a, facts only): four functions run once a frame only in cutscenes (main 0x45c700,
+  0x2b23c7c, 0x42c3bc, 0xa5a188); while one ran in the last 200 ms the interval chosen at 0x2db238 is at least 2. Not needed here (batch 182):
+  product60 at 60 Hz from an empty save shows at frames 1600 / 2600 / 3600 the moments the 30 fps smoke shows at 800 / 1300 / 1800, the
+  last the same pose and line, so the opening cutscene follows real time; TOTKRecompAndroid presents every vsync while the game's interval
+  can stay 2, where ours lowers the interval itself (fps60).
+- 294 (batch 182) fixedres: the tier stores at 0x584a70, 0x584b70, 0x584b94 held too (TOTKRecompAndroid 1e56bfb, facts only); ours holds the
+  scale at 0x5848a8.
+- 295 (batch 182) the translator's BRX chained form (nx2android 02e336f, MIT): 86 of Tears of the Kingdom's 28,652 shaders and 5 of manosaba's
+  2,740 have a BRX (237 of them; 46 vertex, 44 pixel, 1 compute shaders), every one in the chained form until now; the sequential form is taken
+  from here on. Translated both ways, ours lost no case: the same 988 address tests in the MSL either way, the chained form an if / else-if
+  chain with no case inside another's. The other two nx2android translator fixes are not needed with our `XLATE_DEBUG=1` (plan item 200), which
+  the Android chain keeps.
 - 299 iOS input: Home and Capture kept from the system (nxnative 062cd06), motion from the phone and controllers (659c69d, cca3333), rumble
   through `GCHapticsLocalityHandles` (2e07a88).
-- 300 texture filtering at 1/256 of a texel as the Switch does, for vertex-shader lookups and gathers (TOTKRecompAndroid 8adbc5c, c02a43f, facts
-  only): look at the terrain in motion for cracks and dark dots first.
+- [-] 300 texture filtering at 1/256 of a texel as the Switch does, for vertex-shader lookups and gathers (TOTKRecompAndroid 8adbc5c, c02a43f,
+  facts only: on an Adreno the terrain's tiles showed dotted dark lines while the camera moved, more at a larger scene, and BotW's half-size
+  ambient occlusion rows of dark dots by the grass): look at the terrain in motion for cracks and dark dots first. Looked at on the Mac (batch
+  182): Great Sky Island walked docked at 60 Hz, eight shots at 1920x1080 while moving (paved stone, rock, grass), and twice at 120 Hz
+  handheld with nineteen shots each: no dotted line, no row of dots. Not needed on Apple's GPUs; for Tears of the Kingdom on an Adreno it is
+  in 313.
 - 301 manosaba on Android, on a Redmi K100 Pro Max (SM8850, Adreno 840, Vulkan 1.4.295, Android 17, 4 KB pages; adb shell: x18 kept,
   `cntvct_el0` at 19.2 MHz, `cntpct_el0` and a misaligned sp fault, `tpidrro_el0` reads 0, RW → RX and RWX allowed, 256 GB of PROT_NONE), the
   replay core shared with iOS, a Vulkan backend behind `nvn_backend.h`, in steps:
@@ -391,7 +401,8 @@ From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the us
 - 310 on the iPhone, left: sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed; the user plays music on the phone while manosaba runs),
   memory touched before loading (nxnative-mkw b8f81e4; after other apps have filled the phone's memory). Its half-float rounding went to 315d, the
   pad's redraw to 315e (batch 152).
-- 313 left for Tears of the Kingdom on Android (301e2c / e3): command-buffer cuts, when there are any, only between passes (PKShield f4f9f1c: a cut
+- 313 left for Tears of the Kingdom on Android (301e2c / e3): vertex-shader lookups and gathers at 1/256 of a texel if the terrain shows cracks
+  or dotted rows there (300); command-buffer cuts, when there are any, only between passes (PKShield f4f9f1c: a cut
   inside a pass flashed white), the spin before short waits measured again with a game whose threads hand work over thousands of times a second
   (mleo2003 77f6586), same-pass feedback (triasbrata 41beb51), vertex outputs padded where the fragment shader reads more (triasbrata 8bb3212),
   masked and region clears and the counter reports' GPU timestamps (AurelioB/totk-android `VULKAN.md`), scaled depth copies (nx2android e154eec),
@@ -494,6 +505,11 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   sample 0. `DM_NVN_KEY_WATCH` (batch 180) found none of the three drawn in the runs there are: Tears of the Kingdom's prologue (6,900 frames),
   Great Sky Island standing (go_save0, 3,600 frames after the first shot), manosaba from a new game for 600 s (A every 3 s, a dialogue at
   frame 33,000). Each is changed when a run draws with it (the watch names the frame and pass).
+- [-] 323 Link drawn flat red-orange, his sword and clothes too, in some Great Sky Island frames on the Mac (batch 182's walks from go_save0):
+  the game's low-health alarm, not ours. The walk takes him off a ledge, the fall leaves a quarter of a heart, and he is red only in the
+  frames where the HUD's hearts glow red too (three shots in a row at the tree, 2.5 s apart); the frame between the fall and those has the
+  hearts unlit and Link in his own colours. (Those runs' one red line, a 3D 8x8x8 texture in a 2D slot of pixel shader 9808aabbd3219e97, is
+  apart from it: the shader samples that slot only under a flag, alpha alone.)
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -1923,3 +1939,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   connected. Smoke (the M5's probe finds the bias applied, so the emulation is off there): Tears of the Kingdom's two red lines as before,
   s1300 an earlier moment of the same walk and s1800 the same shot a little later (looked at), instructions a draw as before
   (25,391-39,635); manosaba none.
+- [x] batch 182 · 292, 294 and 295 in one batch with one chain rebuild, 293, 300 and 323 looked at (the user, 2026-11-10: the checks grouped, the
+  runs in the background): chain 47b5de2aa276 → ba6c7622e044, built in 9 min (31,415 shaders, manosaba's Vulkan bundle).
+  292: four caves under `realtime` (`games/totk/rules.py`), each fade step's conversion kept and followed by `fcmp s0, #0.0; ccmp wN, #0, #0,
+  gt; csinc wN, wN, wzr, ne`: a positive input that truncated to 0 gives 1; zero, negative and NaN inputs convert as the game's.
+  `games/totk/check_fade_step.py` (Unicorn, in the batch) 5: 172 cases at 20-240 fps and in slow motion over the four sites with the registers
+  around kept, 2 at 30 fps and 1 at 60 as the game's, the original main and the product without realtime 0 at 120 fps (the counter stopped);
+  a product from before fails 2. In play it is not shown on the Mac: Great Sky Island at 120 Hz (about 105 fps, the step's product under 1),
+  the product before and this one, standing twice and walked three times: nothing left unseen or translucent in either, and what differed
+  between two runs was clouds and grass. It rests on the check and on MacNativeGames' reports (#466, #538, #556).
+  294: `fixedres` also makes the controller's three stores of its tier nops, so the tier stays what it was made with (the scale is 1.0
+  whatever it is). `tools/tests/t_totk_options.py` 9 (a step to tier 3 from -1 in Unicorn stays -1; `T_FIXEDRES_ORIGINAL=1`: 2 fail). Both
+  products rebuilt (`product.prev292`, `product60.prev292` kept; 16 caves from 12, 47 option words from 40).
+  295: the translator's BRX emitter never takes the chained form and logs each BRX into the reflection's notes (`InstEmitFlowControl.cs`).
+  `gfx/tests/t_xlate_brx.py` 2 (91 shaders, 237 BRX, each sequential; the chain before fails 1). 24 of Tears of the Kingdom's 86 are in its
+  pipeline seed list, so the smoke draws with them. What the two forms give is in the item, as are 293, 300 and 323.
+  gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs (the new libraries); Android:
+  built (the new bundle), the phone not connected. Smoke on the new chain: Tears of the Kingdom's two red lines as before, s800 the same,
+  s1300 and s1800 the same shots (0.65 % and 2.85 % of pixels past 8; looked at), instructions a draw as before (25,219-39,685); manosaba none,
+  its frames the same (s600 the title page, looked at).
