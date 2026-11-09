@@ -53,6 +53,8 @@ t_core_live: t_core_live.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_live.c $(CORE_C)
 t_core_pass: t_core_pass.c $(CORE_DEP)
 	clang $(CFLAGS) -Werror -o $@ t_core_pass.c $(CORE_C)
+t_widen: t_widen.c ../nvn/core/widen.h
+	clang $(CFLAGS) -Werror -o $@ t_widen.c
 # The null backend (gfx/nvn/null, the Android host's until Vulkan: plan item 301c), on its own
 t_null_be: t_null_be.c ../nvn/null/null.c core_test.h $(GFX_H)
 	clang $(CFLAGS) -Werror -o $@ t_null_be.c ../nvn/null/null.c
@@ -345,6 +347,7 @@ run: \
 	t_core_live \
 	t_core_pend \
 	t_core_pass \
+	t_widen \
 	t_core_prog \
 	t_core_rt \
 	t_core_state \
@@ -516,6 +519,7 @@ run: \
 	./t_core_live
 	./t_core_pend
 	./t_core_pass
+	./t_widen
 	./t_core_prog
 	./t_core_rt
 	./t_core_state

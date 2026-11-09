@@ -446,7 +446,25 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   layer at its size, k snapped to whole even columns: 2868x1320 → 2346x1080; screens narrower than 16:9 taller), measured on 1.4.3 handheld at 57.89
   fps on a Duo and 57.91 on an iPhone; the camera sites 0x1ff04f4 and 0x253fbb0 (two of our four aspect caves) never run in its handheld opening. A
   Tears of the Kingdom route through our own aspect, scene and output options at the screen's shape is untried (the UI on a canvas that is not
-  16:9); the route to be chosen first.
+  16:9). The route chosen by the user on 2026-11-09: S2Arm's, whole (graphics/widen and graphics/nvn/widen_glue.inc at 4c0bec5, Apache-2.0,
+  written anew; their core is about 6,000 lines of C# behind 857 lines of glue: weeks). Its parts, each with its test and broken variant, measured
+  before kept:
+  320a (batch 163) k and the sizes: the screen's aspect gives k snapped so that 1920 gains an even number of columns (2868x1320: 426, k 1.221875, the centre
+  offset 213), a screen narrower than 16:9 Ky the same way in rows over 1080 (the Duo's inner 1.42: 1350); the 16:9 family (|w·9 / (h·16) − 1| <
+  4 %); a widened width w + w·extra / 1920 when that is whole for w or w doubled up to 4096 (1280 → 1564, 1600 → 1955, 160 → 195: mip chains and
+  copies stay whole), else w plus an even count (1024 → 1252).
+  320b widened storage: a 16:9-family texture used as a colour or depth target gets its Metal storage at the widened size while the game's view of
+  its size stays (`DM_WIDEN_SCREEN=<w>x<h>` stands in for a phone's screen on the Mac); the render target heap's placement scaled for it.
+  320c viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
+  full-canvas 2D page with black side bands.
+  320d the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
+  found in the blocks a draw binds, their x row divided by k in a copy for the draw (reused while the block is unchanged); orthographic ones left.
+  320e sampling and copies: a 16:9-geometry draw sampling a widened texture reads its middle band; copies and blits between widened and plain
+  textures mapped; compute writing a widened image with its groups × k.
+  320f the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
+  the screen's edge, the UV extension of translucent overlays.
+  320g the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
+  then the iPhone Air and the Duo's inner screen: fps, GPU time, the HUD's proportions (a circle stays round), no black band.
 - 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
   only when more than 24 of the last 120 frames were shown late (three in a row stepped up on scattered spikes, after which the GPU clock fell and
   60 never fitted again), the cost as the critical path (submits' start to the GPU's end: 27 against 35 ms at a hold of 3), a probe back to 60 when
@@ -1638,3 +1656,10 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   the check is now at least 180 µs (3 runs passed, `-DDM_TEST_SLEEP_SHORT_SKIP` 2 fail) and the host suite ran again whole: passed; sanitizer,
   texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s1300
   the torch (batch 161's the cave); manosaba none.
+- [x] batch 163 · 320 split into its parts (above; the user chose S2Arm's route whole) and 320a: `gfx/nvn/core/widen.h` gives k and the widened
+  sizes from the screen's size, S2Arm's rules written anew and their numbers checked by hand: 2868x1320 → 426 columns over 1920 (k 1.221875),
+  1920 → 2346, 1280 → 1564, 1600 → 1955, 160 → 195 (= 1564 >> 3), 1024 → 1252, 640 → 782; 4:3 and square textures stay; the Duo's inner 2670x1878 →
+  270 rows over 1080 (720 → 900, 1080 → 1350); a screen within 1 % of 16:9 widens nothing (`gfx/tests/t_widen.c` 8, `-DDM_TEST_WIDEN_EVEN_ONLY` 2
+  fail). Nothing uses it yet: 320b gives the targets their widened storage. gfx 185 / 185 on Metal 4 and Metal 3, host 216 / 216, sanitizer,
+  texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s1300
+  the cave behind Zelda (looked at before); manosaba none.
