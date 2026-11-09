@@ -83,6 +83,9 @@ static int fstep_on(void) { static int v = -1; if (v < 0) { const char *e = gete
                g_fs.opt ? "; a trial of k - 1 every 5 s or more whatever the cost, its first second not counted late (DM_FSTEP_OPT=0 turns that off)" : ""); } return v; }
 int nvn_fstep_step(void) { return fstep_on() ? g_fs_step : 0; }   // the step for the frame the game is about to make, in vsyncs (0 = not in this mode)
 int mtl_fps_target(void);   // nvn_mtl.m: the player's frame rate target (DM_FPS, the iOS setting, 135's thermal hold)
+// The rate the host holds frames at now, 0 for none: the game's hold (130) or the player's target below 60 (DM_FPS, the iOS setting, 135's thermal
+// hold). For a game's host code that judges late frames (plan item 190, games/totk/frame_step.c): a frame held at 30 is not a dropped one
+int nvn_held_fps(void) { return nvn_pace_hold(atomic_load(&g_fps_hold), mtl_fps_target()); }
 static int win_interval(const win_t *o) {
     if (fstep_on()) return g_fs.k > 0 ? g_fs.k : 1;
     return nvn_hold_interval(g_display_mode ? 1 : o->interval, g_hz, nvn_pace_hold(atomic_load(&g_fps_hold), mtl_fps_target())); }   // (plan item 135b)

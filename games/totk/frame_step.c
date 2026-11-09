@@ -22,6 +22,8 @@
 // it DM_DISPLAY_SIZE (the iOS setting "Native": the screen's 16:9 picture, plan item 281) does, at most the largest 16:9 the heap holds; else the
 // swapchain 1920x1080 (the game's constant) and the canvas 0, which the cave leaves as the game laid it out, so the game looks as before.
 // +48 / +56: a live scene size (plan item 240, scene_latch_step below): the renderer the game picked a size for, and the flags asking for a pick.
+// DM_SCENE_AUTO=1 (plan item 190, scene_auto_step below) asks for such sizes by itself: down to 7/8 and 3/4 of the boot size while frames are
+// shown late, back up when they hold.
 // +40: the factor on the cameras' aspect ratio (rules.py option aspect, plan item 154: four code caves multiply by it, by 1 while it is 0):
 // the wide picture's ratio (host/game/aspect.c: DM_ASPECT, the Mac's View → Wide Picture) over the game's 16:9 while it is on, 0 off; written at
 // every present, so a switch reaches the next frame's cameras.
@@ -191,6 +193,92 @@ static int native_docked(const char *display, const char *opmode) {
     (void)display; (void)opmode; return 0;
 #endif
 }
+// ---------- A scene size from dropped frames (plan item 190) ----------
+// DM_SCENE_AUTO=1, with the option scene: the scene's size steps down while frames come late and back up when they hold, by the rule of upstream's
+// 3D scale controller (jhaizhou-ops/d2r-mobile dm/host/hle_oe.c, MIT, written anew; there an iPhone 17 Pro Max's dropped frames went 23 % → 10 %).
+// A present more than 1.5 target periods after the one before is a dropped frame; of a run of them only the first 3 count until the run has
+// lasted 1 s (a screenshot or a save stalls some frames whatever the size). Windows of 2 s, the last 30 kept. Down a level when the last 5 (10 s)
+// dropped more than 5 % of their frames or the last 30 (60 s) more than 1.5 %; up after 15 windows (30 s) without one, 45 when the raise before
+// was knocked back within 15 s. After a change judging rests 3 s and the windows start again. Added here: at the lowest level with over half the
+// frames of its last 30 windows still dropped, the size is not what holds the frames (an iPhone Air past its first minutes shows 30 fps at any
+// scene size, plan item 285): back to level 0, and judging rests 2 min, twice as long each time in a row (16 at most). Levels: the size the game
+// booted with, 7/8 and 3/4 of it (1280x720 → 1120x630 → 960x540, where an iPhone 17 Pro held 59.6 fps against 56.0, plan item 240). Upstream's
+// second rule, by GPU time, is not taken: under the phone's power split a late frame looks CPU-bound (plan item 230).
+enum { SA_WINDOWS = 30, SA_FAST = 5, SA_CLEAN = 15, SA_CLEAN_AGAIN = 45, SA_RUN_FRAMES = 3, SA_LEVELS = 3 };
+#define SA_NS 1000000000ull
+typedef struct {
+    int level; double period_ms;                     // 0: the boot size; the target period (0: 1000 / 60)
+    uint64_t rest_until, raised_at;                  // judging rests until then; when the last raise was
+    double win_ms; unsigned win_n, win_d;            // the window being filled: its time, frames, dropped frames
+    uint16_t n[SA_WINDOWS], d[SA_WINDOWS]; int nw;   // the windows kept, newest first
+    int clean, clean_need;                           // windows without a drop in a row; how many the next raise needs (0: SA_CLEAN)
+    unsigned run_n; double run_ms;                   // the run of dropped frames going on
+    unsigned gave_up; double fast, slow;             // times in a row the lowest level did not help; the rates at the last window (10 s, 60 s)
+} scene_auto;
+static void scene_auto_rest(scene_auto *a, uint64_t now, uint64_t ns) {
+    if (now + ns > a->rest_until) a->rest_until = now + ns;
+    a->win_ms = 0; a->win_n = a->win_d = 0; a->nw = 0; a->clean = 0; a->run_n = 0; a->run_ms = 0;
+}
+static double scene_auto_rate(const scene_auto *a, int k) {
+    unsigned n = 0, d = 0;
+    for (int i = 0; i < k && i < a->nw; i++) { n += a->n[i]; d += a->d[i]; }
+    return n ? (double)d / n : 0;
+}
+// One present, iv_ms after the one before (0: no reading), at now (ns). Returns the level
+static int scene_auto_step(scene_auto *a, double iv_ms, uint64_t now) {
+    if (iv_ms <= 0 || now < a->rest_until) return a->level;
+    double per = a->period_ms > 0 ? a->period_ms : 1000.0 / 60;
+    a->win_n++; a->win_ms += iv_ms;
+    if (iv_ms > per * 1.5) {
+        a->run_n++; a->run_ms += iv_ms;
+#ifndef DM_TEST_SCENE_AUTO_COUNT_ALL   // negative control of t_frame_step only: every frame of a run counted
+        if (a->run_n <= SA_RUN_FRAMES || a->run_ms >= 1000) a->win_d++;
+#else
+        a->win_d++;
+#endif
+    } else { a->run_n = 0; a->run_ms = 0; }
+    if (a->win_ms < 2000) return a->level;
+    memmove(a->n + 1, a->n, sizeof a->n - sizeof a->n[0]); memmove(a->d + 1, a->d, sizeof a->d - sizeof a->d[0]);
+    a->n[0] = (uint16_t)(a->win_n > 65535 ? 65535 : a->win_n); a->d[0] = (uint16_t)(a->win_d > 65535 ? 65535 : a->win_d);
+    if (a->nw < SA_WINDOWS) a->nw++;
+    int no_drop = !a->win_d; a->win_ms = 0; a->win_n = a->win_d = 0;
+    a->fast = a->nw >= SA_FAST ? scene_auto_rate(a, SA_FAST) : 0; a->slow = a->nw >= SA_WINDOWS ? scene_auto_rate(a, SA_WINDOWS) : 0;
+    if (a->fast > 0.05 || a->slow > 0.015) {
+        if (a->level < SA_LEVELS - 1) {
+            if (a->raised_at && now - a->raised_at < 15 * SA_NS) a->clean_need = SA_CLEAN_AGAIN;
+            a->level++; scene_auto_rest(a, now, 3 * SA_NS); return a->level;
+        }
+#ifndef DM_TEST_SCENE_AUTO_NO_GIVE_UP   // negative control of t_frame_step only: the lowest level kept however late the frames stay
+        if (a->slow > 0.5) {   // 60 s at the lowest level and most frames still late
+            unsigned min = 2u << (a->gave_up < 3 ? a->gave_up : 3); a->gave_up++;
+            a->level = 0; scene_auto_rest(a, now, (uint64_t)min * 60 * SA_NS); return a->level;
+        }
+#endif
+    }
+    if (!no_drop) { a->clean = 0; return a->level; }
+    if (++a->clean >= (a->clean_need ? a->clean_need : SA_CLEAN)) {
+        a->gave_up = 0;
+        if (a->level > 0) { a->level--; a->raised_at = now; a->clean_need = 0; scene_auto_rest(a, now, 3 * SA_NS); }
+    }
+    return a->level;
+}
+// The period late frames are judged against: the game's shortest (60 fps with the option fps60, else 30), or the longer one of a rate the host
+// holds frames at (held_fps, 0 for none: the app's "Hold 30 fps when hot", a movie's hold). An iPhone Air reaches thermal state serious about a
+// minute into Great Sky Island and is then held at 30: every frame counted late against 60, the size went to the lowest and gave up, for nothing
+static double scene_auto_period(int fps60, int held_fps) {
+    double per = fps60 ? 1000.0 / 60 : 1000.0 / 30;
+#ifndef DM_TEST_SCENE_AUTO_HOLD_IGNORED   // negative control of t_frame_step only: the game's period whatever the host holds
+    if (held_fps > 0 && 1000.0 / held_fps > per) per = 1000.0 / held_fps;
+#else
+    (void)held_fps;
+#endif
+    return per;
+}
+// A level's size from the boot size (w | h << 32): 8 - level eighths of each, even
+static uint64_t scene_auto_size(uint64_t boot, int level) {
+    unsigned w = (unsigned)((uint32_t)boot * (8u - (unsigned)level) / 8) & ~1u, h = (unsigned)((boot >> 32) * (8u - (unsigned)level) / 8) & ~1u;
+    return (uint64_t)h << 32 | w;
+}
 #ifndef FRAME_STEP_TEST
 static _Atomic uint64_t *g_page;
 static frame_mean g_mean;
@@ -199,6 +287,8 @@ static int g_realtime;   // the option realtime is on: the step is the measured 
 static int g_aspect;     // the option aspect is on: +40 follows the wide picture
 static int g_scene;      // the option scene is on: a size asked while the game runs is latched at the presents (scene_latch_step)
 static _Atomic uint64_t g_scene_want; static scene_latch g_latch; static char g_scene_max[32]; static uint64_t g_scene_boot;
+static int g_auto, g_auto_fps60; static scene_auto g_sa; static long g_sa_inj0 = -1, g_sa_inj1 = -1;   // DM_SCENE_AUTO (plan item 190), DM_SCENE_AUTO_INJECT
+int nvn_held_fps(void);   // gfx/nvn/hle_nvn.c: the rate the host holds frames at now (0: none)
 void dm_game_boot(void) {
     g_page = dm_host_page("main");
     if (!g_page) { LOG("[red] frame step: main has no host page (product built without rules.py HOSTREFS): the game's step stays at its chosen interval"); return; }
@@ -221,6 +311,13 @@ void dm_game_boot(void) {
         LOG("[scene size] %.0fx%.0f (%s)", sz[0], sz[1], from > 0 ? src : dm_opmode() ? "the game's own, docked" : "the game's own, handheld");
         g_scene_boot = g_latch.latched = (uint64_t)(uint32_t)sz[1] << 32 | (uint32_t)sz[0]; atomic_store(&g_scene_want, g_scene_boot);
         strlcpy(g_scene_max, max, sizeof g_scene_max); g_scene = 1;
+        // Plan item 190: the size from dropped frames. DM_SCENE_AUTO_INJECT=<a>-<b> (a diagnostic, as upstream's: the Mac drops no frames): the
+        // presents a to b count as dropped, the others as on time, whatever their intervals
+        { const char *au = getenv("DM_SCENE_AUTO"), *in = getenv("DM_SCENE_AUTO_INJECT"); g_auto = au && atoi(au) > 0;
+          if (g_auto && in && sscanf(in, "%ld-%ld", &g_sa_inj0, &g_sa_inj1) != 2) { g_sa_inj0 = g_sa_inj1 = -1; LOG("[red] DM_SCENE_AUTO_INJECT=%s: expected <first present>-<last present>", in); }
+          if (g_auto) { g_auto_fps60 = dm_option_on("fps60"); g_sa.period_ms = scene_auto_period(g_auto_fps60, 0); uint64_t l1 = scene_auto_size(g_scene_boot, 1), l2 = scene_auto_size(g_scene_boot, 2);
+              LOG("[scene size] from dropped frames (DM_SCENE_AUTO=1, plan item 190): %.0fx%.0f, then %ux%u and %ux%u; a frame over %.1f ms is dropped%s", sz[0], sz[1],
+                  (unsigned)(uint32_t)l1, (unsigned)(l1 >> 32), (unsigned)(uint32_t)l2, (unsigned)(l2 >> 32), g_sa.period_ms * 1.5, g_sa_inj0 >= 0 ? " (DM_SCENE_AUTO_INJECT)" : ""); } }
     } else if (getenv("DM_RENDER_RES")) LOG("[red] DM_RENDER_RES needs the option scene (DM_OPTIONS)");
     if (dm_option_on("output")) {
         char note[1024], max[32] = ""; FILE *f = dm_overlay_file("System/HeapSize/Product.Nin_NX_NVN.HeapDef.dm_output", note, sizeof note) ? fopen(note, "r") : NULL;
@@ -270,8 +367,27 @@ static void dr_note(void) {
             LOG("[scene size] the game's dynamic resolution over %u presents: renderer +0xccc%s%s", presents, b, other ? " and others" : ""); }
         ns = 0; presents = 0; other = 0; }
 }
+// Plan item 190: one present for the dropped-frame controller; a level's size asked as the command channel's (taken by the latch at this present)
+static void scene_auto_present(void) {
+    static uint64_t last; static long presents; uint64_t now = guest_ns();
+    double iv = last && now > last ? (now - last) * 1e-6 : 0; last = now; presents++;
+    if (iv > 250) iv = 0;   // loading or a pause: no reading, as the step's mean starts again there
+    double per = scene_auto_period(g_auto_fps60, nvn_held_fps());
+    if (per != g_sa.period_ms) { LOG("[scene size] frames judged against %.1f ms now (%s)", per * 1.5, per > g_sa.period_ms ? "the host holds the rate" : "the hold is over");
+                                 g_sa.period_ms = per; scene_auto_rest(&g_sa, now, 3 * SA_NS); }
+    if (g_sa_inj0 >= 0) iv = presents >= g_sa_inj0 && presents <= g_sa_inj1 ? 2 * g_sa.period_ms : g_sa.period_ms;
+    int was = g_sa.level, lv = scene_auto_step(&g_sa, iv, now);
+    if (lv == was) return;
+    uint64_t v = scene_auto_size(g_scene_boot, lv), ok = scene_live_size((unsigned)(uint32_t)v, (unsigned)(v >> 32), g_scene_max, g_scene_boot);
+    if (lv > was) LOG("[scene size] frames dropped: %.1f %% of the last 10 s, %.1f %% of 60 s: level %d, %ux%u", g_sa.fast * 100, g_sa.slow * 100, lv, (unsigned)(uint32_t)v, (unsigned)(v >> 32));
+    else if (g_sa.gave_up && was == SA_LEVELS - 1 && !lv) LOG("[scene size] %.0f %% of the frames still dropped after 60 s at the lowest size: not the size, back to %ux%u; judged again in %u min",
+                                                            g_sa.slow * 100, (unsigned)(uint32_t)v, (unsigned)(v >> 32), 1u << (g_sa.gave_up < 4 ? g_sa.gave_up : 4));
+    else LOG("[scene size] the frames held: level %d, %ux%u", lv, (unsigned)(uint32_t)v, (unsigned)(v >> 32));
+    if (ok) atomic_store(&g_scene_want, ok); else LOG("[red] scene size: level %d's %ux%u refused", lv, (unsigned)(uint32_t)v, (unsigned)(v >> 32));
+}
 void dm_game_present(void) {
     if (g_scene) dr_note();
+    if (g_scene && g_auto) scene_auto_present();
     if (g_scene) { int r = scene_latch_step(&g_latch, (uint8_t *)g_page, atomic_load(&g_scene_want)); uint64_t l = g_latch.latched;
         if (r & SCENE_WROTE) LOG("[scene size] %ux%u on the page; the game's mode-change path asked for one pick", (unsigned)(uint32_t)l, (unsigned)(l >> 32));
         if (r & SCENE_NO_RENDERER) LOG("[scene size] %ux%u on the page; the game has not picked a size yet and takes it at its first", (unsigned)(uint32_t)l, (unsigned)(l >> 32));

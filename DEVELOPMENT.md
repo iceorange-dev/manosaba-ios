@@ -233,15 +233,20 @@ decide):
   first); from 2026-10-30 the Android version of manosaba is under way (the user), item 301.
 
 The iPhone's frame rate (the current focus; the power split above decides what helps):
-- 190 a scene size driven by dropped frames, now that the scene size can change while the game runs (240; 960x540 holds 59.6 fps on the island
-  against 56.0). Upstream's controller counts only the first 3 frames of a run of dropped frames unless the run lasts 1 s; its GPU-time rule does
-  not fit, since under the power split the frame looks CPU-bound.
+- 190 (batch 183: `DM_SCENE_AUTO=1`, off by default) a scene size driven by dropped frames, now that the scene size can change while the game
+  runs (240; 960x540 holds 59.6 fps on the island against 56.0 on an iPhone 17 Pro). Upstream's controller counts only the first 3 frames of
+  a run of dropped frames unless the run lasts 1 s; its GPU-time rule does not fit, since under the power split the frame looks CPU-bound.
+  On the iPhone Air it changes nothing, by design: thermal state serious comes 44-58 s into Great Sky Island from a cool start, the app then
+  holds 30 fps and frames are judged against that; before it too few are late. Left: its case measured on a phone with room (the 17 Pro's
+  56 fps), then a setting in the app.
 - 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its middle,
   and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576).
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
   less traffic, but 66.6 ms frames without the commits. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read`
   without `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
-- 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79); the A/B on the phone is not run.
+- [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
+  difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
+  three runs without it, thermal state serious 46 s after start against 44-58 s, and 27.44 fps under the hold against 27.40-27.65.
 - 220 MetalFX frame interpolation: the G-buffer has no motion target, so the camera's motion would come from the depth and two frames' matrices,
   and moving things would ghost.
 - 221 fewer triangles through the game's own LOD and draw distance settings: the user's call on picture against frame rate.
@@ -510,6 +515,11 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   frames where the HUD's hearts glow red too (three shots in a row at the tree, 2.5 s apart); the frame between the fall and those has the
   hearts unlit and Link in his own colours. (Those runs' one red line, a 3D 8x8x8 texture in a 2D slot of pixel shader 9808aabbd3219e97, is
   apart from it: the shader samples that slot only under a flag, alpha alone.)
+- 324 the iPhone Air started hot (batch 183's fourth run in a row, thermal state serious at launch, so 30 fps from the boot's settings): 15.0
+  fps for about 150 s, every frame 66.7 ms with the GPU at p50 29 / p95 34 ms, and 28 fps (35 ms a frame, the same GPU times) once the state
+  fell to fair and the hold ended; the run before it, started the same way, dipped to 19-22 fps. Where the state reaches serious while the
+  game runs the same hold gives 27.4 fps (late frames 44 ms, not 66.7). To find: what a hold set at launch (DM_FPS from the settings) paces
+  differently from one set later (`mtl_fps_set`), on the Mac first.
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -1958,3 +1968,20 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   built (the new bundle), the phone not connected. Smoke on the new chain: Tears of the Kingdom's two red lines as before, s800 the same,
   s1300 and s1800 the same shots (0.65 % and 2.85 % of pixels past 8; looked at), instructions a draw as before (25,219-39,685); manosaba none,
   its frames the same (s600 the title page, looked at).
+- [x] batch 183 · 190, the scene size from dropped frames, and 229's A/B, on the iPhone Air (the user, 2026-11-10: the phone's items first).
+  `DM_SCENE_AUTO=1` with the option scene (`games/totk/frame_step.c` scene_auto_step, after upstream's 3D scale controller, `hle_oe.c`, MIT,
+  written anew): a present over 1.5 periods after the last is a dropped frame, 3 of a run counted until it lasts 1 s; windows of 2 s; down a
+  level when the last 10 s dropped over 5 % or the last 60 s over 1.5 %, up after 30 s without one (90 s when the raise before was knocked
+  back within 15 s); levels the boot size, 7/8 and 3/4 of it (1280x720 → 1120x630 → 960x540), asked as the command channel's live size.
+  Ours adds two things: at the lowest level with over half the last 60 s still dropped the level goes back to 0 and judging rests 2 min,
+  doubling to 16; and frames are judged against the rate the host holds (`nvn_held_fps`, `gfx/nvn/hle/window.inc`: the app's "Hold 30 fps
+  when hot", a movie's hold), found on the phone's first run, where every frame held at 30 would have counted as dropped.
+  `games/totk/tests/t_frame_step.c` +24 (104; `-DDM_TEST_SCENE_AUTO_COUNT_ALL` 1 fails, `_NO_GIVE_UP` 3, `_HOLD_IGNORED` 2). On the Mac
+  with `DM_SCENE_AUTO_INJECT=3200-4700` (those presents counted as dropped): down to 1120x630 and 960x540 while they are, back to 1120x630
+  and 1280x720 after, the game picking each size again; the three shots looked at (the scene softer at 540 rows, the HUD the same).
+  On the Air from a cool start, with and without it: 60 fps until thermal state serious 44 s after start, then the held 27.7 / 27.4 fps for
+  four minutes; no level changed (the log: "frames judged against 50.0 ms now"). 229 and the new 324: see the items. The phone's first run
+  was also this chain's and product's check there: the Mac's two red lines, the sampler probe "LOD bias applied" on the A19 Pro.
+  gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
+  connected. Smoke: Tears of the Kingdom's two red lines as before, s1300 a later moment of the same walk and s1800 the same shot (looked
+  at), instructions a draw as before (27,189-37,587); manosaba none, its frames the same.

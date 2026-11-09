@@ -8,7 +8,9 @@
 // 2; +56 left set after the pick (-DDM_TEST_SCENE_LATCH_NO_CLEAR) fails 3. The iOS setting "Native" (plan item 281): DM_RENDER_HEIGHT's lines at
 // most the largest 16:9 the heap holds (asked as they are, -DDM_TEST_SCENE_HEIGHT_NO_FIT, fails 2); the output from DM_DISPLAY_SIZE, fitted the
 // same way (ignored, -DDM_TEST_OUTPUT_NO_DISPLAY, fails 3); docked when a display size is reported and DM_OPMODE is unset (the mode left as it was,
-// -DDM_TEST_NATIVE_HANDHELD, fails 1).
+// -DDM_TEST_NATIVE_HANDHELD, fails 1). A scene size from dropped frames (plan item 190, scene_auto_step): every frame of a run counted
+// (-DDM_TEST_SCENE_AUTO_COUNT_ALL) fails 1; the lowest level kept however late the frames stay (-DDM_TEST_SCENE_AUTO_NO_GIVE_UP) fails 3; a rate
+// the host holds not taken for the period (-DDM_TEST_SCENE_AUTO_HOLD_IGNORED) fails 2.
 #include <stdio.h>
 #include <math.h>
 #define FRAME_STEP_TEST 1
@@ -126,6 +128,48 @@ int main(void) {
         expect("live size 1920x1080 (booted at 1920x1080): taken", 1, scene_live_size(1920, 1080, "", b1080) != 0, 0);
         expect("live size 2560x1440 with the overlay's note 2560x1440: taken", 1, scene_live_size(2560, 1440, "2560x1440", b720) != 0, 0);
         expect("live size 32x32: refused", 1, scene_live_size(32, 32, "", b720) == 0, 0); }
+    // A scene size from dropped frames (plan item 190, scene_auto_step): presents fed at their intervals, the level after each scenario
+    {   scene_auto a = {0}; uint64_t t = 1000000000ull;
+#define FEED(ms) (t += (uint64_t)((ms) * 1e6), scene_auto_step(&a, (ms), t))
+#define RUN(seconds, expr) do { double end_ = (double)t + (seconds) * 1e9; for (long i = 0; (double)t < end_; i++) { (void)i; double ms_ = (expr); FEED(ms_); } } while (0)
+        const double F = 1000.0 / 60;
+        RUN(70, F); expect("auto: 70 s at 60 fps: level 0", 0, a.level, 0);
+        // a screenshot every 10 s stalls 20 frames of 40 ms (0.8 s): 3 of each run count, 0.6 % of 10 s
+        RUN(130, i % 580 < 20 ? 40.0 : F);
+        expect("auto: 20 frames of 40 ms in a row every 10 s for 130 s: level 0 (3 of a run count) [-DDM_TEST_SCENE_AUTO_COUNT_ALL: lowered]", 0, a.level, 0);
+        memset(&a, 0, sizeof a);
+        RUN(9, i % 2 ? 2 * F : F); expect("auto: every other frame late for 9 s: still level 0 (five windows not full)", 0, a.level, 0);
+        RUN(3, i % 2 ? 2 * F : F); expect("... 12 s: level 1", 1, a.level, 0);
+        RUN(14, i % 2 ? 2 * F : F); expect("... 14 s more (3 s of rest, five windows): level 2, the lowest", 2, a.level, 0);
+        RUN(40, i % 10 ? F : 2 * F); expect("... a tenth of the frames late for 40 s: stays 2 (under half: not given up)", 2, a.level, 0);
+        RUN(28, F); expect("auto: then 60 fps for 28 s: still 2", 2, a.level, 0);
+        RUN(3, F); expect("... 15 windows without a drop: level 1", 1, a.level, 0);
+        RUN(5, F); RUN(12, i % 2 ? 2 * F : F); expect("auto: late again within 15 s of the raise: level 2", 2, a.level, 0);
+        RUN(3.5, F); RUN(60, F); expect("... 60 s at 60 fps after it: still 2 (the next raise needs 45 windows)", 2, a.level, 0);
+        RUN(32, F); expect("... 92 s: level 1", 1, a.level, 0);
+        RUN(40, F); expect("... 30 s more: level 0, and stays", 0, a.level, 0);
+        // every frame 33 ms (the phone at 30 fps whatever the size): down to the lowest, 60 s there, then back to 0 for 2 min
+        memset(&a, 0, sizeof a);
+        RUN(30, 2 * F); expect("auto: 30 fps throughout: level 2 after 30 s", 2, a.level, 0);
+        RUN(50, 2 * F); expect("... 50 s more at the lowest: still 2", 2, a.level, 0);
+        RUN(10, 2 * F); expect("... 60 s judged there with every frame late: back to level 0 [-DDM_TEST_SCENE_AUTO_NO_GIVE_UP: 2]", 0, a.level, 0);
+        RUN(110, 2 * F); expect("... judging rests 2 min: level 0 at 110 s [-DDM_TEST_SCENE_AUTO_NO_GIVE_UP: 2]", 0, a.level, 0);
+        RUN(45, 2 * F); expect("... after the rest it steps down again", 2, a.level, 0);
+        RUN(62, 2 * F); RUN(200, 2 * F); expect("... gives up again and rests 4 min: level 0 at 200 s [-DDM_TEST_SCENE_AUTO_NO_GIVE_UP: 2]", 0, a.level, 0);
+        // the host holds 30 fps (hot): 33 ms frames are on time against the held period
+        memset(&a, 0, sizeof a); a.period_ms = scene_auto_period(1, 30);
+        expect("auto: the period with the host holding 30 fps: 33.3 ms (16.7 without, 33.3 without fps60) [-DDM_TEST_SCENE_AUTO_HOLD_IGNORED: 16.7]", 1,
+               fabs(a.period_ms - 2 * F) < 1e-9 && fabs(scene_auto_period(1, 0) - F) < 1e-9 && fabs(scene_auto_period(0, 0) - 2 * F) < 1e-9 && fabs(scene_auto_period(1, 90) - F) < 1e-9, 0);
+        RUN(70, 2 * F); expect("... 70 s of 33 ms frames while held: level 0 [-DDM_TEST_SCENE_AUTO_HOLD_IGNORED: lowered]", 0, a.level, 0);
+        memset(&a, 0, sizeof a); RUN(12, i % 2 ? 2 * F : F); int lv = a.level; for (int i = 0; i < 2000; i++) scene_auto_step(&a, 0, t += 16000000);
+        expect("auto: presents without a reading (0 ms) change nothing", lv, a.level, 0);
+#undef RUN
+#undef FEED
+        const uint64_t b720 = (uint64_t)720 << 32 | 1280, b900 = (uint64_t)900 << 32 | 1600;
+        expect("auto sizes from 1280x720: level 1 = 1120x630", 1, scene_auto_size(b720, 1) == ((uint64_t)630 << 32 | 1120), 0);
+        expect("... level 2 = 960x540, level 0 the boot size", 1, scene_auto_size(b720, 2) == ((uint64_t)540 << 32 | 960) && scene_auto_size(b720, 0) == b720, 0);
+        expect("auto sizes from 1600x900: 1400x786 and 1200x674 (even), each a live size", 1, scene_auto_size(b900, 1) == ((uint64_t)786 << 32 | 1400)
+               && scene_auto_size(b900, 2) == ((uint64_t)674 << 32 | 1200) && scene_live_size(1400, 786, "", b900) && scene_live_size(1200, 674, "", b900), 0); }
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }
