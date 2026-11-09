@@ -435,6 +435,7 @@ static UISlider *panel_slider(NSString *key, float lo, float hi, float def, NSAr
     [st addArrangedSubview:panel_row(@"Hold 30 fps when hot", panel_switch_on(@"dm.hot_hold"))];
     [st addArrangedSubview:panel_row(@"Render resolution (next launch)", panel_choice(@"dm.render_height", @[@"Game", @"Native", @"900", @"720", @"540"], @[@0, @-1, @900, @720, @540]))];
     [st addArrangedSubview:panel_row(@"MetalFX upscaling", panel_switch(@"dm.metalfx"))];
+    [st addArrangedSubview:panel_row(@"Wide screen (next launch)", panel_switch(@"dm.widen"))];   // plan item 320g (main.m: DM_WIDEN at launch)
     [st addArrangedSubview:panel_row(@"Show frame rate", panel_switch(@"dm.perf_line"))];
     if (g_pad) {
         [st addArrangedSubview:panel_row(@"Camera sensitivity", panel_slider(@"dm.look_sensitivity", 0.25f, 3, 1, @[@0.25, @0.5, @0.75, @1, @1.25, @1.5, @2, @2.5, @3]))];
