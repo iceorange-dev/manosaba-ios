@@ -2,7 +2,7 @@
 #include "core.h"
 #include <string.h>
 
-int g_red_once[121];
+int g_red_once[123];
 _Atomic uint64_t g_cur_frame;
 uint64_t g_stat_draw, g_stat_pass;
 _Atomic long g_pd_a0 = -2, g_pd_a1;

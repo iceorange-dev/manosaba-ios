@@ -305,6 +305,19 @@ static MTLSamplerAddressMode wrapm(int w) {
         case 6: return MTLSamplerAddressModeMirrorRepeat; }
     return MTLSamplerAddressModeRepeat;
 }
+// Whether this GPU applies what a sampler asks (plan item 318, samp_probe.h): probed once, at the first sampler with an LOD bias or a min / max
+// reduction, and a red line once for each it ignores (those samplers draw without it: the shader's emulation is for the next chain change)
+static void samp_caps_note(int bias, int red) {
+    static dispatch_once_t once; static int rc = -1, cap[5];
+    dispatch_once(&once, ^{
+        rc = samp_probe(g_dev, cap); int a10 = 0; if (@available(macOS 26.0, iOS 26.0, *)) a10 = [g_dev supportsFamily:MTLGPUFamilyApple10];
+        if (rc > 0) MLOG("[red] sampler probe on %s failed (%d)", g_dev.name.UTF8String, rc);
+        else if (!rc) MLOG("sampler probe on %s (Apple10 %s): LOD bias %s, min / max reduction %s / %s (plan item 318)", g_dev.name.UTF8String, a10 ? "yes" : "no",
+                           cap[0] ? "applied" : "ignored", cap[1] ? "applied" : "ignored", cap[2] ? "applied" : "ignored"); });
+    if (rc) return;
+    if (bias && !cap[0]) RED_ONCE(121, "samplers with an LOD bias: this GPU ignores it (sampler probe), they draw without it");
+    if (red && !(cap[1] && cap[2])) RED_ONCE(122, "samplers with a min / max reduction: this GPU ignores it (sampler probe), they filter as plain linear");
+}
 static int g_samp_old_once;
 // Border colours Metal does not have (plan item 161, the census before shader variants; MacNativeGames b6231e6 / 874a32d, #49: the grass map's
 // border 0.5 read as transparent black): Metal clamps to transparent black, opaque black or opaque white only. Each other colour of a sampler that
@@ -340,6 +353,7 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // Caller holds g_rmu
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
     // LOD bias and min / max reduction (NVN values 0 average, 1 min, 2 max = MTLSamplerReductionMode's) came with macOS / iOS 26: the bias was stored
     // and never applied (Tears of the Kingdom sets it on 861 samplers). Metal ignores the reduction with nearest filtering, as NVN does
+    if (p.lod_bias != 0.f || p.reduction) samp_caps_note(p.lod_bias != 0.f, p.reduction != 0);
     if (@available(macOS 26.0, iOS 26.0, *)) { d.lodBias = p.lod_bias < -16.f ? -16.f : p.lod_bias > 15.999f ? 15.999f : p.lod_bias; d.reductionMode = (MTLSamplerReductionMode)p.reduction; }
     else if ((p.reduction || p.lod_bias != 0.f) && !g_samp_old_once++) MLOG("[red] sampler LOD bias %g / reduction %d need macOS / iOS 26: ignored", p.lod_bias, (int)p.reduction);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;

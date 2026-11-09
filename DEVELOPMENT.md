@@ -434,7 +434,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   ours warns only at install); 317c the translator's own warnings in the reflection's notes (an untraceable bindless texture removed with its
   results 0, a global access with no storage buffer, dropped float atomics, unimplemented instructions; S2Arm found 398 dropped float reductions
   this way; a chain change).
-- 318 sampler LOD bias and min / max reduction on GPUs before Apple10 (S2Arm's probes: reduction ignored as plain linear on an M4 Pro and an M3, LOD
+- 318 (the probe: batch 161; the emulation with the next chain change) sampler LOD bias and min / max reduction on GPUs before Apple10 (S2Arm's probes: reduction ignored as plain linear on an M4 Pro and an M3, LOD
   bias ignored on the M3; `descriptors.inc` sets both on any GPU from OS 26, Tears of the Kingdom biases 861 samplers; item 4 assumed the OS version
   enough): a probe at start (two mips, LOD bias 1), the GPU family and a red line; the bias emulated in the shader next, the reduction only when
   counted.
@@ -1606,3 +1606,13 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   again: with the next chain change. gfx 183 / 183 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs;
   Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, the shots the same scenes as batch 159's (s1300 a
   moment apart); manosaba none.
+- [x] batch 161 · 318 (the probe): `gfx/nvn/mtl/samp_probe.h` reads in one compute dispatch whether this GPU applies a sampler's LOD bias (a 4x4
+  R32Float texture, mip 0 at 0 and mip 1 at 1, read at level(0) through a nearest sampler with bias 1) and its min / max reduction (0 and 1 read
+  between them through linear samplers), with a control (no bias reads mip 0, level(1) mip 1; S2Arm's probe and finding, Apache-2.0, written anew:
+  the reduction ignored on an M4 Pro and an M3, the bias on the M3). It runs once, at the first sampler with either, and its result is logged with
+  the GPU family; a red line once for each the GPU ignores, those samplers drawing without it (`gfx/tests/t_samp_probe.m` 4 on an Apple10 GPU,
+  printed only elsewhere; `-DDM_TEST_SAMP_PROBE_NO_BIAS` 1 fails). On the M5: "Apple10 yes: LOD bias applied, min / max reduction applied /
+  applied". The emulation in the shader (a function-constant variant per draw) needs the shaders built again: with the next chain change. gfx 184 /
+  184 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke:
+  Tears of the Kingdom's two red lines as before and the probe's line, s1300 the cave behind Zelda (batch 160's the torch; looked at before);
+  manosaba none.

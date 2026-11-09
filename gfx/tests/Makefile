@@ -111,6 +111,8 @@ t_wide_loads: t_wide_loads.m
 	clang -O1 -Wall -fobjc-arc -o $@ t_wide_loads.m -framework Metal -framework Foundation
 t_fp16_probe: t_fp16_probe.m ../nvn/mtl/fp16_probe.h
 	clang -O1 -Wall -fobjc-arc -o $@ t_fp16_probe.m -framework Metal -framework Foundation
+t_samp_probe: t_samp_probe.m ../nvn/mtl/samp_probe.h
+	clang -O1 -Wall -fobjc-arc -o $@ t_samp_probe.m -framework Metal -framework Foundation
 t_aniso: t_aniso.c ../nvn/nvn_aniso.h
 	clang -O1 -Wall -Werror -o $@ t_aniso.c
 t_perfline: t_perfline.c ../nvn/nvn_perfline.h
@@ -376,6 +378,7 @@ run: \
 	t_fpcontract \
 	t_wide_loads \
 	t_fp16_probe \
+	t_samp_probe \
 	t_feedback_pool \
 	t_fout \
 	t_fbx \
@@ -708,6 +711,7 @@ run: \
 	python3 -I ../tools/msl_helpers.py t_fpcontract.metal > t_fpcontract_inl.metal && ./t_fpcontract t_fpcontract.metal t_fpcontract_inl.metal
 	python3 -I ../tools/msl_helpers.py t_wide_loads.metal --wide > t_wide_loads_w.metal && ./t_wide_loads t_wide_loads.metal t_wide_loads_w.metal
 	./t_fp16_probe
+	./t_samp_probe
 	@status=0; python3 -I ../tools/msl_helpers.py t_wide_loads.metal --wide-across > t_wide_loads_a.metal && ./t_wide_loads t_wide_loads.metal t_wide_loads_a.metal > t_wide_loads_a.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' t_wide_loads_a.log)" -ne 3 ]; then \
 	   cat t_wide_loads_a.log; echo "t_wide_loads_across: unexpected negative-control result ($$status)"; exit 1; \
