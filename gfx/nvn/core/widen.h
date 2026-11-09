@@ -31,5 +31,17 @@ static inline int widen_len(int n, int extra, int base) {   // n widened by extr
 #endif
     return n + 2 * (int)llround((double)e / (2.0 * base));
 }
+// A rectangle of the game's texels (x, y, w, h) on storage rx x ry times the game's size, as scissors are mapped (plan item 320g: the present's
+// crop): the start floored, the end ceiled, kept inside maxw x maxh. Tears of the Kingdom handheld crops 1280x720 of its 1920x1080 display
+// texture: 1564x720 of the 2346x1080 storage
+static inline void widen_map_rect(const int in[4], double rx, double ry, int maxw, int maxh, int out[4]) {
+#ifdef DM_TEST_WIDEN_CROP_GAME   // negative control of t_widen only: the game's rectangle as it is
+    rx = ry = 1;
+#endif
+    long x0 = (long)floor(in[0] * rx), y0 = (long)floor(in[1] * ry), x1 = (long)ceil((in[0] + in[2]) * rx), y1 = (long)ceil((in[1] + in[3]) * ry);
+    if (x1 > maxw) x1 = maxw;
+    if (y1 > maxh) y1 = maxh;
+    out[0] = (int)x0; out[1] = (int)y0; out[2] = (int)(x1 - x0); out[3] = (int)(y1 - y0);
+}
 static inline int widen_width(const widen_t *w, int tw, int th) { return w->extra_w && widen_family(tw, th) ? widen_len(tw, w->extra_w, 1920) : tw; }
 static inline int widen_height(const widen_t *w, int tw, int th) { return w->extra_h && widen_family(tw, th) ? widen_len(th, w->extra_h, 1080) : th; }

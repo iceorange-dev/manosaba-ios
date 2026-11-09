@@ -290,6 +290,10 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     PD("X ser=%llu", t->serial);
     id<MTLTexture> src = tex_mtl(t);
     if (!src) { RED_ONCE(8, "cannot create MTLTexture for the present texture"); return 0; }
+    // The game's crop on widened storage (plan item 320g): mapped by the storage's ratio, so the widened picture is shown, not its left 16:9 part
+    int wcrop[4];
+    if (__builtin_expect(crop && (crop[2] || crop[3]) && t->d.width && t->d.height && tex_is_widened(src, t), 0)) {
+        widen_map_rect(crop, (double)src.width / t->d.width, (double)src.height / t->d.height, (int)src.width, (int)src.height, wcrop); crop = wcrop; }
     // DM_NVN_REGLUM=x0,y0,x1,y1:file (normalized coordinates): read back this region on every present and record "present sequence number, present time ns, region mean luminance, subsampled grayscale thumbnail (hex)" (diagnostic: verify that animation speed is independent of frame rate).
     // A separate command buffer is queued after this frame's rendering (the same queue executes in submit order); does not wait for the GPU and does not disturb frame pacing
     static int rl = -1; static float rr[4]; static FILE *rlf; static pthread_mutex_t rlmu = PTHREAD_MUTEX_INITIALIZER;

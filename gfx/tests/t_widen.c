@@ -19,5 +19,8 @@ int main(void) {
           widen_height(&d, 1920, 1080) == 1350 && widen_width(&d, 1280, 720) == 1280);
     widen_t s = widen_for_screen(1920, 1080), t = widen_for_screen(1935, 1080);
     check("a 16:9 screen and one within 1 % widen nothing", s.extra_w == 0 && s.extra_h == 0 && t.extra_w == 0 && widen_width(&t, 1280, 720) == 1280);
+    { int c[4] = {0, 0, 1280, 720}, o[4], f[4] = {0, 0, 1920, 1080}, of[4]; widen_map_rect(c, 2346.0 / 1920, 1, 2346, 1080, o); widen_map_rect(f, 2346.0 / 1920, 1, 2346, 1080, of);
+      check("the present's crop 1280x720 of a 1920x1080 texture on its 2346x1080 storage: 1564x720; the whole 1920x1080: 2346x1080 [-DDM_TEST_WIDEN_CROP_GAME: as it is]",
+            o[0] == 0 && o[1] == 0 && o[2] == 1564 && o[3] == 720 && of[2] == 2346 && of[3] == 1080); }
     printf("t_widen: %d checks, %d failed\n", n, fail); return fail != 0;
 }
