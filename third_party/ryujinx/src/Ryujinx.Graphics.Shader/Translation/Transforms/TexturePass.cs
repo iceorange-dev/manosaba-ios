@@ -69,15 +69,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Transforms
                     Operand scaledCoord = Local();
                     Operand[] callArgs;
 
-                    if (stage == ShaderStage.Fragment)
-                    {
-                        callArgs = [Const(functionId), texOp.GetSource(coordsIndex + index), Const(samplerIndex), Const(index)
-                        ];
-                    }
-                    else
-                    {
-                        callArgs = [Const(functionId), texOp.GetSource(coordsIndex + index), Const(samplerIndex)];
-                    }
+                    // (dm, plan item 320f) the coordinate's axis in every stage (its scale; in the fragment stage also its fragment coordinate)
+                    callArgs = [Const(functionId), texOp.GetSource(coordsIndex + index), Const(samplerIndex), Const(index)];
 
                     node.List.AddBefore(node, new Operation(Instruction.Call, 0, scaledCoord, callArgs));
 
@@ -128,7 +121,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Transforms
                         }
                     }
 
-                    Operand[] callArgs = [Const(functionId), dest, Const(samplerIndex)];
+                    Operand[] callArgs = [Const(functionId), dest, Const(samplerIndex), Const(texOp.Index)];   // (dm, plan item 320f) the component: its axis
 
                     node.List.AddAfter(node, new Operation(Instruction.Call, 0, unscaledSize, callArgs));
                 }

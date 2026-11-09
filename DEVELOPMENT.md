@@ -465,7 +465,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   Kingdom's prologue no dispatch writes a 16:9 image and no copy or clear meets widened storage, 0-1.2 draws a frame into targets not widened
   sample it; clears and copies mapped (batch 169); compute and a copy's destination widened after its source (S2Arm's rules) when a frame
   needs them, the census watching.
-  320f the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
+  320f (the chain's part: batch 170) the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
   the screen's edge, the UV extension of translucent overlays. Found in batch 169: the chain already carries Ryujinx's resolution scale (the
   support buffer's `render_scale`): 3,028 fragment shaders divide the fragment coordinate by `render_scale[0]`, integer texel reads go through
   `TexelFetchScale` and size queries through `TextureSizeUnscale` with `render_scale[1 + i]`, i the texture's descriptor index (images after
@@ -1750,3 +1750,17 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   What 320f needs from the chain for it is written there. gfx 193 / 193 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture,
   audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (no widening): Tears of the Kingdom's two red lines as before,
   s1300 and s1800 the same scenes a moment apart (looked at), instructions a draw as before (26,788-39,481); manosaba none.
+- [x] batch 170 · 320f, the chain's part: chain ce89a37d8939 → 8f8b45e7aaca, every shader translated again (31,415 Mac and iOS libraries,
+  the Android bundle's 2,740). The translator scales x and y apart (S2Arm's change, written anew in `third_party/ryujinx`): the support buffer
+  gains `render_scale_y` after its last field (Std140, 16 bytes a field: 1,392, which both hosts fill with 1, `mtl/args.inc`
+  `SUPPORT_RENDER_SCALE_Y`, `vk/vk_bind.c`); the fragment coordinate's y is divided by `render_scale_y[0]`, and `TexelFetchScale` (now with
+  the coordinate's axis in every stage) and `TextureSizeUnscale` (the queried component's) take their axis' table. `dmsh_build.py` gives each
+  texture and image binding Ryujinx's scale index (its constant buffer slot and handle found once in the translator's lists, an image's after
+  the textures that are not arrays) and each reflection `frag_coord` (Ryujinx's UsesFragCoord); the host keeps them (`nvn_refl` `six`,
+  `frag_coord`). All 78,458 texture and 67 image bindings got an index; 3,028 shaders read the fragment coordinate. With every scale 1 the
+  output is as before. `gfx/tests/t_scale_msl.py` 4 (the y table at 1,392 where the hosts fill it, measured from the MSL struct; 3,048
+  fragment coordinate y divided by the y table and none by the x one; all 929 scale helpers read the axis' table; the upscale's texture index
+  0); the chain before fails all 4. gfx 194 / 194 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests,
+  both IPAs (with the new libraries); Android: built (the new bundle), the phone not connected. Smoke on the new chain (no widening): Tears of
+  the Kingdom's two red lines as before, s1300 and s1800 the same scenes a moment apart, instructions a draw as before (27,091-39,280);
+  manosaba none, its s600 the same title page (looked at).

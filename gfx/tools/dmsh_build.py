@@ -359,6 +359,19 @@ def img_size_queries(src):
         done.append(nm)
     return src, done
 
+def scale_index(nm, res):
+    """Ryujinx's resolution-scale index of a texture or image argument (plan item 320f; Translation/Transforms/TexturePass.cs: render_scale[1 + i]
+    and render_scale_y[1 + i], i the texture's place among the shader's texture descriptors, an image's after the textures that are not arrays):
+    the argument's constant buffer slot and handle (ResourceManager.cs names them <stage>_t[...]_tcb_<handle> or _cb<slot>_<handle>, tcb = slot -1)
+    found once in the translator's lists (res: Program.cs, the order of ShaderProgramInfo), else None"""
+    m = re.match(r'[a-z]+_([ti])\w*?_(?:cb(\d+)|tcb)_([0-9A-F]+)', nm)
+    if not m: return None
+    cb = int(m.group(2)) if m.group(2) else -1; h = int(m.group(3), 16)
+    lst = res['images'] if m.group(1) == 'i' else res['textures']
+    hits = [i for i, t in enumerate(lst) if t['cbuf_slot'] == cb and t['handle'] == h]
+    if len(hits) != 1: return None
+    return hits[0] + (sum(1 for t in res['textures'] if t['array'] <= 1) if m.group(1) == 'i' else 0)
+
 def reflect(key, stage, msl, res):
     """MSL argument buffer struct member → replay reflection: kind (same as nvn_refl.h) + NVN slot number + argument buffer member index"""
     body = re.search(r'struct spvDescriptorSetBuffer0\s*\{(.*?)\};', msl, re.S)
@@ -378,7 +391,9 @@ def reflect(key, stage, msl, res):
         else:
             d = decode_tex(nm)
             if not d: e.update(kind='?')
-            else: e.update(kind='img' if re.match(r'[a-z]+_i', nm) else ('tbuf' if 'texture_buffer' in ty else 'tex'), reg=d[0])
+            else:
+                e.update(kind='img' if re.match(r'[a-z]+_i', nm) else ('tbuf' if 'texture_buffer' in ty else 'tex'), reg=d[0])
+                if e['kind'] in ('tex', 'img'): e['scale_ix'] = scale_index(nm, res)   # plan item 320f (None: not found once)
         binds.append(e)
     # Storage buffers: SPIR-V binding number → c0 offset → NVN storage buffer slot (c0 base: vertex 0x110, compute 0x310, pixel 0x510, 0x10 per slot)
     base = {'vs': 0x110, 'cs': 0x310, 'ps': 0x510}.get(stage)   # storage buffer base of the hull / domain stages is not measured: a storage buffer there gets no slot
@@ -602,7 +617,8 @@ def finish(key, w, j, c1):
             'threadgroup_size': j.get('local'), 'c1': c1.hex(), 'c2': C2, 'depth_mode': DEPTH, 'notes': res['notes'], 'drv_reads': dr, 'drv_unfillable': unfillable(dr, j['stage']),
             'bindings': reflect(key, j['stage'], src, res),
             'vertex_inputs': [{'location': int(m.group(2)), 'msl_type': m.group(1)} for m in re.finditer(r'(\w+)\s+\w+\s*\[\[attribute\((\d+)\)\]\]', src)],
-            'raster': raster_facts(j['stage'], src), 'vs_pad': pad, 'alpha_test': j['stage'] == 'ps' and ALPHA}
+            'raster': raster_facts(j['stage'], src), 'vs_pad': pad, 'alpha_test': j['stage'] == 'ps' and ALPHA,
+            'frag_coord': bool(res.get('uses_frag_coord'))}   # plan item 320f: the shader reads the fragment coordinate (Ryujinx's UsesFragCoord)
     if vi_locs: refl['vi_entry'] = 'main0_vi'; refl['vi_int'] = vi_locs
     if j['stage'] == 'vs': refl['screen_locn'] = dmsh_fetch.screen_locn(src)   # outputs holding the projected screen position (the vertex side of a projected fetch proof)
     write_refl(key, refl)

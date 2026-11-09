@@ -369,7 +369,10 @@ namespace Ryujinx.Graphics.Shader.Translation
             Operand samplerIndex = Argument(1);
             Operand index = GetScaleIndex(context, samplerIndex);
 
-            Operand scale = context.Load(StorageKind.ConstantBuffer, 0, Const((int)SupportBufferField.RenderScale), index);
+            // (dm, plan item 320f) Argument(2) is the coordinate's axis in every stage: its own scale
+            Operand scale = context.ConditionalSelect(Argument(2),
+                context.Load(StorageKind.ConstantBuffer, 0, Const((int)SupportBufferField.RenderScaleY), index),
+                context.Load(StorageKind.ConstantBuffer, 0, Const((int)SupportBufferField.RenderScale), index));
 
             Operand scaleIsOne = context.FPCompareEqual(scale, ConstF(1f));
             Operand lblScaleNotOne = Label();
@@ -378,7 +381,7 @@ namespace Ryujinx.Graphics.Shader.Translation
             context.Return(input);
             context.MarkLabel(lblScaleNotOne);
 
-            int inArgumentsCount;
+            int inArgumentsCount = 3;
 
             if (_stage == ShaderStage.Fragment)
             {
@@ -397,12 +400,6 @@ namespace Ryujinx.Graphics.Shader.Translation
 
                 context.Return(context.FP32ConvertToS32(inputWithBias));
                 context.MarkLabel(lblScaleGreaterOrEqualZero);
-
-                inArgumentsCount = 3;
-            }
-            else
-            {
-                inArgumentsCount = 2;
             }
 
             Operand inputScaled2 = context.FPMultiply(context.IConvertS32ToFP32(input), scale);
@@ -420,7 +417,10 @@ namespace Ryujinx.Graphics.Shader.Translation
             Operand samplerIndex = Argument(1);
             Operand index = GetScaleIndex(context, samplerIndex);
 
-            Operand scale = context.FPAbsolute(context.Load(StorageKind.ConstantBuffer, 0, Const((int)SupportBufferField.RenderScale), index));
+            // (dm, plan item 320f) Argument(2): the queried component (0 the width, 1 the height), its axis' scale
+            Operand scale = context.FPAbsolute(context.ConditionalSelect(Argument(2),
+                context.Load(StorageKind.ConstantBuffer, 0, Const((int)SupportBufferField.RenderScaleY), index),
+                context.Load(StorageKind.ConstantBuffer, 0, Const((int)SupportBufferField.RenderScale), index)));
 
             Operand scaleIsOne = context.FPCompareEqual(scale, ConstF(1f));
             Operand lblScaleNotOne = Label();
@@ -433,7 +433,7 @@ namespace Ryujinx.Graphics.Shader.Translation
 
             context.Return(context.FP32ConvertToS32(inputUnscaled));
 
-            return new Function(ControlFlowGraph.Create(context.GetOperations()).Blocks, "TextureSizeUnscale", true, 2, 0);
+            return new Function(ControlFlowGraph.Create(context.GetOperations()).Blocks, "TextureSizeUnscale", true, 3, 0);
         }
 
         private Operand GetScaleIndex(EmitterContext context, Operand index)

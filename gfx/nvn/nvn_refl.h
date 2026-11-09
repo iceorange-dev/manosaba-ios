@@ -19,6 +19,7 @@ typedef struct {
     uint8_t decl_tt;         // The texture type the shader declares (MTLTextureType, multisample included): the type check at binding (nvn_mtl.m tex_fit)
     uint16_t reg, aid;       // D3D register number, index within the argument buffer
     uint16_t off;            // SBUFU: byte offset of the address in the uniform buffer
+    uint8_t six;             // TEX / IMG: Ryujinx's resolution-scale index + 1 (render_scale[six] / render_scale_y[six]; 0: none; plan item 320f)
 } nvn_rbind;
 typedef struct {
     int nb, abi, nv;         // Binding count, argument buffer slot, vertex input count
@@ -26,6 +27,7 @@ typedef struct {
     struct { uint8_t loc, ct, nvn; } v[NVN_REFL_MAXV];   // loc: Metal vertex attribute slot (DXBC input register); nvn: NVN vertex attribute number (the n of HLSL semantic ATTRn)
     uint16_t tg[3];          // Compute thread group size (none = 0)
     uint8_t route_b, has_c1; // Route B; has a c1 constant segment
+    uint8_t frag_coord;      // B: reads the fragment coordinate (the reflection's frag_coord; plan item 320f)
     uint8_t ubo_addr;        // B: has an SBUFU binding (its argument depends on uniform buffer contents: argument blocks are not reused)
     uint8_t drv_read[3];     // B: reads driver segments c0 / c2 at runtime (indices 0, 2; gathered statically from the MSL at packaging time, tools/dmsh_build.py drv_reads)
     uint16_t c1_len;         // Length of the c1 constant segment (B; 0 / 256 / 512 / 768 across the whole library)

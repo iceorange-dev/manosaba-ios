@@ -24,6 +24,7 @@ namespace Ryujinx.Graphics.Shader
         RenderScale,
         TfeOffset,
         TfeVertexCount,
+        RenderScaleY,   // (dm, plan item 320f) the y axis' render_scale: the fragment coordinate's y, texel reads' second coordinate, size queries' height
     }
 
     public struct SupportBuffer
@@ -42,6 +43,7 @@ namespace Ryujinx.Graphics.Shader
         public static readonly int ComputeRenderScaleOffset;
         public static readonly int TfeOffsetOffset;
         public static readonly int TfeVertexCountOffset;
+        public static readonly int RenderScaleYOffset;
 
         public const int FragmentIsBgraCount = 8;
         // One for the render target, 64 for the textures, and 8 for the images.
@@ -68,6 +70,7 @@ namespace Ryujinx.Graphics.Shader
             ComputeRenderScaleOffset = GraphicsRenderScaleOffset + FieldSize;
             TfeOffsetOffset = OffsetOf(ref instance, ref instance.TfeOffset);
             TfeVertexCountOffset = OffsetOf(ref instance, ref instance.TfeVertexCount);
+            RenderScaleYOffset = OffsetOf(ref instance, ref instance.RenderScaleY);
         }
 
         internal static StructureType GetStructureType()
@@ -80,7 +83,8 @@ namespace Ryujinx.Graphics.Shader
                 new StructureField(AggregateType.S32, "frag_scale_count"),
                 new StructureField(AggregateType.Array | AggregateType.FP32, "render_scale", RenderScaleMaxCount),
                 new StructureField(AggregateType.Vector4 | AggregateType.S32, "tfe_offset"),
-                new StructureField(AggregateType.S32, "tfe_vertex_count")
+                new StructureField(AggregateType.S32, "tfe_vertex_count"),
+                new StructureField(AggregateType.Array | AggregateType.FP32, "render_scale_y", RenderScaleMaxCount)
             ]);
         }
 
@@ -95,5 +99,8 @@ namespace Ryujinx.Graphics.Shader
 
         public Vector4<int> TfeOffset;
         public Vector4<int> TfeVertexCount;
+
+        // (dm, plan item 320f) render_scale for the y axis, the same indices
+        public Array73<Vector4<float>> RenderScaleY;
     }
 }

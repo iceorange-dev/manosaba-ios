@@ -46,6 +46,7 @@ void vk_bind_init(void) {
     vk_host_buffer(64u << 10, u, &g_zero.buf, &g_zero.mem, &g_zero.cpu);
     vk_host_buffer(64u << 10, u, &g_support.buf, &g_support.mem, &g_support.cpu);
     for (int i = 0; i < 73; i++) *(float *)(g_support.cpu + 192 + 16 * i) = 1.0f;   // render_scale[i].x (Ryujinx SupportBuffer: the Metal backend's support_buf)
+    for (int i = 0; i < 73; i++) *(float *)(g_support.cpu + 1392 + 16 * i) = 1.0f;  // render_scale_y[i].x (plan item 320f; mtl/args.inc SUPPORT_RENDER_SCALE_Y)
     vk_host_buffer(C1_BANK + BANK_TAIL, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &g_c1.buf, &g_c1.mem, &g_c1.cpu);
 }
 static VkDeviceSize c1_offset(const vk_sh *s) {

@@ -41,10 +41,14 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
         if (![bs isKindOfClass:[NSArray class]]) FAIL("missing bindings");
         if (bs.count > NVN_REFL_MAXB) FAIL("%lu bindings, exceeds the limit %d", (unsigned long)bs.count, NVN_REFL_MAXB);
         o->route_b = 1; o->abi = 0;   // spirv-cross set 0 → [[buffer(0)]]
+        o->frag_coord = [j[@"frag_coord"] boolValue];   // plan item 320f (absent in no reflection of this chain)
         for (NSDictionary *b in bs) {
             NSString *k = b[@"kind"]; nvn_rbind *r = &o->b[o->nb];
             id rg = b[@"reg"]; int reg = [rg isKindOfClass:[NSNumber class]] ? [rg intValue] : -1, aid = [b[@"arg_id"] intValue];
             r->aid = (uint16_t)aid; r->reg = reg < 0 ? 0 : (uint16_t)reg;
+            { id si = b[@"scale_ix"]; int v = [si isKindOfClass:[NSNumber class]] ? [si intValue] : -1;   // plan item 320f: render_scale[1 + v]
+              if (v > 71) FAIL("B binding %s: resolution-scale index %d past render_scale's 73", [b[@"msl_name"] UTF8String], v);
+              r->six = v >= 0 ? (uint8_t)(v + 1) : 0; }
             if ([k isEqualToString:@"cbuf"]) r->kind = NVN_RB_CBUF;
             else if ([k isEqualToString:@"samp"]) r->kind = NVN_RB_SAMP;
             else if ([k isEqualToString:@"samp_tex"]) r->kind = NVN_RB_SAMPT;

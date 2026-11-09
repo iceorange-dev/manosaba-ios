@@ -65,11 +65,15 @@ static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex,
 }
 // Static constant buffers of route B: the Ryujinx support_buffer (layout in Ryujinx.Graphics.Shader/SupportBuffer.cs: alpha_test u32, is_bgra u32[8],
 // viewport_inverse f4, viewport_size f4, frag_scale_count i32, render_scale f32[73]..., each field aligned to 16 bytes) and the all-0 driver constant segment (64 KB = the upper bound declared by shaders)
+// render_scale_y's offset (plan item 320f, the translator's SupportBuffer.cs: after tfe_offset 1360 and tfe_vertex_count 1376, Std140's 16 bytes a
+// field; tools/tests/t_support_layout.py checks it against the chain's MSL)
+#define SUPPORT_RENDER_SCALE_Y 1392
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;
     b = [g_dev newBufferWithLength:65536 options:MTLResourceStorageModeShared]; res_add(b);   // All 0 when newly created
     const int render_scale_off = 192;   // Measured MSL layout: alpha_test 0, is_bgra[8] 16, viewport_inverse 144, viewport_size 160, frag_scale_count 176, render_scale float4[73] 192 (take .x)
     for (int i = 0; i < 73; i++) *(float *)((uint8_t *)b.contents + render_scale_off + 16 * i) = 1.0f;
+    for (int i = 0; i < 73; i++) *(float *)((uint8_t *)b.contents + SUPPORT_RENDER_SCALE_Y + 16 * i) = 1.0f;   // render_scale_y (plan item 320f)
     return b;
 }
 static uint64_t support_gpu(void) { static uint64_t gpu; if (!gpu) gpu = support_buf().gpuAddress; return gpu; }
