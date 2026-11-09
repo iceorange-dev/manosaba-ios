@@ -29,6 +29,10 @@ run: \
 	$(B)/t_cmdchan_partial \
 	$(B)/t_codesig \
 	$(B)/t_codesig_broken \
+	$(B)/t_provexp \
+	$(B)/t_provexp_local \
+	$(B)/t_mxseen \
+	$(B)/t_mxseen_never \
 	$(B)/t_cmdchan_noreopen \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
@@ -689,6 +693,16 @@ run: \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ signed with it false" $(B)/t_codesig_broken.log; then \
 	   cat $(B)/t_codesig_broken.log; echo "t_codesig_broken: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_codesig_broken: a key present with <false/> read as true, as expected"
+	$(B)/t_provexp
+	@status=0; $(B)/t_provexp_local > $(B)/t_provexp_local.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_provexp_local.log)" -ne 1 ]; then \
+	   cat $(B)/t_provexp_local.log; echo "t_provexp_local: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_provexp_local: the expiry read as local time is hours off, as expected"
+	TMPDIR="$(abspath $(B))" $(B)/t_mxseen
+	@status=0; TMPDIR="$(abspath $(B))" $(B)/t_mxseen_never > $(B)/t_mxseen_never.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_mxseen_never.log)" -ne 2 ]; then \
+	   cat $(B)/t_mxseen_never.log; echo "t_mxseen_never: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_mxseen_never: every report taken as new counts one twice, as expected"
 	@status=0; $(B)/t_sead_broken > $(B)/t_sead_broken.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ an address past A's end" $(B)/t_sead_broken.log; then \
 	   cat $(B)/t_sead_broken.log; echo "t_sead_broken: unexpected negative-control result ($$status)"; exit 1; \
@@ -941,6 +955,14 @@ $(B)/t_cheats_norw: t_cheats.c ../game/cheats.c ../game/cheat_vm.c ../cheat_vm.h
 	clang -O1 -Wall -Wno-unused-function -DDM_TEST_CHEATS_NO_REWRITE_CHECK -I.. -o $@ t_cheats.c ../game/cheat_vm.c ../runtime/plat_apple.c
 $(B)/t_padmap_posall: t_padmap.c ../gamepad_map.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_FACE_POS_ALL -I.. -o $@ t_padmap.c
+$(B)/t_mxseen: t_mxseen.c ../../ios/Sources/mxseen.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_mxseen.c
+$(B)/t_mxseen_never: t_mxseen.c ../../ios/Sources/mxseen.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_MX_SEEN_NEVER -o $@ t_mxseen.c
+$(B)/t_provexp: t_provexp.c ../../ios/Sources/provexp.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_provexp.c
+$(B)/t_provexp_local: t_provexp.c ../../ios/Sources/provexp.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_PROVEXP_LOCAL -o $@ t_provexp.c
 $(B)/t_codesig: t_codesig.c ../../ios/Sources/codesig.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_codesig.c
 	printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>com.apple.developer.kernel.increased-memory-limit</key>\n\t<true/></dict></plist>\n' > $(B)/ent_true.plist

@@ -428,7 +428,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   efficiency cores); the sleeps counted per return address first, on the iPhone and the K100. 316b (batch 159; from 316's counts): Tears of the Kingdom's
   64,000-122,000 SleepThread(20 µs) calls a second return at once (`sleep_precise` does not sleep within 20 µs of the deadline; none of them in a
   run): what sleeping them does to its frame and its CPU, measured on the Mac and the iPhone first.
-- 317 diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
+- 317 (317a, 317b: batch 160; 317c with the next chain change) diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
   span (counted once when delivered again) and named at the next launch (ours knows only that a session ended in the foreground; whether a
   free-account install receives payloads is to be seen); 317b the signature's expiry shown in the app 48 hours ahead (`embedded.mobileprovision`;
   ours warns only at install); 317c the translator's own warnings in the reflection's notes (an untraceable bindless texture removed with its
@@ -1589,3 +1589,20 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   and Metal 3, host 212 / 212, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the
   Kingdom's two red lines as before, its 30 fps prologue CPU 95-97 → 74-79 % and 0.22-0.28 → 0.17-0.18 W against batch 158's, s1300 Zelda with the
   torch (looked at); manosaba none, its shots as batch 158's.
+- [x] batch 160 · 317a, 317b (S2Arm 4c0bec5, Apache-2.0, written anew). 317a MetricKit (`ios/Sources/metrickit.m`): at launch the app subscribes and
+  takes the reports the system kept (the earlier ones are handed again at every launch): a metric report's exit counts (in the foreground normally,
+  at the memory limit, by the watchdog, bad access, illegal instruction, abnormally; in the background those and memory pressure, CPU limit, a locked
+  file, a background task's time) and a diagnostic report's crashes (exception type, code, signal, termination reason), hangs (their length) and CPU
+  and disk-write exceptions are logged, red when something ended badly, and each report is saved whole as JSON in Documents/metrickit, once
+  (`ios/Sources/mxseen.h`: by its kind and time span; `host/tests/t_mxseen.c` 4, `-DDM_TEST_MX_SEEN_NEVER` 2 fail). The API names are the iOS 27.2
+  SDK's headers' (MXMetricManager is marked to be deprecated there for a Swift MetricManager; the Objective-C one still builds without warnings).
+  On the iPhone Air the first launch logged "the system had 0 earlier metric and 0 earlier diagnostic reports"; whether a development or free
+  account's install gets reports (a metric report comes at most once a day) is to be seen in the next days' logs. 317b the signature's expiry:
+  `ios/Sources/provexp.h` reads ExpirationDate from the XML inside the CMS-signed embedded.mobileprovision (UTC; `host/tests/t_provexp.c` 5,
+  `-DDM_TEST_PROVEXP_LOCAL` 1 fails), the boot log gives it ("the signature expires 2026-11-15 19:50 UTC, 156 hours from now"), and with less than
+  48 hours left a line in the device's language (Traditional or Simplified Chinese, Japanese, else English) shows over the game for 12 s below the
+  top row of controls, touches going through (`DM_TEST_PROV_HOURS=<h>` takes the expiry that many hours ahead: on the Air it showed and was gone
+  21 s after start, looked at through the command channel's `padshot`, which now draws every view over the game). 317c needs the shaders built
+  again: with the next chain change. gfx 183 / 183 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs;
+  Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, the shots the same scenes as batch 159's (s1300 a
+  moment apart); manosaba none.

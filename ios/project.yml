@@ -71,6 +71,7 @@ targets:
         com.apple.developer.ubiquity-container-identifiers: ["iCloud.${DM_BUNDLE_ID}"]
     dependencies:
       - sdk: Network.framework   # iCloud first sync checks the network (host/cloud/cloud.m first_listing_ok)
+      - sdk: MetricKit.framework   # how sessions ended and the crash / hang reports (Sources/metrickit.m)
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

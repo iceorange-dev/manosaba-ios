@@ -324,15 +324,35 @@ static void pad_label(const char *s, CGFloat x, CGFloat y, CGFloat size, CGFloat
 }
 @end
 static __weak DmPadView *g_pad;
+// A line over the game for 12 s when the signature expires within 48 hours (plan item 317b; main.m reads the date): the app does not open after it
+extern long long dm_prov_expiry_at;
+static void prov_banner(UIView *box) {
+    long long now = (long long)time(NULL), ex = dm_prov_expiry_at; if (!ex || ex - now >= 48 * 3600) return;
+    int h = ex > now ? (int)((ex - now + 3599) / 3600) : 0; NSString *lang = NSLocale.preferredLanguages.firstObject ?: @"en", *t;
+    if ([lang hasPrefix:@"zh-Hans"]) t = [NSString stringWithFormat:@"签名将在 %d 小时后到期，之后 App 无法打开：请重新签名。", h];
+    else if ([lang hasPrefix:@"zh"]) t = [NSString stringWithFormat:@"簽章將在 %d 小時後到期，之後 App 無法開啟：請重新簽署。", h];
+    else if ([lang hasPrefix:@"ja"]) t = [NSString stringWithFormat:@"署名の有効期限まであと %d 時間です。期限後はアプリを開けません。再署名してください。", h];
+    else t = [NSString stringWithFormat:@"The app's signature expires in %d hours; after that the app will not open. Sign it again.", h];
+    UILabel *l = [UILabel new]; l.text = t; l.numberOfLines = 0; l.textAlignment = NSTextAlignmentCenter; l.textColor = UIColor.whiteColor;
+    l.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold]; l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.65];
+    l.layer.cornerRadius = 10; l.clipsToBounds = YES; l.userInteractionEnabled = NO; l.translatesAutoresizingMaskIntoConstraints = NO;
+    [box addSubview:l];
+    [NSLayoutConstraint activateConstraints:@[[l.topAnchor constraintEqualToAnchor:box.safeAreaLayoutGuide.topAnchor constant:64],
+        [l.centerXAnchor constraintEqualToAnchor:box.centerXAnchor], [l.widthAnchor constraintLessThanOrEqualToAnchor:box.safeAreaLayoutGuide.widthAnchor multiplier:0.8]]];
+    LOG("front: the signature expires in %d hours: a line shown for 12 s", h);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [UIView animateWithDuration:0.5 animations:^{ l.alpha = 0; } completion:^(BOOL f) { (void)f; [l removeFromSuperview]; }]; });
+}
 extern void (*dm_padshot_hook)(const char *path);   // host/front/cmdchan.c
-static void pad_shot(const char *path) {   // the command channel's padshot (plan item 315e): the controls' view and its layers as drawn now, over black
+static void pad_shot(const char *path) {   // the command channel's padshot (plan items 315e, 317b): the views over the game (the controls and their layers, a line
+                                           // such as prov_banner's) as drawn now, over black (the game's own layer draws nothing here)
     NSString *p = @(path);
     dispatch_async(dispatch_get_main_queue(), ^{
         DmPadView *v = g_pad; if (!v) { LOG("[red] [cmd] padshot %s: no on-screen controls", p.UTF8String); return; }
         [v refresh]; [v.layer displayIfNeeded];   // the layers where the controls are now (a self-test moves them without touches), the view drawn
-        CGRect b = v.bounds;
+        UIView *top = v.superview ?: v; CGRect b = top.bounds;
         UIImage *img = [[[UIGraphicsImageRenderer alloc] initWithBounds:b] imageWithActions:^(UIGraphicsImageRendererContext *c) {
-            [UIColor.blackColor setFill]; UIRectFill(b); [v.layer renderInContext:c.CGContext]; }];
+            [UIColor.blackColor setFill]; UIRectFill(b); for (UIView *s in top.subviews) if (s != g_view) { CGContextSaveGState(c.CGContext); CGContextTranslateCTM(c.CGContext, s.frame.origin.x, s.frame.origin.y); [s.layer renderInContext:c.CGContext]; CGContextRestoreGState(c.CGContext); } }];
         BOOL ok = [UIImagePNGRepresentation(img) writeToFile:p atomically:YES];
         LOG("[cmd] padshot %s: %s (%.0fx%.0f pt%s)", p.UTF8String, ok ? "written" : "[red] not written", b.size.width, b.size.height, v.hidden ? ", the controls hidden" : "");
     });
@@ -527,6 +547,7 @@ UIView *front_ios_view(CGRect frame, UIScreen *screen) {
         [box addGestureRecognizer:any];
         LOG("front: on-screen controls (touch \"pad\"%s)", getenv("DM_TOUCH") ? ", from DM_TOUCH" : "");
     }
+    prov_banner(box);
     g_panel_tap = [DmPanelTap new];   // a three-finger tap opens the settings panel in any game (plan item 148); the touches still reach the game
     UITapGestureRecognizer *tap3 = [[UITapGestureRecognizer alloc] initWithTarget:g_panel_tap action:@selector(tap:)]; tap3.numberOfTouchesRequired = 3; tap3.cancelsTouchesInView = NO;
     [box addGestureRecognizer:tap3];

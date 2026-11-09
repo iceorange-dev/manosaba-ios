@@ -14,6 +14,8 @@
 #import <UIKit/UIKit.h>
 #import <Metal/Metal.h>
 #include "codesig.h"
+#include "provexp.h"
+long long dm_prov_expiry_at;   // the signature's expiry, Unix seconds (0: not known); front_ios.m's line 48 hours ahead
 #include "envfile.h"
 #include "logstamp.h"
 #include "rundiag.h"
@@ -164,6 +166,8 @@ void dm_exit_note(void) { run_mark(0); }   // host/hle/hle_lifecycle.c dm_host_s
 // ---------- Game data ----------
 static NSString *support_dir(void) { return NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES)[0]; }
 static NSString *docs_dir(void) { return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0]; }
+const char *dm_docs_path(void) { return g_docs; }   // metrickit.m
+void dm_metrickit_start(void);                      // metrickit.m (plan item 317a)
 static NSString *bundle_dir(void) { return NSBundle.mainBundle.resourcePath; }   // read-only; holds the data only when packaged with it
 // The first RomFS that passes the profile's check; why = the reason of the last one tried
 static __weak UILabel *g_prep_label; static NSString *g_prep_head;   // the screen shown while the data is located (SceneDelegate showGameOrMissing)
@@ -514,7 +518,7 @@ static int gpu_supported(char *why, size_t n) {
     plog("[red] memory warning #%d (application state %ld): footprint %llu MB, GPU %llu MB, %llu MB left before the limit", n, (long)a.applicationState, fp,
          g_host_up ? mtl_gpu_allocated_mb() : 0ull, (unsigned long long)(os_proc_available_memory() >> 20));
 }
-- (BOOL)application:(UIApplication *)a didFinishLaunchingWithOptions:(NSDictionary *)o { (void)a; (void)o; return YES; }
+- (BOOL)application:(UIApplication *)a didFinishLaunchingWithOptions:(NSDictionary *)o { (void)a; (void)o; dm_metrickit_start(); return YES; }
 @end
 
 static void env_said(const char *name, const char *value) { plog("boot: env.txt: %s=%s", name, value); }
@@ -557,5 +561,15 @@ int main(int argc, char *argv[]) {
       plog("boot: memory limit %llu MB (footprint %llu MB + %llu MB available), RAM %llu MB; the increased memory limit in the app's signature: %s", (unsigned long long)((fp + av) >> 20),
            (unsigned long long)(fp >> 20), (unsigned long long)(av >> 20), (unsigned long long)(NSProcessInfo.processInfo.physicalMemory >> 20),
            iml > 0 ? "yes" : iml == 0 ? "no (the signer left it out)" : "no entitlements found"); }
+    // The signature's expiry (plan item 317b, provexp.h): logged, and the front end shows a line when less than 48 hours are left
+    { NSString *pp = [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"]; NSData *pv = pp ? [NSData dataWithContentsOfFile:pp] : nil; long long ex = 0;
+      if (pv && dm_prov_expiry(pv.bytes, pv.length, &ex)) {
+          long long now = (long long)time(NULL); time_t et = (time_t)ex; struct tm g; gmtime_r(&et, &g); char ds[32]; strftime(ds, sizeof ds, "%Y-%m-%d %H:%M", &g);
+          dm_prov_expiry_at = ex;
+          plog("boot: %sthe signature expires %s UTC, %.0f hours from now%s", dm_prov_warn(ex, now) ? "[red] " : "", ds, (ex - now) / 3600.0, dm_prov_warn(ex, now) ? ": sign the app again" : "");
+      } else plog("boot: no expiry date for the signature (%s)", pv ? "embedded.mobileprovision has none" : "no embedded.mobileprovision: signed without a profile");
+      const char *th = getenv("DM_TEST_PROV_HOURS");   // test switch: the signature taken to expire that many hours from now (the front end's line)
+      if (th) { dm_prov_expiry_at = (long long)time(NULL) + atoll(th) * 3600; plog("boot: DM_TEST_PROV_HOURS=%s: the signature taken to expire in %s hours", th, th); }
+    }
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(App.class)); }
 }
