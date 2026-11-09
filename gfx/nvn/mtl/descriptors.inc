@@ -59,11 +59,16 @@ static int samp_border_custom(const samp_par *p) {
     return !((c[0] == 0 && c[1] == 0 && c[2] == 0 && (c[3] == 0 || c[3] == 1)) || (c[0] == 1 && c[1] == 1 && c[2] == 1 && c[3] == 1));
 }
 static int g_border_any;              // such a sampler has been registered (until then nothing below is checked)
+static uint8_t *g_sreg_lb;            // the sampler's LOD bias is carried by the shaders, not the sampler (lb_emu, lod_bias.inc; plan item 318)
+static int g_lb_any;                  // such a sampler has been registered
+static int g_lb_force = -2, g_lb_probe;   // DM_SAMP_LB_EMU (1 on, 0 off, -1 not set); the probe found the sampler's bias ignored (samp_caps_note)
+static int lb_emu(void);
 void mtl_reg_samp(int sid, const samp_par *sp) { @autoreleasepool {
     int id_ = sid; if (id_ < 0) return;
     pthread_mutex_lock(&g_rmu);
     if (id_ >= g_nsreg) { int n = id_ + 256; g_sreg = realloc(g_sreg, n * sizeof *g_sreg); g_sreg_ok = realloc(g_sreg_ok, n); g_sview = realloc(g_sview, n * sizeof *g_sview); g_srid = realloc(g_srid, n * sizeof *g_srid);
-        memset(g_sreg_ok + g_nsreg, 0, n - g_nsreg); memset(g_sview + g_nsreg, 0, (n - g_nsreg) * sizeof *g_sview); memset(g_srid + g_nsreg, 0, (n - g_nsreg) * sizeof *g_srid); g_nsreg = n; }
+        memset(g_sreg_ok + g_nsreg, 0, n - g_nsreg); memset(g_sview + g_nsreg, 0, (n - g_nsreg) * sizeof *g_sview); memset(g_srid + g_nsreg, 0, (n - g_nsreg) * sizeof *g_srid);
+        g_sreg_lb = realloc(g_sreg_lb, n); memset(g_sreg_lb + g_nsreg, 0, n - g_nsreg); g_nsreg = n; }
     // A replaced sampler may still be named (its gpuResourceID) by argument blocks of submissions the GPU has not run yet: released after them, as a
     // texture slot's old view (acnh-mobile 029dd30, MIT; plan item 195)
 #ifndef DM_TEST_SAMP_RELEASE_AT_ONCE   // negative control of t_samp only: released at once, as before
@@ -74,6 +79,7 @@ void mtl_reg_samp(int sid, const samp_par *sp) { @autoreleasepool {
     g_reg_gen++;
     g_sreg[id_] = *sp; g_sreg_ok[id_] = samp_border_custom(sp) ? 2 : 1;   // 2: a border colour Metal lacks (plan item 161)
     if (g_sreg_ok[id_] == 2) g_border_any = 1;
+    g_sreg_lb[id_] = sp->lod_bias != 0.f && lb_emu(); if (g_sreg_lb[id_]) g_lb_any = 1;   // plan item 318
     pthread_mutex_unlock(&g_rmu);
 } }
 static MTLTextureType ttype(int target, int fallback) {
@@ -312,12 +318,21 @@ static void samp_caps_note(int bias, int red) {
     static dispatch_once_t once; static int rc = -1, cap[5];
     dispatch_once(&once, ^{
         rc = samp_probe(g_dev, cap); int a10 = 0; if (@available(macOS 26.0, iOS 26.0, *)) a10 = [g_dev supportsFamily:MTLGPUFamilyApple10];
+        g_lb_probe = rc < 0 || (!rc && !cap[0]);   // the bias goes into the shaders (lb_emu): ignored, or no lodBias before OS 26
         if (rc > 0) MLOG("[red] sampler probe on %s failed (%d)", g_dev.name.UTF8String, rc);
         else if (!rc) MLOG("sampler probe on %s (Apple10 %s): LOD bias %s, min / max reduction %s / %s (plan item 318)", g_dev.name.UTF8String, a10 ? "yes" : "no",
                            cap[0] ? "applied" : "ignored", cap[1] ? "applied" : "ignored", cap[2] ? "applied" : "ignored"); });
     if (rc) return;
-    if (bias && !cap[0]) RED_ONCE(121, "samplers with an LOD bias: this GPU ignores it (sampler probe), they draw without it");
+    if (bias && !cap[0] && !lb_emu()) RED_ONCE(121, "samplers with an LOD bias: this GPU ignores it (sampler probe), they draw without it (DM_SAMP_LB_EMU=0)");
     if (red && !(cap[1] && cap[2])) RED_ONCE(122, "samplers with a min / max reduction: this GPU ignores it (sampler probe), they filter as plain linear");
+}
+// Whether samplers' LOD biases are carried by the shaders (plan item 318, lod_bias.inc): DM_SAMP_LB_EMU=1 forces it (the unit test; a GPU that applies
+// them), 0 turns it off; otherwise where samp_probe found this GPU ignores them, or before OS 26 (no lodBias). Caller holds g_rmu
+static int lb_emu(void) {
+    if (g_lb_force == -2) { const char *e = getenv("DM_SAMP_LB_EMU"); g_lb_force = e && *e ? atoi(e) != 0 : -1; }
+    int on = g_lb_force >= 0 ? g_lb_force : (samp_caps_note(0, 0), g_lb_probe);
+    static int said; if (on && !said++) MLOG("sampler LOD biases carried by the shaders (%s; plan item 318)", g_lb_force == 1 ? "DM_SAMP_LB_EMU=1" : "the sampler probe: this GPU ignores them");
+    return on;
 }
 static int g_samp_old_once;
 // Border colours Metal does not have (plan item 161, the census before shader variants; MacNativeGames b6231e6 / 874a32d, #49: the grass map's
@@ -355,8 +370,8 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // Caller holds g_rmu
     // LOD bias and min / max reduction (NVN values 0 average, 1 min, 2 max = MTLSamplerReductionMode's) came with macOS / iOS 26: the bias was stored
     // and never applied (Tears of the Kingdom sets it on 861 samplers). Metal ignores the reduction with nearest filtering, as NVN does
     if (p.lod_bias != 0.f || p.reduction) samp_caps_note(p.lod_bias != 0.f, p.reduction != 0);
-    if (@available(macOS 26.0, iOS 26.0, *)) { d.lodBias = p.lod_bias < -16.f ? -16.f : p.lod_bias > 15.999f ? 15.999f : p.lod_bias; d.reductionMode = (MTLSamplerReductionMode)p.reduction; }
-    else if ((p.reduction || p.lod_bias != 0.f) && !g_samp_old_once++) MLOG("[red] sampler LOD bias %g / reduction %d need macOS / iOS 26: ignored", p.lod_bias, (int)p.reduction);
+    if (@available(macOS 26.0, iOS 26.0, *)) { d.lodBias = g_sreg_lb[sid] ? 0.f : p.lod_bias < -16.f ? -16.f : p.lod_bias > 15.999f ? 15.999f : p.lod_bias; d.reductionMode = (MTLSamplerReductionMode)p.reduction; }   // g_sreg_lb: the shader carries it (318)
+    else if ((p.reduction || (p.lod_bias != 0.f && !g_sreg_lb[sid])) && !g_samp_old_once++) MLOG("[red] sampler LOD bias %g / reduction %d need macOS / iOS 26: ignored", p.lod_bias, (int)p.reduction);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     border_census(&p, d.borderColor);
 #ifndef DM_TEST_BORDER_OFF   // negative control of t_border only: the nearest of Metal's three, as before

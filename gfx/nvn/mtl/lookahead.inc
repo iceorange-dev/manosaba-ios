@@ -60,6 +60,7 @@ void nvn_be_state(uint32_t op, const void *a, int c) {   // what the backend mar
     if (c & ST_ARGS_ALL) args_dirty_all();
     for (int st = 0; st < 6; st++) if (c & ST_ARGS(st)) g_args_dirty[st] = 1;
     if ((c & ST_HANDLES) && g_border_any) { const p_bind_handles *b = a; if (b->stage < 2) border_rebind(b->stage, b->h, b->n); }
+    if ((c & ST_HANDLES) && g_lb_any) { const p_bind_handles *b = a; if (b->stage < 2 || b->stage == 5) lb_rebind(b->stage, b->h, b->n); }   // plan item 318
 }
 static int state_op(uint32_t op, const void *a) {   // a command that only sets state (gfx/nvn/core/state.c st_op), and what the backend marks after it
     int c = st_op(op, a);

@@ -77,7 +77,7 @@ static NvShader *border_variant(NvShader *sh, int st) {
     if (!sh->bdv) sh->bdv = [NSMutableDictionary dictionary];
     v = sh;   // a failure is kept as the plain shader: not tried again
     NSString *base = [NSString stringWithFormat:@"%@/%s", g_msl_dir, sh->key];
-    NSString *src = [NSString stringWithContentsOfFile:[base stringByAppendingString:@".metal"] encoding:NSUTF8StringEncoding error:nil];
+    NSString *src = sh->msl ?: [NSString stringWithContentsOfFile:[base stringByAppendingString:@".metal"] encoding:NSUTF8StringEncoding error:nil];   // msl: an LOD bias variant's (318)
     NSData *jd = [NSData dataWithContentsOfFile:[base stringByAppendingString:@".json"]];
     NSDictionary *j = jd ? [NSJSONSerialization JSONObjectWithData:jd options:0 error:nil] : nil;
     NSMutableArray<NSString *> *names = [NSMutableArray array];
@@ -106,6 +106,7 @@ static __unsafe_unretained id<MTLRenderPipelineState> pso_get(NvProg *pr, MTLRen
     (void)unused;
     __unsafe_unretained NvShader *vs = pr->sh[0], *fs = pr->sh[1];
     if (!vs) { RED_ONCE(13, "program has no vertex shader (or it is not mapped)"); return nil; }
+    if (g_lb_any) { if (S.lb_bound[0]) vs = lb_variant(vs, 0); if (S.lb_bound[1] && fs) fs = lb_variant(fs, 1); }   // plan item 318 (before the border's: it rewrites this source)
     if (g_border_any) { if (S.border_bound[0]) vs = border_variant(vs, 0); if (S.border_bound[1] && fs) fs = border_variant(fs, 1); }   // plan item 161
     pso_key k; pso_key_fill(&k, vs, fs, g_pass.cfmt, g_pass.dfmt, g_pass.sfmt, g_pass.samples, g_pso_lmap != NULL);
     if (g_pso_lmap) { memcpy(k.lmap, g_pso_lmap, 8); k.fsfn = (__bridge void *)g_pso_fsfn; }

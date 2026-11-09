@@ -434,10 +434,11 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   ours warns only at install); 317c the translator's own warnings in the reflection's notes (an untraceable bindless texture removed with its
   results 0, a global access with no storage buffer, dropped float atomics, unimplemented instructions; S2Arm found 398 dropped float reductions
   this way; a chain change).
-- 318 (the probe: batch 161; the emulation with the next chain change) sampler LOD bias and min / max reduction on GPUs before Apple10 (S2Arm's probes: reduction ignored as plain linear on an M4 Pro and an M3, LOD
+- 318 (the probe: batch 161; the bias in the shader: batch 181) sampler LOD bias and min / max reduction on GPUs before Apple10 (S2Arm's probes: reduction ignored as plain linear on an M4 Pro and an M3, LOD
   bias ignored on the M3; `descriptors.inc` sets both on any GPU from OS 26, Tears of the Kingdom biases 861 samplers; item 4 assumed the OS version
-  enough): a probe at start (two mips, LOD bias 1), the GPU family and a red line; the bias emulated in the shader next, the reduction only when
-  counted.
+  enough): a probe at start (two mips, LOD bias 1), the GPU family and a red line; the bias carried by a shader variant where the probe finds it
+  ignored (`mtl/lod_bias.inc`). Left: a device before Apple10 to see it on (the user, 2026-11-10: none for now; checked on the Mac forced on),
+  the MSL an iOS app would carry for it (as `border_msl.txt`), sample_compare's bias; the reduction only when counted.
 - 319 (batch 162) the install with the player's own free account (S2Arm's flow, `ios/run.sh` against it): the team and the one paired phone found without
   `local.env`, `-allowProvisioningDeviceRegistration -destination-timeout 120`, a weekly renewal by signing again instead of building (27 s, 7 s and
   3 s there), data pushed by content hash, readable errors for an unclicked keychain prompt and a missing iOS platform.
@@ -1907,3 +1908,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   199 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
   Smoke: Tears of the Kingdom's two red lines as before, s1300 and s1800 slightly different moments of the same scenes (looked at),
   instructions a draw as before (27,234-38,852); manosaba none.
+- [x] batch 181 · 318, the sampler LOD bias in the shader (S2Arm's rule, Apache-2.0, written anew): where the sampler probe found the GPU ignores
+  the bias, or before OS 26 (`DM_SAMP_LB_EMU=1` forces it, `0` turns it off; `lb_emu`, `descriptors.inc`), a sampler with a bias is made without
+  it and a stage that samples through it (vertex, fragment, compute) gets a variant from the shader's MSL (`gfx/nvn/mtl/lod_bias.inc`, beside
+  border_variant, which now rewrites that variant's source): level(l) → level((l) + b), bias(x) → bias((x) + b), a gradient's derivatives ×
+  2^b, none → bias(b) in a fragment shader and level(b) elsewhere, as Vulkan's rule adds the sampler's bias to an explicit level of detail too
+  (λ' = λbase + sampler.bias + shaderOp.bias) and Metal applies a sampler's lodBias to level() samples (the probe's read). sample_compare is left
+  (counted), gather has no level of detail. `gfx/tests/t_lodbias.m` 16 (a 4x4 texture with three coloured mips, a nearest sampler with bias 1:
+  each form reads the mip its bias selects, the sampler itself without it, the variant built from a .metal and .json once, the stage marked
+  while bound; `-DDM_TEST_LB_VARIANT_OFF` 1 fails). Tears of the Kingdom's prologue on the Mac with `DM_SAMP_LB_EMU=1` (the M5 applies the
+  bias itself, so the frames should match): 21 variants (bias -1) to frame 3,300, none failed, the same two red lines; s800 and s1800 as batch
+  180's without it (s1800: 0.03 % of pixels past 8), s1300 a slightly different moment of the same scene (looked at); 30 fps as before.
+  gfx 200 / 200 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
+  connected. Smoke (the M5's probe finds the bias applied, so the emulation is off there): Tears of the Kingdom's two red lines as before,
+  s1300 an earlier moment of the same walk and s1800 the same shot a little later (looked at), instructions a draw as before
+  (25,391-39,635); manosaba none.

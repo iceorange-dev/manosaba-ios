@@ -131,6 +131,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/shaders.inc` | The shader mapping table, programs, pipeline lists |
 | `nvn/mtl/descriptors.inc` | Texture and sampler descriptor pools, argument arenas |
 | `nvn/mtl/pipeline.inc` | Draw state, vertex formats, blending, pipeline states, the pipeline prediction |
+| `nvn/mtl/lod_bias.inc` | Sampler LOD bias in the shader on a GPU that ignores the sampler's (plan item 318) |
 | `nvn/mtl/border_warm.inc` | Sampler border colours in the shader (plan item 161), the pipeline warm-up, depth-stencil states |
 | `nvn/mtl/args.inc` | Argument buffers: dummy resources, bindings, the driver segment fill |
 | `nvn/mtl/uniform_rename.inc` | Inline uniform updates' backend side: the argument blocks they make stale, writing them to memory |
@@ -231,6 +232,7 @@ All are environment variables. The Mac host fills `DM_NVN_SHMAP` and `DM_MSL_DIR
 | `DM_NVN_TEXCENSUS=1` | One line per new texture shape of the kinds whose layout or sampling rules came from outside checks: cube arrays, LINEAR_RENDER_TARGET without LINEAR, MINIMAL_LAYOUT, packaged 3D, linear block-compressed, formats with their own swizzle (sampled or as render targets) |
 | `DM_NVN_WB_IDLE=1` | An experiment (plan item 94): a texture the GPU wrote in a CPU-visible pool and left alone for 30 submissions is written back to its storage, and one whose storage the CPU writes afterwards is uploaded from it again. Off: it changes more than the terrain it is for (94a) |
 | `DM_NVN_WB_IDLE_SUBS=<n>` | With `DM_NVN_WB_IDLE=1`: write back after n idle submissions instead of 30 (1: after every GPU write; a diagnostic) |
+| `DM_SAMP_LB_EMU=1` or `0` | Sampler LOD biases carried by the shaders (a variant per bound bias, built from the shader's MSL) whatever the sampler probe found, or never. By default they are where the probe found the GPU ignores the sampler's bias (plan item 318) |
 | `DM_NVN_ANISO=<2..16>` | Anisotropic filtering raised to that on mipmapped linear samplers without a depth compare or a reduction (most of Tears of the Kingdom's ask for 1); off by default, which keeps the shots comparable with the console's |
 | `DM_NVN_COUNTS=1` | Counters in the power summary: draws sampling their own attachment, timestamp reports, ClearTexture, passes without a draw, passes drawing only a top-left part, counter reads and svcs a second |
 | `DM_NVN_TS_LATE_US=<µs>` | Report counter timestamps that much later (the game sees a slower GPU) |

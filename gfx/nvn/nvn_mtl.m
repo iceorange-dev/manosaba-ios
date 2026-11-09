@@ -236,6 +236,7 @@ static const char *cctx_snap(void);   // What is in this submission (printed int
 #include "mtl/shaders.inc"
 #include "mtl/descriptors.inc"
 #include "mtl/pipeline.inc"
+#include "mtl/lod_bias.inc"
 #include "mtl/border_warm.inc"
 #include "mtl/args.inc"
 #include "mtl/uniform_rename.inc"

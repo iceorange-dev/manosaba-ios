@@ -22,6 +22,7 @@ typedef struct {
     int restart_set, restart_en; uint32_t restart_idx;   // SetPrimitiveRestart (restart_set: the game has set it; its default is not documented)
     float blend_color[4], alpha_ref; int64_t copy_stride, copy_image_stride;
     uint8_t border_bound[2];   // the vertex / fragment stage has a sampler bound whose border colour Metal lacks (border_rebind, plan item 161)
+    uint8_t lb_bound[6];       // the stage (0 vertex, 1 fragment, 5 compute) has a sampler bound whose LOD bias its shader carries (lb_rebind, plan item 318)
 } nvn_draw_state;
 // Render passes: SetRenderTargets opens a new pass; clears before the first command in the pass are folded into the load action
 typedef struct {

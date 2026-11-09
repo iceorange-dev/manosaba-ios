@@ -409,6 +409,7 @@ static void dispatch(const p_dispatch *dp) {
     NvShader *cs = prog_get(S.prog)->sh[5];
     if (!cs) { RED_ONCE(28, "dispatched program has no compute shader (or it is not mapped)"); return; }
     if (__builtin_expect(key_watch_n != 0, 0)) key_watch_check(cs, 5);   // DM_NVN_KEY_WATCH (322)
+    if (g_lb_any && S.lb_bound[5]) cs = lb_variant(cs, 5);   // the bound samplers' LOD biases in the kernel (plan item 318)
     const void *k = (__bridge const void *)cs;
     id<MTLComputePipelineState> ps = hm_get_id(&g_cps, &k);
     if (!ps) {
