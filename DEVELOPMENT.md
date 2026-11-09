@@ -409,7 +409,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 314c the Vulkan vertex formats checked for VERTEX_BUFFER support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and
   the swapchain acquire bounded (100 ms, the present skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the
   window goes; S2Arm 4c0bec5): on the K100 when it is connected again (314a, b, d, e: batch 153).
-- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154; 315b, 315c: batch 155) 315b a mid-submission chunk
+- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154; 315b, 315c: batch 155; 315d, 315e: batch 156) 315b a mid-submission chunk
   committed only when the GPU has run out of work (S2Arm: "the GPU waited 5-40 ms with the next one already committed"; 310's A/B of 75 against 150
   draws showed no difference in power at 11.6 against 7.8 command buffers a frame); 315c pools only textures come from kept out of the residency set
   (the GPU deswizzle's `mtl_addr` wires the whole pool on iOS: 583 pools, about 919 MB resident on the Air; S2Arm uses a no-copy buffer over the
@@ -419,7 +419,9 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   targets, this one does not; the probe gets 1.0007, the GPU p50 measured); 315e the on-screen pad's stick and camera ring as layers that move and
   the view redrawn only when a control's look changes (310; upstream 7b62d9c, S2Arm's one layer per control): measured first with the pad hidden,
   idle and in use; 315f virtual cores only for threads that ask for their core (GetCurrentProcessorNumber) or are bound to one (S2Arm's on-demand
-  mode: 0 shared core numbers on the Mac where none gave 671): `DM_SCHED_STATS` counts the calls and masks per thread first.
+  mode: 0 shared core numbers on the Mac where none gave 671): `DM_SCHED_STATS` counts the calls and masks per thread first; 315g (from 315d's
+  counts) where the NaNs in Tears of the Kingdom's low-resolution two-channel half-float targets come from (on the M5 and the A19 Pro alike: the
+  game's own, Maxwell's 0 × x = 0 where Metal gives NaN, or a reused heap's old contents), traced before anything is changed.
 - 316 manosaba's short sleeps (88: about 24,000 SleepThread calls of 20 µs-1 ms a second) backed off: a run of sleeps under 1 ms from one return
   address with no other system call and at most 20 µs of guest code between them, each sleep after 2 ms of the run max(asked, run / 8) up to 100 µs
   (S2Arm on a Unity game: 5.13 W for the device, 4.03 W at 100 µs with 0.03 % slow frames; 250 µs gave 1.72 W but moved its threads to the
@@ -1524,3 +1526,24 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   red lines. gfx 183 / 183 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
   connected. Smoke: Tears of the Kingdom's two red lines as before, the shots the same scenes as batch 154's (s1300 a moment apart, looked at);
   manosaba none.
+- [x] batch 156 · 315d, 315e. 315d measured, the rounding not taken: the half-float probe gets a second target with 1.0007, -1.0007 and 1 + 2^-11
+  (`gfx/tests/t_fp16_probe.m` 7, `-DDM_TEST_FP16_PROBE_UNORM` 4 and `-DDM_TEST_F16_COUNT_POSITIVE` 1 fail): the M5's RGBA16Float target rounds
+  toward zero (0x3c00), the iPhone Air's A19 Pro to nearest (0x3c01), `half()` to nearest on both (S2Arm's finding on our devices). A texdump now
+  counts the values of every half-float colour target at ±65504, at ±inf and NaN, and the command channel's `texdump -` counts without writing a
+  file. Tears of the Kingdom: on the M5 at frame 1800 of the prologue 16 such targets, none at ±65504 (where the M5 puts what overflows) or ±inf;
+  on the Air at frames 3047 and 3424 of Great Sky Island and 2300 of the prologue 8, none at ±65504 or ±inf. So nothing overflowed in what the
+  frames keep, and the GPUs differ by the last bit of a rounded value; S2Arm's rounding in the shader (a per-draw mask of unblended half-float
+  outputs) would need the shaders built again with a function constant per output and a pipeline per mask, for no difference seen: not taken
+  (port when a game needs it). The counts found NaNs on both GPUs (11,296-79,536 values, in two-channel targets of 400x224 and below): 315g.
+  315e the on-screen pad: measured first on the Air (Great Sky Island standing, thermal 2, alternating twice): shown and idle GPU p50 24.7-25.5
+  ms, without it (`DM_TOUCH=screen`) 24.8-25.3, the whole view redrawn 15 times a second (the self-test's timer, `DM_TEST_TOUCHPAD=look:9999`)
+  25.3-26.4 ms; CPU 17.7-24.7 mJ a frame in all three. As idle costs what none does, the view stays one view, but the stick's base and knob and a
+  camera finger's ring are layers of their own, placed on each touch with no animation, and the rest is drawn again only when `tp_visual_sig`
+  (what it shows: a button pressed or released, the layout, the opacity) changes (upstream 7b62d9c, MIT; S2Arm's one layer per control,
+  Apache-2.0, written anew; `host/tests/t_touchpad.c` 67, `-DDM_TEST_TP_SIG_MOVES` 3 fail); a line every 30 s counts updates and redraws. After
+  it, with the same timer: 450-451 updates and 0 redraws in 30 s, GPU p50 24.8-25.4 against 24.9-26.1 ms idle, 13.2-23.6 against 22.7-24.2 mJ a
+  frame. The command channel gets `padtest <name>` (a touch pad self-test now) and `padshot <path>` (the controls as drawn now, as a PNG, the iOS
+  front end; `host/tests/t_cmdchan.c` 29): on the Air the controls idle, a camera finger's ring and the stick pushed right came out where they
+  belong (looked at), and the self-test's 18 checks passed. gfx 183 / 183 on Metal 4 and Metal 3, host 206 / 206, sanitizer, texture, audit and
+  tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s1300 and s1800 other
+  moments of the same cutscenes than batch 155's (the cave behind Zelda, Zelda speaking; looked at); manosaba none.

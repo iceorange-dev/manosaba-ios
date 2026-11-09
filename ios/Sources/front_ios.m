@@ -196,16 +196,26 @@ static UIViewController *top_controller(void);
 @interface DmPadView : UIView
 - (void)startEdit;
 - (void)endEdit:(BOOL)save;
+- (void)refresh;   // everything drawn again (layout, settings, the editor, shown or hidden)
 @end
-@implementation DmPadView { int _hidden; NSTimer *_test; DmEditBar *_bar; }
+// The view's redraws (plan item 315e; upstream d2r-mobile 7b62d9c, MIT, and S2Arm's one layer per control, Apache-2.0, written anew): drawRect drew
+// the whole window's controls on every touch, the stick and a camera finger moving with it. The stick's base and knob and the camera finger's ring
+// are now layers of their own, placed on each touch with no animation; the rest is drawn again only when what it shows changes (tp_visual_sig: a
+// button pressed or released, the layout, the opacity). On the iPhone Air, Tears of the Kingdom standing: the controls shown and idle cost as much
+// as none (GPU p50 24.7-25.5 against 24.8-25.3 ms), a whole-window redraw 15 times a second 25.3-26.4 ms
+static UIBezierPath *pad_circle(CGFloat r) { return [UIBezierPath bezierPathWithOvalInRect:CGRectMake(-r, -r, 2 * r, 2 * r)]; }
+@implementation DmPadView { int _hidden; NSTimer *_test; DmEditBar *_bar; CAShapeLayer *_base, *_knob, *_ring; CGFloat _sr, _lr; uint64_t _sig, _n_upd, _n_draw; int _sig_ok; double _t_log; }
 - (instancetype)initWithFrame:(CGRect)f {
     if (!(self = [super initWithFrame:f])) return nil;
     self.multipleTouchEnabled = YES; self.opaque = NO; self.backgroundColor = UIColor.clearColor; self.contentMode = UIViewContentModeRedraw;
     _hidden = [NSUserDefaults.standardUserDefaults boolForKey:@"dm.touch_hidden"]; tp_set_hidden(_hidden);
     pad_look_settings(); pad_layout_settings();
+    _base = [CAShapeLayer layer]; _knob = [CAShapeLayer layer]; _ring = [CAShapeLayer layer];
+    for (CAShapeLayer *l in @[_base, _knob, _ring]) { l.hidden = YES; [self.layer addSublayer:l]; }
+    _base.lineWidth = 1.5; _knob.lineWidth = 1; _ring.lineWidth = 1; _ring.fillColor = nil;
     [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:NSOperationQueue.mainQueue
-                                                usingBlock:^(NSNotification *n) { (void)n; pad_look_settings(); pad_layout_settings(); [self setNeedsDisplay]; }];
-    if (getenv("DM_TEST_TOUCHPAD")) _test = [NSTimer scheduledTimerWithTimeInterval:1 / 15.0 repeats:YES block:^(NSTimer *t) { (void)t; [self setNeedsDisplay]; }];   // the self-test's fingers
+                                                usingBlock:^(NSNotification *n) { (void)n; pad_look_settings(); pad_layout_settings(); [self refresh]; }];
+    if (getenv("DM_TEST_TOUCHPAD")) _test = [NSTimer scheduledTimerWithTimeInterval:1 / 15.0 repeats:YES block:^(NSTimer *t) { (void)t; [self update]; }];   // the self-test's fingers
     return self;
 }
 - (void)relayout {
@@ -214,8 +224,32 @@ static UIViewController *top_controller(void);
         UIViewLayoutRegion *rg = [UIViewLayoutRegion safeAreaLayoutRegionWithCornerAdaptation:UIViewLayoutRegionAdaptivityAxisVertical];
         wt = (float)[self edgeInsetsForLayoutRegion:rg].top; }
     tp_layout((float)b.width, (float)b.height, (float)in.left, (float)in.top, (float)in.right, (float)in.bottom, wt);
-    [self setNeedsDisplay];
+    [self refresh];
 }
+- (void)place:(const tp_draw_state *)d {   // the stick and a camera finger's ring, where they are now
+    int show = d->visible && !d->collapsed; CGFloat A = d->opacity > 0 ? d->opacity : 1;
+    UIColor *line = [UIColor colorWithWhite:1 alpha:0.45 * A], *fill = [UIColor colorWithWhite:0 alpha:0.18 * A], *down = [UIColor colorWithWhite:1 alpha:0.35 * A];
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    CGFloat sc = self.traitCollection.displayScale;   // layers added by hand draw at 1x unless told
+    if (sc > 0 && _base.contentsScale != sc) for (CAShapeLayer *l in @[_base, _knob, _ring]) l.contentsScale = sc;
+    _base.hidden = _knob.hidden = !show; _ring.hidden = !(show && d->look);
+    if (show) {   // the ring at home while idle, else the base where the thumb is and the knob under it
+        CGFloat bx = d->stick ? d->bx : d->home_x, by = d->stick ? d->by : d->home_y, kx = d->stick ? d->kx : bx, ky = d->stick ? d->ky : by, sr = d->stick_r;
+        if (sr != _sr) { _sr = sr; _base.path = pad_circle(sr).CGPath; _knob.path = pad_circle(sr * 0.42).CGPath; }
+        _base.position = CGPointMake(bx, by); _base.fillColor = fill.CGColor; _base.strokeColor = line.CGColor;
+        _knob.position = CGPointMake(kx, ky); _knob.fillColor = (d->stick ? down : fill).CGColor; _knob.strokeColor = line.CGColor;
+        if (d->look) { CGFloat lr = 22 * d->u; if (lr != _lr) { _lr = lr; _ring.path = pad_circle(lr).CGPath; } _ring.position = CGPointMake(d->look_x, d->look_y); _ring.strokeColor = line.CGColor; }
+    }
+    [CATransaction commit];
+}
+- (void)update {   // after a touch: the layers placed, the view drawn again only when what it shows changed
+    tp_draw_state d; tp_draw(&d); [self place:&d];
+    uint64_t s = tp_visual_sig(&d); _n_upd++;
+    if (!_sig_ok || s != _sig) { _sig = s; _sig_ok = 1; [self setNeedsDisplay]; }
+    double now = CACurrentMediaTime(); if (!_t_log) _t_log = now;
+    if (now - _t_log >= 30) { LOG("front: on-screen controls: %llu updates, %llu redraws in the last %.0f s", (unsigned long long)_n_upd, (unsigned long long)_n_draw, now - _t_log); _n_upd = _n_draw = 0; _t_log = now; }
+}
+- (void)refresh { _sig_ok = 0; [self update]; }
 - (void)layoutSubviews { [super layoutSubviews]; [self relayout]; }
 - (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self relayout]; }
 - (void)send:(NSSet<UITouch *> *)ts phase:(int)ph {
@@ -224,7 +258,7 @@ static UIViewController *top_controller(void);
     if (h != _hidden) { _hidden = h; [NSUserDefaults.standardUserDefaults setBool:h forKey:@"dm.touch_hidden"]; }
     if (tp_menu_take()) front_panel_open();
     [_bar selectionChanged];
-    [self setNeedsDisplay];
+    [self update];
 }
 - (void)touchesBegan:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { (void)e; [self send:ts phase:TP_DOWN]; }
 - (void)touchesMoved:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { (void)e; [self send:ts phase:TP_MOVE]; }
@@ -236,7 +270,7 @@ static void pad_label(const char *s, CGFloat x, CGFloat y, CGFloat size, CGFloat
     [t drawAtPoint:CGPointMake(x - z.width / 2, y - z.height / 2) withAttributes:a];
 }
 - (void)drawRect:(CGRect)r {
-    (void)r; tp_draw_state d; tp_draw(&d);
+    (void)r; tp_draw_state d; tp_draw(&d); _n_draw++;
     if (!d.visible) return;
     CGFloat A = d.opacity > 0 ? d.opacity : 1;   // plan item 148: the controls' opacity
     UIColor *line = [UIColor colorWithWhite:1 alpha:0.45 * A], *fill = [UIColor colorWithWhite:0 alpha:0.18 * A], *down = [UIColor colorWithWhite:1 alpha:0.35 * A];
@@ -271,19 +305,14 @@ static void pad_label(const char *s, CGFloat x, CGFloat y, CGFloat size, CGFloat
         }
     }
     if (d.collapsed) return;
-    // the stick: its ring at home while idle, else the base where the thumb is and the knob under it; a small ring under a camera finger
-    CGFloat bx = d.stick ? d.bx : d.home_x, by = d.stick ? d.by : d.home_y, kx = d.stick ? d.kx : bx, ky = d.stick ? d.ky : by, sr = d.stick_r;
-    UIBezierPath *ring = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(bx - sr, by - sr, 2 * sr, 2 * sr)];
-    [fill setFill]; [ring fill]; [line setStroke]; ring.lineWidth = 1.5; [ring stroke];
-    CGFloat kr = sr * 0.42; UIBezierPath *knob = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(kx - kr, ky - kr, 2 * kr, 2 * kr)];
-    [(d.stick ? down : fill) setFill]; [knob fill]; [knob stroke];
+    // the stick and a camera finger's ring are layers (-place:); the layout editor's outline of the stick is drawn here
+    CGFloat bx = d.stick ? d.bx : d.home_x, by = d.stick ? d.by : d.home_y, sr = d.stick_r;
     if (d.editing) { UIBezierPath *o = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(bx - sr - 3, by - sr - 3, 2 * sr + 6, 2 * sr + 6)]; CGFloat dash[2] = {4, 3};
         [o setLineDash:dash count:2 phase:0]; o.lineWidth = d.sel == TP_SEL_STICK ? 2.5 : 1; [(d.sel == TP_SEL_STICK ? UIColor.systemYellowColor : [UIColor colorWithWhite:1 alpha:0.8]) setStroke]; [o stroke]; }
-    if (d.look) { CGFloat lr = 22 * d.u; UIBezierPath *l = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(d.look_x - lr, d.look_y - lr, 2 * lr, 2 * lr)]; [line setStroke]; [l stroke]; }
 }
 - (void)startEdit {
     if (_bar) return;
-    tp_edit(1); [self setNeedsDisplay];
+    tp_edit(1); [self refresh];
     _bar = [[DmEditBar alloc] initWithPad:self];
     [self.superview addSubview:_bar];
 }
@@ -291,10 +320,23 @@ static void pad_label(const char *s, CGFloat x, CGFloat y, CGFloat size, CGFloat
     tp_edit(0);
     if (save) { char spec[1024]; tp_custom_get(spec, sizeof spec); g_layout_spec = @(spec); [NSUserDefaults.standardUserDefaults setObject:g_layout_spec forKey:@"dm.touch_layout"];
         LOG("front: controls layout saved: %s", spec[0] ? spec : "(the default)"); }
-    [_bar removeFromSuperview]; _bar = nil; [self setNeedsDisplay];
+    [_bar removeFromSuperview]; _bar = nil; [self refresh];
 }
 @end
 static __weak DmPadView *g_pad;
+extern void (*dm_padshot_hook)(const char *path);   // host/front/cmdchan.c
+static void pad_shot(const char *path) {   // the command channel's padshot (plan item 315e): the controls' view and its layers as drawn now, over black
+    NSString *p = @(path);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        DmPadView *v = g_pad; if (!v) { LOG("[red] [cmd] padshot %s: no on-screen controls", p.UTF8String); return; }
+        [v refresh]; [v.layer displayIfNeeded];   // the layers where the controls are now (a self-test moves them without touches), the view drawn
+        CGRect b = v.bounds;
+        UIImage *img = [[[UIGraphicsImageRenderer alloc] initWithBounds:b] imageWithActions:^(UIGraphicsImageRendererContext *c) {
+            [UIColor.blackColor setFill]; UIRectFill(b); [v.layer renderInContext:c.CGContext]; }];
+        BOOL ok = [UIImagePNGRepresentation(img) writeToFile:p atomically:YES];
+        LOG("[cmd] padshot %s: %s (%.0fx%.0f pt%s)", p.UTF8String, ok ? "written" : "[red] not written", b.size.width, b.size.height, v.hidden ? ", the controls hidden" : "");
+    });
+}
 
 // The layout editor's bar (plan item 148), at the top of the screen while the editor is on: the size of the control touched last, Reset, Done
 @implementation DmEditBar { __weak DmPadView *_pad; UISlider *_size; UILabel *_hint; }
@@ -306,13 +348,13 @@ static __weak DmPadView *g_pad;
     _hint = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 120, 44)]; _hint.textColor = UIColor.whiteColor; _hint.font = [UIFont systemFontOfSize:13]; _hint.text = @"Drag a control";
     _size = [[UISlider alloc] initWithFrame:CGRectMake(132, 7, 150, 30)]; _size.minimumValue = 0.5; _size.maximumValue = 2; _size.enabled = NO;
     [_size addTarget:self action:@selector(sized) forControlEvents:UIControlEventValueChanged];
-    UIButton *reset = [UIButton systemButtonWithPrimaryAction:[UIAction actionWithTitle:@"Reset" image:nil identifier:nil handler:^(UIAction *a) { (void)a; tp_custom_reset(); [self selectionChanged]; [pad setNeedsDisplay]; }]];
+    UIButton *reset = [UIButton systemButtonWithPrimaryAction:[UIAction actionWithTitle:@"Reset" image:nil identifier:nil handler:^(UIAction *a) { (void)a; tp_custom_reset(); [self selectionChanged]; [pad refresh]; }]];
     UIButton *done = [UIButton systemButtonWithPrimaryAction:[UIAction actionWithTitle:@"Done" image:nil identifier:nil handler:^(UIAction *a) { (void)a; [pad endEdit:YES]; }]];
     reset.frame = CGRectMake(290, 7, 64, 30); done.frame = CGRectMake(362, 7, 64, 30);
     for (UIView *v in @[_hint, _size, reset, done]) [self addSubview:v];
     return self;
 }
-- (void)sized { tp_edit_scale(_size.value); [_pad setNeedsDisplay]; }
+- (void)sized { tp_edit_scale(_size.value); [_pad refresh]; }
 - (void)selectionChanged { float s = tp_edit_scale_get(); _size.enabled = s > 0; if (s > 0) { _size.value = s; _hint.text = @"Size"; } }
 @end
 
@@ -374,7 +416,7 @@ static UISlider *panel_slider(NSString *key, float lo, float hi, float def, NSAr
         UIButton *edit = [UIButton systemButtonWithPrimaryAction:[UIAction actionWithTitle:@"Edit controls layout" image:nil identifier:nil handler:^(UIAction *a) { (void)a;
             [ws dismissViewControllerAnimated:YES completion:^{ [g_pad startEdit]; }]; }]];
         UIButton *reset = [UIButton systemButtonWithPrimaryAction:[UIAction actionWithTitle:@"Reset controls layout" image:nil identifier:nil handler:^(UIAction *a) { (void)a;
-            tp_custom_reset(); g_layout_spec = @""; [NSUserDefaults.standardUserDefaults setObject:@"" forKey:@"dm.touch_layout"]; [g_pad setNeedsDisplay]; }]];
+            tp_custom_reset(); g_layout_spec = @""; [NSUserDefaults.standardUserDefaults setObject:@"" forKey:@"dm.touch_layout"]; [g_pad refresh]; }]];
         [st addArrangedSubview:edit]; [st addArrangedSubview:reset];
     }
     __weak DmPanel *ws = self;
@@ -414,7 +456,7 @@ static int pad_wanted(void) {
 }
 // A game controller (plan item 171, after Touchable): connecting one leaves the controls; a key on it hides them (dm_front_controller_key, host/
 // gamepad.m); a touch anywhere (DmAnyTouch on the screen's view) or the last controller gone shows them again (tp_controller)
-static void pad_ctl_apply(int hidden) { if (!g_pad) return; g_pad.hidden = hidden; [g_pad setNeedsDisplay]; }
+static void pad_ctl_apply(int hidden) { if (!g_pad) return; g_pad.hidden = hidden; [g_pad refresh]; }
 static void pad_follow_controllers(void) {   // main thread
     int ctl = 0; for (GCController *c in GCController.controllers) ctl |= c.extendedGamepad != nil;
     pad_ctl_apply(tp_controller(ctl ? TP_CTL_CONNECT : TP_CTL_GONE));
@@ -476,7 +518,7 @@ UIView *front_ios_view(CGRect frame, UIScreen *screen) {
     if (pad_wanted()) {
         DmPadView *pad = [[DmPadView alloc] initWithFrame:box.bounds];
         pad.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [box addSubview:pad]; g_pad = pad;
+        [box addSubview:pad]; g_pad = pad; dm_padshot_hook = pad_shot;
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter; NSOperationQueue *mq = NSOperationQueue.mainQueue;
         for (NSNotificationName n in @[GCControllerDidConnectNotification, GCControllerDidDisconnectNotification])
             [nc addObserverForName:n object:nil queue:mq usingBlock:^(NSNotification *x) { (void)x; pad_follow_controllers(); }];

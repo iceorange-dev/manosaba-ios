@@ -28,6 +28,10 @@ int tp_hidden(void);
 // The controller at time t (seconds, any monotonic clock): buttons and sticks in -1..1 (up positive); 0 when the controls are off
 int tp_read(double t, uint64_t *buttons, float *lx, float *ly, float *rx, float *ry);
 void tp_draw(tp_draw_state *d);
+// What the view draws of d, as one number (plan item 315e, after upstream d2r-mobile 7b62d9c, MIT: the overlay redrawn only when a control's look
+// changes): the stick's base and knob and the camera finger's ring are layers of their own that only move, so their places are left out (the stick
+// base's not while the layout editor outlines it)
+uint64_t tp_visual_sig(const tp_draw_state *d);
 int tp_find(const char *label, float *x, float *y, float *r);   // a control's centre and size ("eye", "dpad", button labels); 0 if none
 // Layout customization (plan item 148): "<label>:<dx>,<dy>,<size>;..." (design points, size 0.5-2; labels as tp_find's, "stick" the stick's home)
 int tp_custom_set(const char *spec);   // 1, applied (an empty spec is the default layout); 0 when it does not parse: nothing changes
@@ -45,3 +49,4 @@ int tp_controller(int event);
 
 int dm_touchpad_read(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);   // hle_hid.c, the game's thread
 void dm_touchpad_selftest_start(void);   // DM_TEST_TOUCHPAD (main.c)
+int tp_selftest_now(const char *name);   // one of its tests (check, look, hide) now: the command channel's padtest; 0 for an unknown name

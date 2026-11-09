@@ -208,6 +208,7 @@ run: \
 	$(B)/t_touchpad_custom \
 	$(B)/t_touchpad_nowin \
 	$(B)/t_touchpad_ctlconnect \
+	$(B)/t_touchpad_sigmoves \
 	$(B)/t_watchdog \
 	$(B)/t_watchdog_nobg
 	$(B)/t_altstack
@@ -718,17 +719,21 @@ run: \
 	   cat $(B)/t_touchpad_sensafter.log; echo "t_touchpad_sensafter: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_touchpad_sensafter: a sensitivity applied after saturation never lets 0.5× turn at full speed, as expected"
 	@status=0; $(B)/t_touchpad_custom > $(B)/t_touchpad_custom.log 2>/dev/null || status=$$?; \
-	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 64 checks, 5 failed" $(B)/t_touchpad_custom.log; then \
+	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 67 checks, 5 failed" $(B)/t_touchpad_custom.log; then \
 	   cat $(B)/t_touchpad_custom.log; echo "t_touchpad_custom: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_touchpad_custom: the default layout whatever the customization fails 5 layout checks, as expected"
 	@status=0; $(B)/t_touchpad_nowin > $(B)/t_touchpad_nowin.log 2>/dev/null || status=$$?; \
-	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 64 checks, 3 failed" $(B)/t_touchpad_nowin.log; then \
+	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 67 checks, 3 failed" $(B)/t_touchpad_nowin.log; then \
 	   cat $(B)/t_touchpad_nowin.log; echo "t_touchpad_nowin: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_touchpad_nowin: the window controls ignored put ZL under them on the three iPads that have them, as expected"
 	@status=0; $(B)/t_touchpad_ctlconnect > $(B)/t_touchpad_ctlconnect.log 2>/dev/null || status=$$?; \
-	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 64 checks, 1 failed" $(B)/t_touchpad_ctlconnect.log; then \
+	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 67 checks, 1 failed" $(B)/t_touchpad_ctlconnect.log; then \
 	   cat $(B)/t_touchpad_ctlconnect.log; echo "t_touchpad_ctlconnect: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_touchpad_ctlconnect: hidden as soon as a controller connects, as before, fails the controller check, as expected"
+	@status=0; $(B)/t_touchpad_sigmoves > $(B)/t_touchpad_sigmoves.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || ! grep -q "t_touchpad: 67 checks, 3 failed" $(B)/t_touchpad_sigmoves.log; then \
+	   cat $(B)/t_touchpad_sigmoves.log; echo "t_touchpad_sigmoves: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_touchpad_sigmoves: the stick's and the camera finger's places in the view's signature (a redraw on every move) fail 3, as expected"
 	$(B)/t_watchdog
 	@status=0; $(B)/t_watchdog_nobg > $(B)/t_watchdog_nobg.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ away" $(B)/t_watchdog_nobg.log; then \
@@ -1105,6 +1110,8 @@ $(B)/t_touchpad_nowin: t_touchpad.c ../front/touchpad.c ../touchpad.h ../dm.h ..
 	clang -O1 -Wall -Werror -DDM_TEST_TP_NO_WINDOW -I.. -o $@ t_touchpad.c
 $(B)/t_touchpad_ctlconnect: t_touchpad.c ../front/touchpad.c ../touchpad.h ../dm.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_TP_CTL_ON_CONNECT -I.. -o $@ t_touchpad.c
+$(B)/t_touchpad_sigmoves: t_touchpad.c ../front/touchpad.c ../touchpad.h ../dm.h ../dm_input.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_TP_SIG_MOVES -I.. -o $@ t_touchpad.c
 $(B)/t_options: t_options.c ../runtime/options.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_options.c
 $(B)/t_options_nocheck: t_options.c ../runtime/options.c ../dm.h | $(B)

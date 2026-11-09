@@ -341,6 +341,22 @@ float tp_edit_scale_get(void) {
     if (g.editing && g.sel >= 0) { tp_cust *c = cust_of(g.sel == TP_SEL_STICK ? "stick" : g.def[g.sel].label, 0); s = c ? c->s : 1; }
     pthread_mutex_unlock(&g_mu); return s;
 }
+static uint64_t sig_mix(uint64_t h, const void *p, size_t n) { const uint8_t *b = p; for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001b3ull; } return h; }
+uint64_t tp_visual_sig(const tp_draw_state *d) {   // FNV-1a over what drawRect draws
+    uint64_t h = 0xcbf29ce484222325ull;
+    int head[5] = {d->visible, d->collapsed, d->n, d->editing, d->sel}; float f[5] = {d->u, d->opacity, d->home_x, d->home_y, d->stick_r};
+    h = sig_mix(h, head, sizeof head); h = sig_mix(h, f, sizeof f);
+    for (int i = 0; i < d->n && i < 20; i++) {
+        const tp_item *it = &d->items[i]; int a[3] = {it->shape, it->pressed, (int)it->dir}; float p[4] = {it->x, it->y, it->r, it->hh};
+        h = sig_mix(h, a, sizeof a); h = sig_mix(h, p, sizeof p); if (it->label) h = sig_mix(h, it->label, strlen(it->label) + 1);
+    }
+#ifndef DM_TEST_TP_SIG_MOVES   // negative control of t_touchpad only: the stick's and the camera finger's places in it, a redraw on every move as before
+    if (d->editing) { float e[2] = {d->stick ? d->bx : d->home_x, d->stick ? d->by : d->home_y}; h = sig_mix(h, e, sizeof e); }
+#else
+    float m[7] = {d->bx, d->by, d->kx, d->ky, d->look_x, d->look_y, (float)d->look}; h = sig_mix(h, m, sizeof m);
+#endif
+    return h;
+}
 void tp_opacity(float a) { pthread_mutex_lock(&g_mu); g.opacity = a > 0 ? clampf(a, 0.15f, 1) : 1; pthread_mutex_unlock(&g_mu); }
 int tp_menu_take(void) { pthread_mutex_lock(&g_mu); int r = g.menu_req; g.menu_req = 0; pthread_mutex_unlock(&g_mu); return r; }
 
@@ -472,6 +488,16 @@ static void *selftest(void *arg) {
     (void)arg;
     for (int i = 0; i < g_nplan; i++) { until(g_t0_ns / 1e9, g_plan[i].at); g_plan[i].run(); }
     return NULL;
+}
+static void *selftest_one(void *arg) { ((void (*)(void))arg)(); return NULL; }
+int tp_selftest_now(const char *name) {   // the command channel's padtest: one test, now
+    void (*run)(void) = !strcmp(name, "check") ? plan_check : !strcmp(name, "look") ? plan_look : !strcmp(name, "hide") ? plan_hide : NULL;
+    if (!run) return 0;
+    pthread_mutex_lock(&g_mu); int laid = g.laid_out; pthread_mutex_unlock(&g_mu);
+    if (!laid) tp_layout(844, 390, 47, 0, 47, 21, 0);
+    LOG("touch pad test: %s now (command channel)", name);
+    pthread_t t; if (!pthread_create(&t, NULL, selftest_one, (void *)run)) pthread_detach(t);
+    return 1;
 }
 void dm_touchpad_selftest_start(void) {
     const char *e = getenv("DM_TEST_TOUCHPAD"); if (!e || !*e) return;

@@ -12,7 +12,9 @@
 // (-DDM_TEST_TP_CUSTOM_IGNORED): 5 fail. Device sizes and game controllers (plan item 171): ten devices from Touchable's table, each with every
 // control inside its safe area, none overlapping, the left column below the iPadOS window controls; a controller connected leaves the controls, a key
 // hides them, a touch or the last controller gone shows them. The window controls ignored (-DDM_TEST_TP_NO_WINDOW): 3 fail (the iPads that have
-// them); hidden on connect, as before (-DDM_TEST_TP_CTL_ON_CONNECT): 1 fails.
+// them); hidden on connect, as before (-DDM_TEST_TP_CTL_ON_CONNECT): 1 fails. The view's redraws (plan item 315e): moving the stick or a camera finger
+// leaves tp_visual_sig as it was (they are layers that move), a button pressed changes it and released brings it back, the opacity changes it; the
+// places in it (-DDM_TEST_TP_SIG_MOVES): 3 fail (the last places stay in it after the fingers are up).
 #include "../front/touchpad.c"
 #include <stdio.h>
 uint64_t g_t0_ns;
@@ -229,6 +231,19 @@ int main(void) {
         int t1 = tp_controller(TP_CTL_TOUCH); int k2 = tp_controller(TP_CTL_KEY), g1 = tp_controller(TP_CTL_GONE);
         down(61, "A", 0, 0); T += 1 / 30.0; rd(); int a = (S.b & DM_BTN_A) != 0; up(61); T += 1 / 30.0; rd();
         CHECK(!c0 && k1 && none && !t1 && k2 && !g1 && a, "a controller connected: shown; a key: hidden (A not pressed by a finger); a touch: shown; a key, then none left: shown, A works"); }
+    {   // 315e: what the view redraws
+        tp_set_hidden(0); tp_opacity(1); tp_draw_state d; tp_draw(&d); uint64_t s0 = tp_visual_sig(&d);
+        tp_touch(70, TP_DOWN, px, py); tp_draw(&d); uint64_t s1 = tp_visual_sig(&d);
+        tp_touch(70, TP_MOVE, px + 30 * u, py + 10 * u); tp_draw(&d); uint64_t s2 = tp_visual_sig(&d); float k2 = d.kx;
+        tp_touch(70, TP_MOVE, px - 20 * u, py - 25 * u); tp_draw(&d); uint64_t s3 = tp_visual_sig(&d); float k3 = d.kx; up(70);
+        CHECK(s1 == s2 && s2 == s3 && k2 != k3, "the stick moved (its knob from %.0f to %.0f): nothing to redraw [-DDM_TEST_TP_SIG_MOVES]", k2, k3);
+        float lx = 844 * 0.62f, ly = 390 * 0.5f; tp_touch(71, TP_DOWN, lx, ly); tp_draw(&d); uint64_t c1 = tp_visual_sig(&d);
+        tp_touch(71, TP_MOVE, lx + 60 * u, ly + 5 * u); tp_draw(&d); uint64_t c2 = tp_visual_sig(&d); int look = d.look; up(71);
+        CHECK(look && c1 == c2, "a camera finger moved: nothing to redraw [-DDM_TEST_TP_SIG_MOVES]");
+        tp_draw(&d); uint64_t back0 = tp_visual_sig(&d);
+        down(72, "A", 0, 0); tp_draw(&d); uint64_t sa = tp_visual_sig(&d); up(72); tp_draw(&d); uint64_t sb = tp_visual_sig(&d);
+        tp_opacity(0.5f); tp_draw(&d); uint64_t so = tp_visual_sig(&d); tp_opacity(1);
+        CHECK(back0 == s0 && sa != s0 && sb == s0 && so != s0, "A pressed: redrawn; released: as before; the opacity changed: redrawn"); }
     printf("t_touchpad: %d checks, %d failed\n", n, fail);
     return fail != 0;
 }

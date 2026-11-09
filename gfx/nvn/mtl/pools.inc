@@ -146,10 +146,12 @@ void mtl_init(void) { @autoreleasepool {
          (unsigned long long)(g_dev.maxBufferLength >> 20), (unsigned long long)(g_dev.recommendedMaxWorkingSetSize >> 20));
     udc_selftest();
     if (getenv("DM_FP16_PROBE")) {   // what this GPU stores for a float above float16's range (fp16_probe.h, plan item 310)
-        uint16_t h[8]; int rc = fp16_probe(g_dev, h);
+        uint16_t h[16]; int rc = fp16_probe(g_dev, h);
         if (rc) MLOG("[red] fp16 probe on %s failed (%d)", g_dev.name.UTF8String, rc);
         else MLOG("fp16 probe on %s: 1e5, -1e5, 65504, 65520 stored by an RGBA16Float target as %s, %s, %s, %s (%04x %04x %04x %04x); half() gives %s, %s, %s, %s",
                   g_dev.name.UTF8String, fp16_name(h[0]), fp16_name(h[1]), fp16_name(h[2]), fp16_name(h[3]), h[0], h[1], h[2], h[3], fp16_name(h[4]), fp16_name(h[5]), fp16_name(h[6]), fp16_name(h[7]));
+        if (!rc) MLOG("fp16 probe on %s: 1.0007, -1.0007, 1 + 2^-11 stored as %04x %04x %04x (rounded %s), half() gives %04x %04x %04x (rounded %s) (plan item 315d)",
+                      g_dev.name.UTF8String, h[8], h[9], h[10], fp16_rounding(h[8]), h[12], h[13], h[14], fp16_rounding(h[12]));
     }
 } }
 

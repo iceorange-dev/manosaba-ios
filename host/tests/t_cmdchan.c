@@ -24,6 +24,8 @@ void hlecount_flush(void) { g_hlecount++; }
 void dm_host_shutdown(const char *why) { (void)why; g_quit++; }
 void sead_heaps_print(void) {}
 void sead_heap_of(uint64_t addr) { (void)addr; }
+static char g_pt[32]; int tp_selftest_now(const char *name) { if (strcmp(name, "look")) return 0; snprintf(g_pt, sizeof g_pt, "%s", name); return 1; }
+static char g_ps[64]; static void padshot(const char *path) { snprintf(g_ps, sizeof g_ps, "%s", path); }
 static int g_game_checked, g_game_ran; static char g_game_line[256];   // the game's commands (plan item 167): lines starting with "survey" are its
 int dm_game_command(const char *line, int run) { if (strncmp(line, "survey", 6)) return 0; if (run) { g_game_ran++; strlcpy(g_game_line, line, sizeof g_game_line); } else g_game_checked++; return 1; }
 
@@ -52,6 +54,10 @@ int main(void) {
     { dm_cmd c; const char *why; int ok = parse_ok("texdump td_%d.png", CMD_TEXDUMP, 0, 0, "td_%d.png") && parse_bad("texdump", "path");
       if (ok && !cmd_parse("texdump t%d.png", &c, &why)) cmd_run(&c);
       CHECK(ok && !strcmp(g_td, "t%d.png"), "texdump <path> parses, runs and needs a path"); }
+    { dm_cmd c; const char *why; int ok = parse_ok("padtest look", CMD_PADTEST, 0, 0, "look") && parse_bad("padtest", "test name") && parse_bad("padshot", "path");
+      if (ok && !cmd_parse("padtest look", &c, &why)) cmd_run(&c);
+      dm_padshot_hook = padshot; if (ok && !cmd_parse("padshot pad.png", &c, &why)) cmd_run(&c);
+      CHECK(ok && !strcmp(g_pt, "look") && !strcmp(g_ps, "pad.png"), "padtest <name> and padshot <path> parse, run and need their argument"); }
     CHECK(parse_ok("heaps", CMD_HEAPS, 0, 0, NULL) && parse_ok("heap 0x1234", CMD_HEAP, 0, 0x1234, NULL) && parse_bad("heap", "address") && parse_bad("heap 0x12z", "address"), "heaps / heap <addr>");
     CHECK(parse_ok("threads", CMD_THREADS, 0, 0, NULL) && parse_ok("hlecount", CMD_HLECOUNT, 0, 0, NULL) && parse_ok("quit", CMD_QUIT, 0, 0, NULL), "threads / hlecount / quit");
     CHECK(parse_ok("", CMD_NONE, 0, 0, NULL) && parse_ok("   ", CMD_NONE, 0, 0, NULL) && parse_ok("# key A", CMD_NONE, 0, 0, NULL), "blank lines and comments do nothing");

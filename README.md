@@ -187,7 +187,7 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
   [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17) (what an iOS 17 build needs), [GirlNet/nxnative](https://github.com/GirlNet/nxnative)
   (the host built for every game on a CI runner), [RogelioLB/nxnative-android](https://github.com/RogelioLB/nxnative-android) (a thread's stack
   reported without bionic's guard page), upstream d2r-mobile's later fixes (no writes for outputs a pixel shader leaves, nearest filters for formats
-  not filtered linearly), [LASRecomp](https://github.com/peiikai/LASRecomp) and [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (a
+  not filtered linearly, the on-screen controls drawn again only when they look different), [LASRecomp](https://github.com/peiikai/LASRecomp) and [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (a
   swapchain that survives a lost surface, a pipeline cache kept between launches), [PKShield-Android](https://github.com/simipoB/PKShield-Android)
   (the barrier to host reads at a submission's end), [doom-port](https://github.com/Desm0nt/doom-port) (AAudio's legacy path after a stall).
 - **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's Android port:
@@ -199,7 +199,8 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
 - **[S2Arm](https://github.com/jhaizhou-ops/S2Arm)** ([jhaizhou-ops](https://github.com/jhaizhou-ops), Apache-2.0; written anew from what it does,
   no code taken): the dirty tracking's `mprotect` results checked, the argument buffer's length from the reflection, the app's name in ASCII with
   the title per language, the phone's haptics-only engine; the unwritten attachments' stores dropped with the TBDR rewrites off; mid-submission
-  commits held while the GPU is busy; texture uploads from a pool not yet resident read through a buffer of their own pages.
+  commits held while the GPU is busy; texture uploads from a pool not yet resident read through a buffer of their own pages; how a half-float
+  target rounds; the on-screen stick and camera ring as layers of their own.
 - **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): a stamp of the
   rewriter in the product, the rewriter refusing system registers it does not know, the SDK's abort text at a Break.
 - **[LibHac](https://www.nuget.org/packages/LibHac/0.19.0)** ([Alex Barney](https://github.com/Thealexbarney), MIT; the NuGet package, as its

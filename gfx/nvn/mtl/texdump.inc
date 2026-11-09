@@ -24,6 +24,21 @@ void td_note(RPD *pd, NSUInteger nc) {
         if (!seen) [g_td_list addObject:@[t, @(ser), @(lv)]];
     }
 }
+// Half-float colour targets (plan item 315d): how many of their values sit at ±65504, at ±inf, or are NaN (fp16_probe.h f16_edge_count), a line
+// each and a total; the path "-" (the command channel's "texdump -") counts without writing any file
+static void td_f16_count(id<MTLTexture> t, NSUInteger lv, uint64_t ser, uint64_t tot[4]) {
+    MTLPixelFormat f = t.pixelFormat; int ch = f == MTLPixelFormatR16Float ? 1 : f == MTLPixelFormatRG16Float ? 2 : f == MTLPixelFormatRGBA16Float ? 4 : 0;
+    if (!ch || t.storageMode == MTLStorageModeMemoryless) return;
+    NSUInteger w = MAX(t.width >> lv, 1u), h = MAX(t.height >> lv, 1u); size_t row = w * ch * 2;
+    id<MTLBuffer> rb = [g_dev newBufferWithLength:row * h options:MTLResourceStorageModeShared]; if (!rb) return;
+    id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+    [b copyFromTexture:t sourceSlice:0 sourceLevel:lv sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(w, h, 1) toBuffer:rb destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:row * h];
+    [b endEncoding]; [cb commit]; [cb waitUntilCompleted];
+    uint64_t c[3] = {0}; f16_edge_count((const uint16_t *)rb.contents, (size_t)w * h * ch, c);
+    tot[0]++; tot[1] += c[0]; tot[2] += c[1]; tot[3] += c[2];
+    MLOG("[texdump] ser=%llu lv=%lu half-float %d channels %lux%lu: %llu values at ±65504, %llu at ±inf, %llu NaN", ser, (unsigned long)lv, ch, (unsigned long)w, (unsigned long)h,
+         (unsigned long long)c[0], (unsigned long long)c[1], (unsigned long long)c[2]);
+}
 static void td_dump(void) {
     g_td_done = 1;
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
@@ -45,7 +60,8 @@ static void td_dump(void) {
     }
     MLOG("[texdump] frame %ld, %lu color targets in total", g_td_frame, (unsigned long)g_td_list.count);
     // DM_NVN_TEXRAW=index,...: save raw bytes by texture index (including 3D; file: %d in the path is replaced with the index, suffix .raw, first-line text header: width height depth format bytes-per-row)
-    for (const char *q = getenv("DM_NVN_TEXRAW"); q && *q; q = strchr(q, ',') ? strchr(q, ',') + 1 : q + strlen(q)) {
+    int files = strcmp(g_td_path, "-") != 0; uint64_t f16[4] = {0};
+    for (const char *q = files ? getenv("DM_NVN_TEXRAW") : NULL; q && *q; q = strchr(q, ',') ? strchr(q, ',') + 1 : q + strlen(q)) {
         uint64_t ser = (uint64_t)atoll(q); id o = serial_get(ser);
         id<MTLTexture> t = [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->tex : o;
         if (!t) { MLOG("[texraw] ser=%llu not in the serial table", ser); continue; }
@@ -67,6 +83,8 @@ static void td_dump(void) {
     for (NSArray *e in g_td_list) {
         id<MTLTexture> t = e[0]; uint64_t ser = [e[1] unsignedLongLongValue]; NSUInteger lv = [e[2] unsignedIntegerValue];
         if (t.textureType != MTLTextureType2D) { MLOG("[texdump] ser=%llu type %lu skipped", ser, (unsigned long)t.textureType); continue; }
+        td_f16_count(t, lv, ser, f16);
+        if (!files) continue;
         if (getenv("DM_NVN_SNAPRAW")) {   // Also save the raw bytes (converting an HDR target to an 8-bit image truncates; first-line text header: width height format bytes-per-row)
             NSUInteger rw = MAX(t.width >> lv, 1u), rh = MAX(t.height >> lv, 1u);
             size_t bpp = t.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : t.pixelFormat == MTLPixelFormatRGBA32Float ? 16 : t.pixelFormat == MTLPixelFormatR16Float || t.pixelFormat == MTLPixelFormatR16Unorm ? 2 : 4;
@@ -92,6 +110,8 @@ static void td_dump(void) {
         MLOG("[texdump] ser=%llu lv=%lu format %lu %lux%lu", ser, (unsigned long)lv, (unsigned long)t.pixelFormat, (unsigned long)w, (unsigned long)h);
         shot(o, path, 0, NULL);
     }
+    MLOG("[texdump] frame %ld: %llu half-float colour targets, %llu values at ±65504, %llu at ±inf, %llu NaN", g_td_frame, (unsigned long long)f16[0],
+         (unsigned long long)f16[1], (unsigned long long)f16[2], (unsigned long long)f16[3]);
     [g_td_list removeAllObjects];
 }
 // DM_NVN_TEXSNAP=item,... (together with the frame number and path of DM_NVN_TEXDUMP): as soon as the selected render passes of that frame end, copy

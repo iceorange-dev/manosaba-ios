@@ -11,6 +11,9 @@
 //   shot <path>          the next presented frame as a PNG (as DM_NVN_SHOT)
 //   passdump <frames>    the render pass records of the next frames (as DM_NVN_PASSDUMP, 1-600)
 //   texdump <path>       the colour targets of the next frame as PNGs (as DM_NVN_TEXDUMP; %d in the path is the target's index)
+//                        ("texdump -": no files, the half-float targets' values at ±65504 / ±inf / NaN counted and logged only)
+//   padtest <name>       a touch pad self-test (touchpad.c: check, look, hide) run now, as DM_TEST_TOUCHPAD runs it at a time
+//   padshot <path>       the on-screen controls as they are drawn now, as a PNG (the iOS front end; plan item 315e)
 //   threads              every guest thread's state now (as on a crash)
 //   memsnap <path>       a memory snapshot now (as DM_MEMSNAP, memsnap.c)
 //   hlecount             the host call counts now (DM_HLECOUNT's file)
@@ -39,8 +42,10 @@ void hlecount_flush(void);                              // hle_count.c
 void dm_host_shutdown(const char *why);                 // hle_lifecycle.c
 void sead_heaps_print(void);                            // sead.c
 void sead_heap_of(uint64_t addr);
+int tp_selftest_now(const char *name);                  // touchpad.c
+void (*dm_padshot_hook)(const char *path);              // the front end's on-screen controls as a PNG (front_ios.m sets it; none elsewhere)
 
-enum { CMD_NONE, CMD_KEY, CMD_DOWN, CMD_UP, CMD_WAIT, CMD_SLEEP, CMD_SHOT, CMD_PASSDUMP, CMD_TEXDUMP, CMD_THREADS, CMD_MEMSNAP, CMD_HLECOUNT, CMD_QUIT, CMD_HEAPS, CMD_HEAP, CMD_GAME };
+enum { CMD_NONE, CMD_KEY, CMD_DOWN, CMD_UP, CMD_WAIT, CMD_SLEEP, CMD_SHOT, CMD_PASSDUMP, CMD_TEXDUMP, CMD_THREADS, CMD_MEMSNAP, CMD_HLECOUNT, CMD_QUIT, CMD_HEAPS, CMD_HEAP, CMD_PADTEST, CMD_PADSHOT, CMD_GAME };
 int dm_game_command(const char *line, int run);   // host/game.h: the game's own commands (Tears of the Kingdom: survey, plan item 167)
 #define CMD_LINE 1024
 typedef struct { int kind; uint32_t mask; long n; char path[CMD_LINE]; } dm_cmd;
@@ -59,7 +64,7 @@ static int cmd_parse(const char *line, dm_cmd *c, const char **why) {
     memcpy(arg, a, an); arg[an] = 0;
     static const struct { const char *name; int kind; } names[] = {{"key", CMD_KEY}, {"down", CMD_DOWN}, {"up", CMD_UP}, {"wait", CMD_WAIT},
         {"sleep", CMD_SLEEP}, {"shot", CMD_SHOT}, {"passdump", CMD_PASSDUMP}, {"texdump", CMD_TEXDUMP}, {"threads", CMD_THREADS}, {"memsnap", CMD_MEMSNAP},
-        {"hlecount", CMD_HLECOUNT}, {"quit", CMD_QUIT}, {"heaps", CMD_HEAPS}, {"heap", CMD_HEAP}};
+        {"hlecount", CMD_HLECOUNT}, {"quit", CMD_QUIT}, {"heaps", CMD_HEAPS}, {"heap", CMD_HEAP}, {"padtest", CMD_PADTEST}, {"padshot", CMD_PADSHOT}};
     for (size_t i = 0; i < sizeof names / sizeof *names; i++) if (!strcmp(w, names[i].name)) c->kind = names[i].kind;
     if (!c->kind) {   // the game's own (it checks the line now and logs what running it does)
         if (len < sizeof c->path) { memcpy(c->path, line, len); c->path[len] = 0; if (dm_game_command(c->path, 0)) { c->kind = CMD_GAME; return 0; } }
@@ -80,8 +85,8 @@ static int cmd_parse(const char *line, dm_cmd *c, const char **why) {
         char *end; errno = 0; c->n = (long)strtoull(arg, &end, 0);
         if (end == arg || *end || errno || !c->n) { *why = "heap takes an address"; return -1; }
         return 0; }
-    case CMD_SHOT: case CMD_MEMSNAP: case CMD_TEXDUMP:
-        if (!*arg) { *why = "expected a path"; return -1; }
+    case CMD_SHOT: case CMD_MEMSNAP: case CMD_TEXDUMP: case CMD_PADSHOT: case CMD_PADTEST:
+        if (!*arg) { *why = c->kind == CMD_PADTEST ? "expected a test name" : "expected a path"; return -1; }
         strlcpy(c->path, arg, sizeof c->path); return 0;
     default:
         if (*arg) { *why = "takes no argument"; return -1; }
@@ -106,6 +111,8 @@ static void cmd_run(const dm_cmd *c) {
     case CMD_QUIT: dm_host_shutdown("command channel quit"); break;
     case CMD_HEAPS: sead_heaps_print(); break;
     case CMD_HEAP: sead_heap_of((uint64_t)c->n); break;
+    case CMD_PADTEST: if (!tp_selftest_now(c->path)) LOG("[red] command channel: padtest %s: no such test (check, look, hide)", c->path); break;
+    case CMD_PADSHOT: if (dm_padshot_hook) dm_padshot_hook(c->path); else LOG("[red] command channel: padshot %s: no on-screen controls in this front end", c->path); break;
     case CMD_GAME: dm_game_command(c->path, 1); break;
     }
 }
