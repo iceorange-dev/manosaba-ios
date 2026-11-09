@@ -41,6 +41,9 @@ static class SwshXlate
         public Accessor(byte[] code, JsonObject job, Dictionary<int, SamplerType> imgByWord = null) { _code = code; _job = job; _imgByWord = imgByWord; _c1 = job["c1"] is JsonNode h ? Convert.FromHexString((string)h) : Array.Empty<byte>(); _c2 = C2.Of(job);
             _nearMinusW = job["depth"] is JsonNode dm ? (string)dm switch { "near_is_minus_w" => true, "near_is_zero" => false, _ => throw new InvalidDataException($"job depth {(string)dm}: near_is_minus_w or near_is_zero") } : throw new InvalidDataException("job has no depth convention (near_is_minus_w / near_is_zero)"); }
         // c1 constant segment (the 0x100 bytes before the control segment in the shader package): the jump table of indirect jump BRX lives here (LDC c[1]); without it the translator cannot resolve jump targets and control flow goes wrong (particle shaders loop forever)
+        // The translator's own warnings (plan item 317c): an instruction it does not implement, an invalid encoding, a reduction of a type it drops,
+        // a barrier it removes, ... kept in the reflection's notes as "translator: <message>" (they used to go nowhere: ILogger's default prints nothing)
+        public void Log(string message) => Notes.Add("translator: " + message);
         public uint ConstantBuffer1Read(int offset) { if (offset >= 0 && offset + 4 <= _c1.Length) return BitConverter.ToUInt32(_c1, offset); Notes.Add($"c1 read out of range +{offset:X} (c1 length {_c1.Length})"); return 0; }
         // All resources go into set 0, each with a distinct binding number (spirv-cross emits them as one argument buffer); the translator's convention of giving the buffer of constant segment number index binding = index+1 is not relied on
         public SetBindingPair CreateConstantBufferBinding(int index) => new(0, _binding++);

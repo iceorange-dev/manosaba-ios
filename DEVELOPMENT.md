@@ -428,7 +428,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   efficiency cores); the sleeps counted per return address first, on the iPhone and the K100. 316b (batch 159; from 316's counts): Tears of the Kingdom's
   64,000-122,000 SleepThread(20 µs) calls a second return at once (`sleep_precise` does not sleep within 20 µs of the deadline; none of them in a
   run): what sleeping them does to its frame and its CPU, measured on the Mac and the iPhone first.
-- 317 (317a, 317b: batch 160; 317c with the next chain change) diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
+- 317 (317a, 317b: batch 160; 317c: batch 179) diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
   span (counted once when delivered again) and named at the next launch (ours knows only that a session ended in the foreground; whether a
   free-account install receives payloads is to be seen); 317b the signature's expiry shown in the app 48 hours ahead (`embedded.mobileprovision`;
   ours warns only at install); 317c the translator's own warnings in the reflection's notes (an untraceable bindless texture removed with its
@@ -483,6 +483,10 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   the CPU sits on the efficiency cores (under 30 % on performance cores in two windows of 30 presents, thermal ≤ 1, Low Power off) or the GPU time
   at the longer hold is 1.3× its time at 60.
 
+- 322 what the translator's warnings showed (317c, batch 179): 324 of Tears of the Kingdom's compute shaders are decoded from 0x8 through 24 zero
+  words, each an "invalid instruction" (where their code starts, against the capture's offset); one vertex shader (588e242a52f5f7aa) stores to
+  global memory 5 times with no storage buffer found (the stores are dropped); two of manosaba's pixel shaders (a1fe71290083482a,
+  45eb69b3b99c6600) use PIXLD, which the translator leaves out. Each looked at in a frame that draws with it before anything is changed.
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -1879,3 +1883,11 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   1.237 beside it), 5 of 5 runs alone after it passed (as in batch 174: the system's timer while the batch's other jobs run); sanitizer,
   texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before,
   s1300 an earlier moment of the same scene (looked at), instructions a draw as before (25,435-39,703); manosaba none.
+- [x] batch 179 · 317c, the translator's own warnings: chain 1f985598396c → 47b5de2aa276, every shader translated again. `dmsh_xlate`'s accessor
+  implements the translator's `Log` (its default printed nothing) and keeps each message in the reflection's notes as `translator: <message>`.
+  Across the 31,415 shaders: 7,776 "invalid instruction" notes in 324 of Tears of the Kingdom's compute shaders (24 zero words decoded from 0x8),
+  5 global stores without a storage buffer in one vertex shader, PIXLD left out in two of manosaba's pixel shaders; no dropped reduction (S2Arm
+  counted 398 in its own). These are item 322. `gfx/tests/t_xlate_notes.py` 2 (the chain before fails 1). gfx 198 / 198 on Metal 4 and
+  Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs (the new libraries); Android: built (the new bundle), the phone
+  not connected. Smoke on the new chain: Tears of the Kingdom's two red lines as before, s1300 and s1800 the same scenes, instructions a draw as
+  before (27,130-36,365); manosaba none, its s600 the title page (looked at).
