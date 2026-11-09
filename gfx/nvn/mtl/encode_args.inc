@@ -324,12 +324,13 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
 #ifndef DM_TEST_WIDEN_SCALE_ONE
     if (sup_aid >= 0 && __builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0)) {
         int frag = nvn_stage == 1 && (g_pass.kx != 1 || g_pass.ky != 1) && ((g_wd_fl | wfl) & 7) != 2;
-        int push = nvn_stage == 0 && g_wd_push_on && g_pass.kx != 1;   // the vertex edge push (draw.inc): (1 − 1/k, ((1 − 3‰)/k)², 1 − 1/k)
+        int push = nvn_stage == 0 && g_wd_push_on && (g_pass.kx != 1 || g_pass.ky != 1);   // the vertex edge push (draw.inc): (1 − 1/k, ((1 − 3‰)/k)², 1 − 1/k) an axis
         if (frag || nsc || push) {
             ARENA_OUT id<MTLBuffer> sb; size_t so = arena_alloc(SUPPORT_LEN, &sb); uint8_t *d = g_cur_arena->cpu + so; memcpy(d, support_buf().contents, SUPPORT_LEN);
             float kx = frag ? (float)g_pass.kx : 1.0f, ky = frag ? (float)g_pass.ky : 1.0f;
             memcpy(d + 192, &kx, 4); memcpy(d + SUPPORT_RENDER_SCALE_Y, &ky, 4);
-            if (push) { float k = (float)g_pass.kx, pp[3] = {1 - 1 / k, (0.997f / k) * (0.997f / k), 1 - 1 / k}; memcpy(d + SUPPORT_WIDEN_PUSH, pp, sizeof pp); }
+            if (push && g_pass.kx != 1) { float k = (float)g_pass.kx, pp[3] = {1 - 1 / k, (0.997f / k) * (0.997f / k), 1 - 1 / k}; memcpy(d + SUPPORT_WIDEN_PUSH, pp, sizeof pp); }
+            if (push && g_pass.ky != 1) { float k = (float)g_pass.ky, pp[3] = {1 - 1 / k, (0.997f / k) * (0.997f / k), 1 - 1 / k}; memcpy(d + SUPPORT_WIDEN_PUSH_Y, pp, sizeof pp); }   // (320g: a taller screen)
             for (int i = 0; i < nsc; i++) {
                 float rx = frag && sc_x[i] != 1.0f && fabsf(sc_x[i] - kx) < 1e-6f ? -sc_x[i] : sc_x[i], ry = frag && sc_y[i] != 1.0f && fabsf(sc_y[i] - ky) < 1e-6f ? -sc_y[i] : sc_y[i];
                 memcpy(d + 192 + 16 * sc_ix[i], &rx, 4); memcpy(d + SUPPORT_RENDER_SCALE_Y + 16 * sc_ix[i], &ry, 4);

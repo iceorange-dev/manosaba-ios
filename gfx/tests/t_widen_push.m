@@ -4,7 +4,9 @@
 // (written here as the chain's EmitterContext.EmitWidenPush emits it) shrinks it to the middle and moves the canvas' edges to the screen's, so
 // columns 10 and 1560 are drawn (a black fade over the whole screen); a quad over the canvas' middle half stays there (columns 462-1101: 300 and
 // 1300 not drawn, 700 drawn); the same full quad sampling a 16x16 texture stays centred (142-1421: 10 and 1560 not drawn, 700 drawn).
-// Every HUD draw centred (-DDM_TEST_WIDEN_PUSH_OFF): 1 fails.
+// With DM_WIDEN_SCREEN=2853x2007 (the Duo's inner screen: ky 1.25, the target 1280x900; plan item 320g) the same in y with widen_push_y: the solid
+// quad over the canvas reaches rows 10 and 890, one over its middle half rows 270-629 (200 and 700 not drawn, 450 drawn), the textured one
+// 90-809. Every HUD draw centred (-DDM_TEST_WIDEN_PUSH_OFF): 1 fails, in either run.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -15,8 +17,8 @@ static int fail, count;
 #define EXPECT(name, want, got) do { long long w=(want), g=(got); count++; printf("%-100s expected %-6lld → got %-6lld %s\n", name, w, g, w==g?"✓":"✗"); fail += w != g; } while (0)
 typedef struct { uint8_t *p; size_t n; } chain;
 static void emit(chain *c, unsigned op, const void *a, size_t n) { size_t z=(8+n+7)&~7ull; op_hdr h={op,(uint32_t)z}; memcpy(c->p+c->n,&h,8); if(n) memcpy(c->p+c->n+8,a,n); c->n+=z; }
-static prog_t g_pf, g_ph, g_pt; static uint8_t *g_cm, *g_ubo; static uint8_t g_px[1564 * 4];
-static void run(prog_t *pg, const float *quad, int tid) {   // one pass into a fresh 1280x720 target: a quad (x0, x1 in canvas pixels, block cb0 of the vertex stage: the ortho, then the quad); row 360 read
+static prog_t g_pf, g_ph, g_pt; static uint8_t *g_cm, *g_ubo; static uint8_t g_px[1564 * 4], g_py[900 * 4];
+static void run(prog_t *pg, const float *quad, int tid) {   // one pass into a fresh 1280x720 target: a quad (x0, x1, y0, y1 in canvas pixels, block cb0 of the vertex stage: the ortho, then the quad); row 360 and column 640 read
     memset(g_cm, 0, 512 << 10);
     float U[16] = {2.0f / 1280, 0, 0, -1,  0, -2.0f / 720, 0, 1,  0, 0, 1, 0,  0, 0, 0, 1}; memcpy(g_ubo, U, 64); memcpy(g_ubo + 64, quad, 16);
     chain c = {g_cm, 0};
@@ -33,11 +35,13 @@ static void run(prog_t *pg, const float *quad, int tid) {   // one pass into a f
     emit(&c, OP_END, NULL, 0);
     state_reset(); memset(&R, 0, sizeof R); mtl_sub_begin(); uint64_t hh = (uint64_t)c.p; mtl_sub_index(&hh, 1); nvn_exec(c.p);
     id<MTLTexture> mt = tex_mtl(&t); NSUInteger w = mt.width;
-    id<MTLBuffer> rb = [g_dev newBufferWithLength:w * 4 options:MTLResourceStorageModeShared]; res_add(rb);
-    [blit() copyFromTexture:mt sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 360, 0) sourceSize:MTLSizeMake(w, 1, 1) toBuffer:rb destinationOffset:0 destinationBytesPerRow:w * 4 destinationBytesPerImage:w * 4];
-    mtl_wait(mtl_sub_commit(), 5000000000ull); memset(g_px, 0, sizeof g_px); memcpy(g_px, rb.contents, MIN(w, 1564u) * 4);
+    NSUInteger h = mt.height; id<MTLBuffer> rb = [g_dev newBufferWithLength:w * 4 options:MTLResourceStorageModeShared], cb = [g_dev newBufferWithLength:h * 4 options:MTLResourceStorageModeShared]; res_add(rb); res_add(cb);
+    [blit() copyFromTexture:mt sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, h / 2, 0) sourceSize:MTLSizeMake(w, 1, 1) toBuffer:rb destinationOffset:0 destinationBytesPerRow:w * 4 destinationBytesPerImage:w * 4];
+    [blit() copyFromTexture:mt sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(w / 2, 0, 0) sourceSize:MTLSizeMake(1, h, 1) toBuffer:cb destinationOffset:0 destinationBytesPerRow:4 destinationBytesPerImage:h * 4];
+    mtl_wait(mtl_sub_commit(), 5000000000ull); memset(g_px, 0, sizeof g_px); memcpy(g_px, rb.contents, MIN(w, 1564u) * 4); memset(g_py, 0, sizeof g_py); memcpy(g_py, cb.contents, MIN(h, 900u) * 4);
 }
 static int red(int x) { return g_px[x * 4]; }
+static int redy(int y) { return g_py[y * 4]; }
 static void prog(prog_t *pg, uint64_t serial, id<MTLLibrary> l, NSString *fs, int tex) {
     pg->serial = serial; NvProg *p = [NvProg new];
     NvShader *v = [NvShader new]; v->fn = [l newFunctionWithName:@"vp"]; v->rf.nb = 2;
@@ -50,15 +54,15 @@ int main(void) { @autoreleasepool {
     setvbuf(stdout, NULL, _IONBF, 0); setenv("DM_NVN_TBDR", "0", 1); mtl_init();
     if (posix_memalign((void **)&g_cm, getpagesize(), 1 << 20)) abort(); mtl_pool_add(g_cm, 1 << 20); g_ubo = g_cm + (512 << 10);
     NSError *e = nil; id<MTLLibrary> l = [g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\n"
-        "struct SB { uint a; uint4 b[8]; float4 c; float4 d; int e; float4 rs[73]; int4 f; int g; float4 rsy[73]; float4 push; };\n"   // the chain's support buffer (widen_push at 2560)
+        "struct SB { uint a; uint4 b[8]; float4 c; float4 d; int e; float4 rs[73]; int4 f; int g; float4 rsy[73]; float4 push; float4 pushy; };\n"   // the chain's support buffer (widen_push at 2560, widen_push_y at 2576)
+        // the tail as EmitterContext.EmitWidenPushAxis emits it, an axis
+        "static float tail(float x, float w, float4 pp) { float push = pp.x, thr2 = pp.y, shrink = pp.z; float xs = x * (1.0 - shrink); float t = xs / w, t2 = t * t;\n"
+        "  bool move = thr2 < t2 && t2 < 0.994009 && (0.0 < shrink || t2 < thr2 * 1.012073); float by = push * w; return move ? (0.0 < t ? xs + by : xs - by) : xs; }\n"
         "struct VA { constant SB *s [[id(0)]]; constant float4 *u [[id(1)]]; };\n"
         "vertex float4 vp(uint n [[vertex_id]], constant VA &a [[buffer(0)]]) {\n"
-        "  float4 q = a.u[4]; float2 c[6] = {float2(q.x, 0), float2(q.y, 0), float2(q.x, 720), float2(q.y, 0), float2(q.y, 720), float2(q.x, 720)};\n"
+        "  float4 q = a.u[4]; float2 c[6] = {float2(q.x, q.z), float2(q.y, q.z), float2(q.x, q.w), float2(q.y, q.z), float2(q.y, q.w), float2(q.x, q.w)};\n"
         "  float4 p = float4(c[n], 0, 1); float4 o = float4(dot(a.u[0], p), dot(a.u[1], p), 0, 1);\n"
-        // the tail as EmitterContext.EmitWidenPush emits it
-        "  float push = a.s->push.x, thr2 = a.s->push.y, shrink = a.s->push.z; float xs = o.x * (1.0 - shrink); float t = xs / o.w, t2 = t * t;\n"
-        "  bool move = thr2 < t2 && t2 < 0.994009 && (0.0 < shrink || t2 < thr2 * 1.012073); float by = push * o.w;\n"
-        "  o.x = move ? (0.0 < t ? xs + by : xs - by) : xs; return o; }\n"
+        "  o.x = tail(o.x, o.w, a.s->push); o.y = tail(o.y, o.w, a.s->pushy); return o; }\n"
         "fragment float4 fsolid() { return float4(1, 0, 0, 1); }\n"
         "struct FT { texture2d<float> t [[id(0)]]; };\n"
         "fragment float4 ftex(constant FT &a [[buffer(0)]]) { return float4(1, 0, 0, 1) + a.t.read(uint2(0, 0)) * 0.0f; }\n" options:nil error:&e];
@@ -66,7 +70,17 @@ int main(void) { @autoreleasepool {
     prog(&g_pf, 8980, l, @"fsolid", 0); prog(&g_pt, 8981, l, @"ftex", 1);
     tex_t small = {.serial = 9790}; small.d.width = small.d.height = 16; small.d.depth = small.d.samples = small.d.levels = 1; small.d.target = NVN_TEXTURE_TARGET_2D; small.d.format = NVN_FORMAT_RGBA8;
     mtl_reg_tex(1890, &small, NULL);
-    float full[4] = {0, 1280, 0, 0}, mid[4] = {320, 960, 0, 0};
+    float full[4] = {0, 1280, 0, 720}, mid[4] = {320, 960, 0, 720}, midy[4] = {0, 1280, 180, 540};
+    if (widen_get()->ky != 1) {   // the Duo's inner screen: in y
+        run(&g_pf, full, 0);
+        EXPECT("taller: a solid HUD quad over the whole canvas pushed to the screen's top and bottom, rows 10 and 890 drawn [-DDM_TEST_WIDEN_PUSH_OFF: not]", 1, redy(10) == 255 && redy(890) == 255 && redy(450) == 255);
+        run(&g_pf, midy, 0);
+        EXPECT("... one over the canvas' middle half in y where the centred band puts it (270-629: 200 and 700 not, 450 drawn)", 1, redy(200) == 0 && redy(700) == 0 && redy(450) == 255);
+        run(&g_pt, full, 1890);
+        EXPECT("... the whole-canvas quad sampling a 16x16 texture: centred (90-809: 10 and 890 not, 450 drawn)", 1, redy(10) == 0 && redy(890) == 0 && redy(450) == 255);
+        EXPECT("no command buffer error", 0, mtl_last_commit_error());
+        printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
+    }
     run(&g_pf, full, 0);
     EXPECT("a solid HUD quad over the whole canvas: pushed to the screen's edges, columns 10 and 1560 drawn [-DDM_TEST_WIDEN_PUSH_OFF: not]", 1, red(10) == 255 && red(1560) == 255 && red(700) == 255);
     run(&g_pf, mid, 0);

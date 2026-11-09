@@ -69,7 +69,8 @@ static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex,
 // field; tools/tests/t_support_layout.py checks it against the chain's MSL)
 #define SUPPORT_RENDER_SCALE_Y 1392
 #define SUPPORT_WIDEN_PUSH 2560   // widen_push (the vertex edge push, plan item 320f): after render_scale_y; gfx/tests/t_scale_msl.py checks it
-#define SUPPORT_LEN (SUPPORT_WIDEN_PUSH + 16)   // the buffer's fields up to widen_push's end (a draw's copy, encode_args.inc)
+#define SUPPORT_WIDEN_PUSH_Y 2576   // widen_push_y (the edge push of the position's y, plan item 320g): after widen_push
+#define SUPPORT_LEN (SUPPORT_WIDEN_PUSH_Y + 16)   // the buffer's fields up to widen_push_y's end (a draw's copy, encode_args.inc)
 static int g_wd_push_on;   // the vertex stage being encoded for a HUD draw pushed to the screen's edges (draw.inc)
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;

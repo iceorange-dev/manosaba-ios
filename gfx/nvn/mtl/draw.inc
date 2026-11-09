@@ -183,7 +183,7 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
     // (plan item 320f): the whole viewport, as a widened draw's, and its vertex stage again with the push (shrunk to the middle, the canvas'
     // edges to the screen's: S2Arm's rule); one that samples more stays centred (a texture would stretch)
 #ifndef DM_TEST_WIDEN_PUSH_OFF   // negative control of t_widen_push only: every HUD draw centred
-    if (__builtin_expect(kx != 1, 0) && ky == 1 && (g_wd_fl & 7) == 2 && !(g_wd_fl & 16) && has_support(pr->sh[0])) {
+    if (__builtin_expect(kx != 1 || ky != 1, 0) && (g_wd_fl & 7) == 2 && !(g_wd_fl & 16) && has_support(pr->sh[0])) {   // (either axis, 320g)
         g_wd_push_on = 1; g_args_dirty[0] = 1; int ok = encode_args(en, pr->sh[0], 0, 1); g_wd_push_on = 0; g_args_dirty[0] = 1;   // (the next draw's vertex stage encoded again without it)
         if (!ok) return 0;
         g_wd_pushed++;

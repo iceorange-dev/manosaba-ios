@@ -325,13 +325,20 @@ namespace Ryujinx.Graphics.Shader.Translation
         // viewport gives), then a vertex whose t = x / w lies on or past the canvas' edge (t² > threshold²) but inside the screen (t² < 0.994009,
         // (1 − 3‰)²) moves out by sign(t) · push · w, so the canvas' edge lands on the screen's; with shrink 0 only those in the narrow band at the
         // 16:9 edge (t² < threshold² × 1.012073, ((1 + 3‰) / (1 − 3‰))²). All 0: the position as it is (x × 1, no vertex moved)
+        // (dm, plan item 320g) the same for the position's y with widen_push_y (a screen taller than 16:9)
         private void EmitWidenPush()
         {
-            Operand x = this.Load(StorageKind.Output, IoVariable.Position, null, Const(0));
+            EmitWidenPushAxis(0, SupportBufferField.WidenPush);
+            EmitWidenPushAxis(1, SupportBufferField.WidenPushY);
+        }
+
+        private void EmitWidenPushAxis(int axis, SupportBufferField field)
+        {
+            Operand x = this.Load(StorageKind.Output, IoVariable.Position, null, Const(axis));
             Operand w = this.Load(StorageKind.Output, IoVariable.Position, null, Const(3));
-            Operand push = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.WidenPush), Const(0));
-            Operand thr2 = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.WidenPush), Const(1));
-            Operand shrink = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.WidenPush), Const(2));
+            Operand push = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)field), Const(0));
+            Operand thr2 = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)field), Const(1));
+            Operand shrink = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)field), Const(2));
 
             Operand xs = this.FPMultiply(x, this.FPSubtract(ConstF(1f), shrink));
             Operand t = this.FPDivide(xs, w);
@@ -345,7 +352,7 @@ namespace Ryujinx.Graphics.Shader.Translation
             Operand by = this.FPMultiply(push, w);
             Operand moved = this.ConditionalSelect(this.FPCompareLess(ConstF(0f), t), this.FPAdd(xs, by), this.FPSubtract(xs, by));
 
-            this.Store(StorageKind.Output, IoVariable.Position, null, Const(0), this.ConditionalSelect(move, moved, xs));
+            this.Store(StorageKind.Output, IoVariable.Position, null, Const(axis), this.ConditionalSelect(move, moved, xs));
         }
 
         public void PrepareForVertexReturn(out Operand oldXLocal, out Operand oldYLocal, out Operand oldZLocal)

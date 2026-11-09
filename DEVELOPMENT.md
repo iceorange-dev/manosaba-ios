@@ -475,7 +475,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   screen-size constants left as the game's in draws reading the fragment coordinate. Tears of the Kingdom needs it: its upscale into the
   1920x1080 output reads texels at its pixel x 0.8333 + c of the game's 1920 columns, so the widened output shows the scene's left 1,603 of
   1,955 columns stretched over its width (batch 169's fit), and the frame 3500 staircase is in the scene target already.
-  320g (iOS's switch: batch 173; the present's crop and the Air measured: batch 174; the scan of the slots read: batch 175; the setting: batch 176) the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
+  320g (iOS's switch: batch 173; the present's crop and the Air measured: batch 174; the scan of the slots read: batch 175; the setting: batch 176; the edge push in y: batch 177) the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
   then the iPhone Air and the Duo's inner screen: fps, GPU time, the HUD's proportions (a circle stays round), no black band.
 - 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
   only when more than 24 of the last 120 frames were shown late (three in a row stepped up on scattered spikes, after which the GPU clock fell and
@@ -1847,3 +1847,16 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   line in main.m left out: 1 fails). The Duo's inner screen (taller than 16:9: the y axis' k) is not measured: the Duo is not the test phone.
   gfx 196 / 196 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
   connected. Smoke: Tears of the Kingdom's two red lines as before, instructions a draw as before (26,737-39,454); manosaba none.
+- [x] batch 177 · 320g, the edge push in y: chain 36a510fd7866 → 1f985598396c, every shader translated again. On the Mac with the Duo's inner
+  screen (`DM_WIDEN_SCREEN=2853x2007`: ky 1.25, 1920x1080 → 1920x1350) the picture was right (Zelda in proportion, more above and below, the
+  HUD in the middle band) but the title over black at frames 700-1200 left the scene in the top and bottom bands (the first and last 100 rows'
+  mean 109 / 98 of 255): the vertex edge push was x's only. It now runs per axis (`EmitterContext.EmitWidenPushAxis`, a support buffer field
+  `widen_push_y` after `widen_push`, at 2,576), and a HUD draw is pushed on either axis; those rows now 0 / 0, the shots looked at.
+  `gfx/tests/t_widen_push.m` also run with `DM_WIDEN_SCREEN=2853x2007`: 4 (a solid quad over the canvas reaches rows 10 and 890 of 900, one
+  over its middle half stays at rows 270-629, a textured one centred; `-DDM_TEST_WIDEN_PUSH_OFF` 1 fails in either run); `t_scale_msl.py` 6
+  (every vertex shader pushes in x and y; chain 36a510fd7866 fails that one). The first runs on the new chain stuttered (frame time p95
+  34-113 ms at frames 2700-3900: the system's Metal cache cold for the new libraries) and reached frame 3000-3900 in the 80 s. gfx 197 / 197
+  on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs (the new libraries); Android: built (the new
+  bundle), the phone not connected. Smoke on the new chain (no widening): Tears of the Kingdom's two red lines as before, frame 2100 reached
+  as in batch 176 (frame time p50 33.35 ms in both), s1300 and s1800 the same scenes, instructions a draw as before (27,280-38,885); manosaba
+  none, its s600 the title page (looked at).

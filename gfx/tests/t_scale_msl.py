@@ -6,8 +6,9 @@ shader divides the fragment coordinate's y by render_scale_y[0] (its x by render
 reading render_scale[i] also reads render_scale_y[i] (the axis' scale: TexelFetchScale, TextureSizeUnscale); the reflections give texture
 bindings their scale index (Tears of the Kingdom's upscale ac58fc18eda5f387: its one texture 0, as its MSL passes) and fragment shaders
 frag_coord; widen_push after render_scale_y at the offset the Metal host writes (SUPPORT_WIDEN_PUSH), and every vertex shader ends with the
-edge push (EmitterContext.EmitWidenPush: its three values read, the 0.994009 bound); the reflections give uniform bindings the slots their
-shader reads (the upscale's: 0, 1 and 4). The chains before: b-ce89a37d8939 6 fail, b-8f8b45e7aaca 2, b-28614768c859 (no slots yet) 1.
+edge push in x and in y (EmitterContext.EmitWidenPushAxis: the three values of widen_push and of widen_push_y read, the 0.994009 bound); the
+reflections give uniform bindings the slots their shader reads (the upscale's: 0, 1 and 4). The chains before: b-ce89a37d8939 6 fail,
+b-8f8b45e7aaca 2, b-28614768c859 2, b-36a510fd7866 (no push in y) 1.
 Usage: t_scale_msl.py [<shader cache>/b-<chain version>]   (default: $DM_ROOT/build/cache/metal_shader_cache/b-<this chain>)"""
 import glob, json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.join(HERE, '..', '..')
@@ -57,15 +58,18 @@ check('the reflection gives the upscale\'s one texture its scale index 0, and fr
 cb = [b for b in refl.get('bindings', []) if b.get('kind') == 'cbuf']
 print(f'ac58fc18eda5f387: uniform bindings {[(b["msl_name"], b.get("cb_slots")) for b in cb]}')
 check('... and its uniform binding the slots its MSL reads (_m0[0], _m0[1] and _m0[4]: [[0, 1], [4, 4]]; plan item 320g)', len(cb) == 1 and cb[0].get('cb_slots') == [[0, 1], [4, 4]])
-pm = (lay or [])[-1] if lay and lay[-1][1] == 'float4' and lay[-1][2] == 1 and len(arrays) == 2 and lay[-1][3] > arrays[1][3] else None
-host_push = re.search(r'#define SUPPORT_WIDEN_PUSH (\d+)', open(os.path.join(ROOT, 'gfx/nvn/mtl/args.inc')).read())
+after = [x for x in (lay or []) if len(arrays) == 2 and x[3] > arrays[1][3] and x[1] == 'float4' and x[2] == 1]   # widen_push, widen_push_y (320g)
+pm = after[0] if after else None; py = after[1] if len(after) > 1 else None
+args_inc = open(os.path.join(ROOT, 'gfx/nvn/mtl/args.inc')).read()
+host_push = re.search(r'#define SUPPORT_WIDEN_PUSH (\d+)', args_inc); host_push_y = re.search(r'#define SUPPORT_WIDEN_PUSH_Y (\d+)', args_inc)
 vs = tails = 0
 for f in files:
     jf = f[:-6] + '.json'
     if not os.path.exists(jf) or json.load(open(jf)).get('stage') != 'vs': continue
     vs += 1; src = open(f, errors='ignore').read()
-    tails += bool(pm and all(re.search(r'support_buffer\)\.%s\.%s;' % (pm[0], c), src) for c in 'xyz') and '0.9940090179443359375' in src)
-print(f'widen_push at {pm and pm[3]} (the Metal host writes {host_push and host_push.group(1)}); vertex shaders {vs}, ending with the edge push {tails}')
-check('widen_push where the host writes it, and every vertex shader ends with the edge push', pm is not None and host_push and pm[3] == int(host_push.group(1)) and vs > 0 and tails == vs)
+    tails += bool(pm and py and all(re.search(r'support_buffer\)\.%s\.%s;' % (m[0], c), src) for m in (pm, py) for c in 'xyz') and '0.9940090179443359375' in src)
+print(f'widen_push at {pm and pm[3]}, widen_push_y at {py and py[3]} (the Metal host writes {host_push and host_push.group(1)}, {host_push_y and host_push_y.group(1)}); vertex shaders {vs}, ending with the edge push in x and y {tails}')
+check('widen_push and widen_push_y where the host writes them, and every vertex shader ends with the edge push in x and y', pm is not None and py is not None and host_push and host_push_y
+      and pm[3] == int(host_push.group(1)) and py[3] == int(host_push_y.group(1)) and vs > 0 and tails == vs)
 print(f'== {n} checks, {fail} failed ==')
 sys.exit(fail != 0)
