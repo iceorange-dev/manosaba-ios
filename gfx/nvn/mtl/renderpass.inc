@@ -347,6 +347,19 @@ static RENC rp_begin_ex(int clear_only) {
         g_pass.dfmt = g_pass.hd ? (uint32_t)dt.pixelFormat : 0; g_pass.sfmt = stt ? (uint32_t)stt.pixelFormat : 0;
         if (dt || stt) g_pass.samples = (uint32_t)(dt ? dt : stt).sampleCount;
         pass_dims(pd, (NSUInteger)R.rt.n, &g_pass.tw, &g_pass.th);
+        // The pass's size as the game sees it against its targets' storage (plan item 320c): kx, ky the exact widening of this pass (1564 / 1280,
+        // 1955 / 1600), by which its viewports and scissors are mapped (draw.inc vp_map); 1 when no target is widened
+        { NSUInteger nw = 0, nh = 0;
+          for (int i = 0; i < R.rt.n && i < 8; i++) if (R.rt.color[i] && pd.colorAttachments[i].texture) {
+              NSUInteger l = pd.colorAttachments[i].level, w = mip_extent(R.rt.color[i]->d.width, l), h = mip_extent(R.rt.color[i]->d.height, l); nw = nw ? MIN(nw, w) : w; nh = nh ? MIN(nh, h) : h; }
+          if (R.rt.depth && (dt || stt)) { NSUInteger l = (dt ? pd.depthAttachment : pd.stencilAttachment).level, w = mip_extent(R.rt.depth->d.width, l), h = mip_extent(R.rt.depth->d.height, l);
+              nw = nw ? MIN(nw, w) : w; nh = nh ? MIN(nh, h) : h; }
+#ifndef DM_TEST_WIDEN_VP_KEEP   // negative control of t_widen_vp only: viewports and scissors left as the game set them
+          g_pass.kx = nw && g_pass.tw > nw ? (double)g_pass.tw / nw : 1; g_pass.ky = nh && g_pass.th > nh ? (double)g_pass.th / nh : 1;
+#else
+          g_pass.kx = g_pass.ky = 1;
+#endif
+        }
         g_enc_pso = nil; g_enc_dss = nil;
     }
     if (g_vis_on) {
@@ -402,6 +415,13 @@ static int scissor_full(const tex_t *t, const view_t *v, int has_v) { return sci
 // depth-stencil caches are dropped here
 static int clear_scissor(MTLScissorRect *out) {
     NSUInteger tw = g_pass.tw, th = g_pass.th; *out = (MTLScissorRect){0, 0, tw, th};
+    if (R.has_sc && (g_pass.kx != 1 || g_pass.ky != 1)) {   // plan item 320c: the game's scissor mapped to the widened target
+        long x0 = (long)floor((R.sc.x < 0 ? 0 : R.sc.x) * g_pass.kx), y0 = (long)floor((R.sc.y <= 0 ? 0 : R.sc.y) * g_pass.ky);
+        long x1 = (long)ceil(((double)R.sc.x + R.sc.w) * g_pass.kx), y1 = (long)ceil(((double)R.sc.y + R.sc.h) * g_pass.ky);
+        if (x1 > (long)tw) x1 = tw; if (y1 > (long)th) y1 = th;
+        if (x1 <= x0 || y1 <= y0) return 0;
+        *out = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)}; return 1;
+    }
     if (!R.has_sc) return 1;
     int64_t x0 = MAX(R.sc.x, 0), y0 = MAX(R.sc.y, 0), x1 = MIN((int64_t)R.sc.x + R.sc.w, (int64_t)tw), y1 = MIN((int64_t)R.sc.y + R.sc.h, (int64_t)th);
     if (x1 <= x0 || y1 <= y0) return 0;

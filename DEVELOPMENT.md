@@ -455,7 +455,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   copies stay whole), else w plus an even count (1024 → 1252).
   320b (batch 164) widened storage: a 16:9-family texture used as a colour or depth target gets its Metal storage at the widened size while the game's view of
   its size stays (`DM_WIDEN_SCREEN=<w>x<h>` stands in for a phone's screen on the Mac); the render target heap's placement scaled for it.
-  320c viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
+  320c (batch 165: the mapping; the HUD's centring with 320d) viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
   full-canvas 2D page with black side bands.
   320d the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
   found in the blocks a draw binds, their x row divided by k in a copy for the draw (reused while the block is unchanged); orthographic ones left.
@@ -1672,3 +1672,11 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   left the scale at 0 without the switch, and `t_rtheap` caught it: a heap of size 0 refused by the debug layer. gfx 188 / 188 on Metal 4 and Metal
   3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (without the switch):
   Tears of the Kingdom's two red lines as before, s1300 the torch; manosaba none.
+- [x] batch 165 · 320c (the mapping): a pass whose targets are widened knows its exact widening (its storage's size against the game's at the
+  attachment's level: 1564 / 1280, 1955 / 1600; `g_pass.kx`, `ky`), and a draw's viewport and scissor and a clear's scissor are mapped by it (the
+  scissor's edges outward to whole pixels). With 2868x1320 on the M5: the game's viewport over the whole 1280x720 target reaches column 1560 of
+  1564, one of the left 640 columns covers the left 782, a scissor and a clear of the left 640 likewise (`gfx/tests/t_widen_vp.m` 6,
+  `-DDM_TEST_WIDEN_VP_KEEP` 4 fail). Every draw is mapped as a 3D one for now; which are the HUD's (centred instead) is 320d's. gfx 189 / 189 on
+  Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (without
+  the switch, so nothing mapped): Tears of the Kingdom's two red lines as before, the shots the same scenes as batch 164's (a moment apart); manosaba
+  none.

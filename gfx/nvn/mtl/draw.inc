@@ -126,12 +126,13 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
     enc_r_stencil_ref(en, S.st_ref[0], S.st_ref[1]);
     if (g_lay.active && g_lay.amp != g_lay.cur - g_lay.first) { g_lay.amp = g_lay.cur - g_lay.first; enc_r_layer(en, (uint32_t)g_lay.amp); }   // this draw's layer in the layered pass
     // Viewport / scissor (clamped within the target size)
-    NSUInteger tw = g_pass.tw, th = g_pass.th;
-    if (S.has_vp) enc_r_viewport(en, (MTLViewport){S.vp[0][0], S.vp[0][1], S.vp[0][2], S.vp[0][3], S.dr[0], S.dr[1]});
+    NSUInteger tw = g_pass.tw, th = g_pass.th; double kx = g_pass.kx, ky = g_pass.ky;   // kx, ky: a widened target's (320c), the game's viewport and scissor mapped onto it
+    if (S.has_vp) enc_r_viewport(en, (MTLViewport){S.vp[0][0] * kx, S.vp[0][1] * ky, S.vp[0][2] * kx, S.vp[0][3] * ky, S.dr[0], S.dr[1]});
     else enc_r_viewport(en, (MTLViewport){0, 0, tw, th, 0, 1});
     MTLScissorRect sc = {0, 0, tw, th};
     if (R.has_sc) {
         long x0 = R.sc.x < 0 ? 0 : R.sc.x, y0 = R.sc.y <= 0 ? 0 : R.sc.y, x1 = (long)R.sc.x + R.sc.w, y1 = (long)R.sc.y + R.sc.h;
+        if (kx != 1 || ky != 1) { x0 = (long)floor(x0 * kx); y0 = (long)floor(y0 * ky); x1 = (long)ceil(x1 * kx); y1 = (long)ceil(y1 * ky); }
         if (x1 > (long)tw) x1 = tw; if (y1 > (long)th) y1 = th;
         if (x1 <= x0 || y1 <= y0) return 1;
         sc = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
