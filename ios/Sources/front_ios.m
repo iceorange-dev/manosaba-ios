@@ -24,11 +24,19 @@ static CAMetalLayer *g_layer;
 
 // Game picture size: DM_GAME_RES=<w>x<h>, else the profile's screen size. The presenter keeps this aspect ratio and centers the picture; the game view
 // below is laid out the same way, so normalized touch coordinates match the picture
+// The widening (plan item 320g, DM_WIDEN=1, env.txt for now): the picture is the screen's aspect, over the whole window
+static int widen_on(void) { const char *e = getenv("DM_WIDEN"); return e && atoi(e) > 0; }
+static int widen_screen_px(unsigned *w, unsigned *h) {   // the first window scene's screen, landscape (host/native_size.h)
+    for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) if ([sc isKindOfClass:UIWindowScene.class]) {
+        CGSize nb = ((UIWindowScene *)sc).screen.nativeBounds.size; return dm_widen_screen((unsigned)nb.width, (unsigned)nb.height, w, h); }
+    return 0;
+}
 static void game_size(double *w, double *h) {
     static double gw, gh;
     if (!gw) {
         unsigned ew, eh; const char *e = getenv("DM_GAME_RES");
         if (e && sscanf(e, "%ux%u", &ew, &eh) == 2 && ew && eh) { gw = ew; gh = eh; }
+        else if (widen_on() && widen_screen_px(&ew, &eh)) { gw = ew; gh = eh; }
         else { gw = dm_game.screen_w > 0 ? dm_game.screen_w : 1280; gh = dm_game.screen_h > 0 ? dm_game.screen_h : 720; }
     }
     *w = gw; *h = gh;
@@ -46,6 +54,7 @@ static CGRect letterbox_rect(CGRect f) {
 // 2 smaller; *src: "the system's" or "measured" (the log). The hinge's fold (division) is not avoided: the picture crosses it like an open book
 static CGRect picture_rect(UIView *v, int *how, const char **src) {
     double gw, gh; game_size(&gw, &gh); CGRect b = v.bounds; dm_rect av[8]; int n = 0; *src = "";
+    if (widen_on()) { *src = "the widening"; *how = 0; return b; }   // (plan item 320g) the whole window: the HUD stays in the middle 16:9 band, clear of the cutouts
     if (@available(iOS 27.1, *)) if (!getenv("DM_TEST_NO_RESERVED"))   // (the test switch: the measured cutout where the system reports one too)
         for (UIViewReservedRegion *r in [v reservedRegionsOfKind:[UIViewReservedRegionKind occlusionRegionKind]])
             if (r.active && n < 8) { CGRect f = r.frame; av[n++] = (dm_rect){f.origin.x, f.origin.y, f.size.width, f.size.height}; *src = "the system's"; }

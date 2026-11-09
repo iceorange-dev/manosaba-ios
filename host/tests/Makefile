@@ -63,6 +63,7 @@ run: \
 	$(B)/t_native_size \
 	$(B)/t_native_size_long \
 	$(B)/t_native_size_unclamped \
+	$(B)/t_native_size_as_given \
 	$(B)/t_freeze \
 	$(B)/t_freeze_none \
 	$(B)/t_fs \
@@ -343,6 +344,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_native_size_unclamped.log)" -ne 2 ]; then \
 	   cat $(B)/t_native_size_unclamped.log; echo "t_native_size_unclamped: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_native_size_unclamped: the screen's size whatever the window textures hold fails 2, as expected"
+	@status=0; $(B)/t_native_size_as_given > $(B)/t_native_size_as_given.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_native_size_as_given.log)" -ne 1 ]; then \
+	   cat $(B)/t_native_size_as_given.log; echo "t_native_size_as_given: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_native_size_as_given: the widening's screen as given fails 1, as expected"
 	$(B)/t_freeze
 	@status=0; $(B)/t_freeze_none > $(B)/t_freeze_none.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "✗ freeze: one dump" $(B)/t_freeze_none.log; then \
@@ -997,6 +1002,8 @@ $(B)/t_native_size_long: t_native_size.c ../native_size.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_NATIVE_LONG_SIDE -I.. -o $@ t_native_size.c
 $(B)/t_native_size_unclamped: t_native_size.c ../native_size.h | $(B)
 	clang -O1 -Wall -Werror -DDM_TEST_NATIVE_FIT_UNCLAMPED -I.. -o $@ t_native_size.c
+$(B)/t_native_size_as_given: t_native_size.c ../native_size.h | $(B)
+	clang -O1 -Wall -Werror -DDM_TEST_WIDEN_SCREEN_AS_GIVEN -I.. -o $@ t_native_size.c
 $(B)/t_gameslot: t_gameslot.c ../game/game_slot.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-result -I.. -o $@ t_gameslot.c ../game/game_slot.c
 $(B)/t_ktrace: t_ktrace.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

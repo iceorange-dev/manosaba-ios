@@ -475,7 +475,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   screen-size constants left as the game's in draws reading the fragment coordinate. Tears of the Kingdom needs it: its upscale into the
   1920x1080 output reads texels at its pixel x 0.8333 + c of the game's 1920 columns, so the widened output shows the scene's left 1,603 of
   1,955 columns stretched over its width (batch 169's fit), and the frame 3500 staircase is in the scene target already.
-  320g the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
+  320g (iOS's switch: batch 173) the present of the widened image over the whole screen; Tears of the Kingdom handheld on the Mac with `DM_WIDEN_SCREEN=2868x1320` first,
   then the iPhone Air and the Duo's inner screen: fps, GPU time, the HUD's proportions (a circle stays round), no black band.
 - 321 the frame step's rules measured on Tears of the Kingdom on an iPhone (S2Arm), for when `DM_FRAME_STEP=vsync` becomes the iOS default: step up
   only when more than 24 of the last 120 frames were shown late (three in a row stepped up on scattered spikes, after which the GPU clock fell and
@@ -1793,3 +1793,13 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Android: built (the new bundle), the phone not connected. Smoke on the new chain (no widening): Tears of the Kingdom's two red lines as
   before, s1300 and s1800 the same scenes a moment apart, instructions a draw as before (27,009-39,889); manosaba none, its s600 the title
   page (looked at).
+- [x] batch 173 · 320g, iOS's switch, and CI: `DM_WIDEN=1` (env.txt for now) widens to the screen the game starts on: `ios/Sources/main.m`
+  sets `DM_WIDEN_SCREEN` to its pixels landscape (`host/native_size.h` `dm_widen_screen`: the long side across, none within 1 % of 16:9), and
+  the front end sizes the game view to the whole window with no cutout avoided (the HUD stays in the middle 16:9 band, inside the safe area);
+  the present fills a target within 1 % of the picture's aspect (`present_vp`: 2346x1080 on the Air's 2736x1260, 0.04 %). `host/tests/
+  t_native_size.c` 13 (the Air's 1260x2736 and 2736x1260 both 2736x1260, 16:9 none; `-DDM_TEST_WIDEN_SCREEN_AS_GIVEN` 1 fails). CI: the push
+  runs since batch 157 failed two tool tests that need the game's data the runner lacks (`t_mac_shader_min.py`'s built libraries,
+  `t_vk_subgroup.py`'s captures); both now skip that part without it, as the other tool tests do (with it, as before; `T_MAC_MIN_OLD=1` 2
+  fail). 320f's UV extension of translucent overlays (S2Arm's core judges them by their geometry) waits for a frame that needs it, as compute's
+  widening. gfx 196 / 196 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the
+  phone not connected. Smoke: Tears of the Kingdom's two red lines as before, instructions a draw as before (27,222-39,334); manosaba none.

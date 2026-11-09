@@ -13,6 +13,8 @@ fails = total = 0
 def check(name, ok, detail=''):
     global fails, total
     total += 1; fails += not ok; print(f'{name:<110} {"✓" if ok else "✗"}' + (f'\n    {detail}' if detail and not ok else ''))
+if not os.path.isdir(os.path.join(DM_ROOT, 'shextract')):   # the game's captures (CI's runner has none)
+    print(f'(no manosaba captures at {os.path.join(DM_ROOT, "shextract")}: skipped)'); sys.exit(0)
 with tempfile.TemporaryDirectory() as w:
     out = os.path.join(w, 't.dmvk'); env = dict(os.environ, DM_GAME='manosaba', DM_ROOT=DM_ROOT, J='1')
     r = subprocess.run([sys.executable, os.path.join(ROOT, 'gfx', 'tools', 'dmsh_vk.py'), os.path.join(DM_ROOT, 'shextract'), out, KEY], capture_output=True, text=True, env=env)

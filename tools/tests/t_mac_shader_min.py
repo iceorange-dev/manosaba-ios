@@ -30,7 +30,8 @@ check(f'a kernel compiled with its flags records macOS {mac_min} or older (recor
 chain = subprocess.run([sys.executable, os.path.join(ROOT, 'gfx', 'tools', 'dmsh_chain.py')], capture_output=True, text=True).stdout.strip()
 libs = sorted(glob.glob(os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache', 'b-' + chain, '*_b.metallib')))[:40]
 newer = [os.path.basename(l) for l in libs if (lambda v: v is None or ver(v) > ver(mac_min))(target(l))]
-if not os.environ.get('T_MAC_MIN_OLD'):
+if not libs: print(f'(no built libraries of chain {chain}: that check skipped)')
+elif not os.environ.get('T_MAC_MIN_OLD'):
     check(f'the built libraries of chain {chain} record no newer system ({len(libs)} sampled)', libs and not newer, ', '.join(newer[:4]))
 print(f'{total} checks, {fails} failed')
 sys.exit(1 if fails else 0)

@@ -6,7 +6,8 @@
 // than 16:9 at its height (the width decides, 1998x1124), a screen too small (0).
 // The long side's 9/16 alone (-DDM_TEST_NATIVE_LONG_SIDE): the screens wider than 16:9 overflow their short side, 3 fail. The screen's size whatever
 // the textures hold (-DDM_TEST_NATIVE_FIT_UNCLAMPED): 2 fail. dm_native_other_screen: the iPhone Duo (iPhone19,4) gives its inner display, 2007x2853;
-// the iPhone Air (iPhone18,4) nothing.
+// the iPhone Air (iPhone18,4) nothing. dm_widen_screen (plan item 320g): the Air's 1260x2736 (portrait, as nativeBounds gives it) and 2736x1260
+// both 2736x1260, a 16:9 1920x1080 none; the size as given (-DDM_TEST_WIDEN_SCREEN_AS_GIVEN): 1 fails.
 #include <stdio.h>
 #include "native_size.h"
 
@@ -35,6 +36,9 @@ int main(void) {
     { unsigned w = 0, h = 0; int k = dm_native_other_screen("iPhone19,4", &w, &h), k2 = dm_native_other_screen("iPhone18,4", &w, &h); n++;
       int good = k == 1 && w == 2007 && h == 2853 && k2 == 0; fail += !good;
       printf("%-60s %s\n", "other screen: the iPhone Duo's inner 2007x2853; the iPhone Air none", good ? "✓" : "✗"); }
+    { unsigned w = 0, h = 0, w2 = 0, h2 = 0, w3 = 0, h3 = 0; int a = dm_widen_screen(1260, 2736, &w, &h), b = dm_widen_screen(2736, 1260, &w2, &h2), c = dm_widen_screen(1920, 1080, &w3, &h3); n++;
+      int good = a == 1 && w == 2736 && h == 1260 && b == 1 && w2 == 2736 && h2 == 1260 && c == 0; fail += !good;
+      printf("%-60s %s\n", "widen screen: the Air's 1260x2736 and 2736x1260 as 2736x1260; 16:9 none", good ? "✓" : "✗"); }
     printf("t_native_size: %d checks, %d failed\n", n, fail);
     return fail != 0;
 }

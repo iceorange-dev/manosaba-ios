@@ -17,6 +17,21 @@ static inline int dm_native_size(unsigned w, unsigned h, unsigned *W, unsigned *
     return 1;
 }
 
+// Plan item 320g (the widening on a phone, DM_WIDEN=1): the screen of w x h pixels as the widening takes it (gfx/nvn/core/widen.h,
+// DM_WIDEN_SCREEN), landscape: the long side across; 0 when it is within 1 % of 16:9 (nothing to widen). ios/Sources/main.m sets DM_WIDEN_SCREEN
+// from it, front_ios.m sizes the game view to it (the whole window, no cutout avoided: the HUD stays in the middle 16:9 band)
+static inline int dm_widen_screen(unsigned w, unsigned h, unsigned *W, unsigned *H) {
+    if (!w || !h) return 0;
+#ifndef DM_TEST_WIDEN_SCREEN_AS_GIVEN   // negative control of t_native_size only: the size as given (a portrait screen then reads narrower than 16:9)
+    unsigned lng = w > h ? w : h, sht = w > h ? h : w;
+#else
+    unsigned lng = w, sht = h;
+#endif
+    double a = (double)lng / sht / (16.0 / 9.0);
+    if (a > 0.99 && a < 1.01) return 0;
+    *W = lng; *H = sht; return 1;
+}
+
 // Plan item 302 (the iPhone Duo: the game's window moves between two displays while it runs): dm_native_size of a screen of w x h pixels, at most
 // the display the game made its window textures at (dw x dh, the size reported to it at boot): a larger picture would reach only their
 // top-left part. 0 when it would be under 360 lines. games/manosaba/graphics.c renders at it when the window changes screens
