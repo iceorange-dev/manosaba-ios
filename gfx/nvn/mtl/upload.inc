@@ -485,6 +485,9 @@ void mtl_pool_stats(uint64_t out[6]) {   // timing line (hle/timing.inc): pools,
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse) {
     MTLTextureDescriptor *d = tex_desc(t, t->has_layout);   // a CPU-filled texture without a packaged layout may become a render target later (see tex_gpu_write)
     if (!d) return nil;
+#ifdef DM_TEST_WIDEN_ANY   // negative control of t_widen_tex only
+    tex_widen(t, d);
+#endif
     int same = reuse && reuse.width == d.width && reuse.height == d.height && reuse.depth == d.depth && reuse.pixelFormat == d.pixelFormat && reuse.textureType == d.textureType &&
                reuse.mipmapLevelCount == d.mipmapLevelCount && reuse.arrayLength == d.arrayLength && reuse.usage == d.usage;
     id<MTLTexture> mt = same ? reuse : [g_dev newTextureWithDescriptor:d];

@@ -453,7 +453,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   offset 213), a screen narrower than 16:9 Ky the same way in rows over 1080 (the Duo's inner 1.42: 1350); the 16:9 family (|w·9 / (h·16) − 1| <
   4 %); a widened width w + w·extra / 1920 when that is whole for w or w doubled up to 4096 (1280 → 1564, 1600 → 1955, 160 → 195: mip chains and
   copies stay whole), else w plus an even count (1024 → 1252).
-  320b widened storage: a 16:9-family texture used as a colour or depth target gets its Metal storage at the widened size while the game's view of
+  320b (batch 164) widened storage: a 16:9-family texture used as a colour or depth target gets its Metal storage at the widened size while the game's view of
   its size stays (`DM_WIDEN_SCREEN=<w>x<h>` stands in for a phone's screen on the Mac); the render target heap's placement scaled for it.
   320c viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
   full-canvas 2D page with black side bands.
@@ -1663,3 +1663,12 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   fail). Nothing uses it yet: 320b gives the targets their widened storage. gfx 185 / 185 on Metal 4 and Metal 3, host 216 / 216, sanitizer,
   texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s1300
   the cave behind Zelda (looked at before); manosaba none.
+- [x] batch 164 · 320b: with `DM_WIDEN_SCREEN=<w>x<h>` (off without it; the picture is not right before 320c-g), a 16:9-family texture the GPU draws
+  into (2D, 2D array, multisample, rectangle, with a render-target usage: not CPU-filled, not compressed, not linear or a buffer; display textures
+  too, for 320g) gets its Metal storage at core/widen.h's widened size while the game's view of its size stays, and the render-target heaps are
+  made and placed at their scale times k (or ky), so what the game overlaps still overlaps (`gfx/nvn/mtl/textures.inc` tex_widen). On the M5
+  with 2868x1320: a 1280x720 target 1564x720, a level 3 of four 195 wide, 1024x768 unchanged, a CPU-filled 1280x720 image unchanged; with the Duo's
+  inner 2670x1878 1280x900; without the switch 1280x720 (`gfx/tests/t_widen_tex.m` 7 / 3 / 2, `-DDM_TEST_WIDEN_ANY` 2 fail). A first version
+  left the scale at 0 without the switch, and `t_rtheap` caught it: a heap of size 0 refused by the debug layer. gfx 188 / 188 on Metal 4 and Metal
+  3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (without the switch):
+  Tears of the Kingdom's two red lines as before, s1300 the torch; manosaba none.

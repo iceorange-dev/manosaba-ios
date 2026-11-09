@@ -178,6 +178,38 @@ static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
             | (unp ? MTLTextureUsageShaderWrite | MTLTextureUsagePixelFormatView : 0);   // No BC: textures in the decompressed format are written by the GPU decompression kernel (up_dec) / receive whole-block copies from ASTC sources (copy_t2t_astc)
     return d;
 }
+#include "../core/widen.h"
+// ---------- Widened storage (plan item 320b; S2Arm's GPU widening, Apache-2.0, written anew) ----------
+// With DM_WIDEN_SCREEN=<w>x<h> (the screen to fill; on by nothing else yet: the rest of 320 makes the picture right), a 16:9-family texture the GPU
+// draws into (2D, 2D array, multisample, rectangle; a usage with render target: not CPU-filled, not compressed, not linear or a buffer) gets its
+// Metal storage at the widened size of core/widen.h, the game's view of its size unchanged; display textures too (the present shows them whole,
+// 320g). The render-target heaps are made and placed at their scale times k (or ky) so that what the game overlaps still overlaps
+static widen_t g_widen = {0, 0, 1.0, 1.0}; static pthread_once_t g_widen_once = PTHREAD_ONCE_INIT; static _Atomic uint64_t g_widen_n;
+static void widen_init(void) {
+    const char *e = getenv("DM_WIDEN_SCREEN"); int w = 0, h = 0;
+    if (!e || sscanf(e, "%dx%d", &w, &h) != 2) return;
+    g_widen = widen_for_screen(w, h);
+    if (g_widen.extra_w || g_widen.extra_h) MLOG("DM_WIDEN_SCREEN=%dx%d: 16:9 targets the GPU draws into widened, k %.6f / ky %.6f (1920x1080 → %dx%d; plan item 320, partial: the picture is not right yet)",
+                                               w, h, g_widen.k, g_widen.ky, widen_width(&g_widen, 1920, 1080), widen_height(&g_widen, 1920, 1080));
+    else MLOG("DM_WIDEN_SCREEN=%dx%d: within 1 %% of 16:9, nothing widened", w, h);
+}
+static const widen_t *widen_get(void) { pthread_once(&g_widen_once, widen_init); return &g_widen; }
+static double widen_scale(void) { const widen_t *w = widen_get(); return w->k > w->ky ? w->k : w->ky; }
+static void tex_widen(const tex_t *t, MTLTextureDescriptor *d) {
+    const widen_t *w = widen_get(); if (!w->extra_w && !w->extra_h) return;
+    int kind = t->d.target == NVN_TEXTURE_TARGET_2D || t->d.target == NVN_TEXTURE_TARGET_2D_ARRAY || t->d.target == 5 || t->d.target == 6 || t->d.target == NVN_TEXTURE_TARGET_RECTANGLE;
+#ifndef DM_TEST_WIDEN_ANY   // negative control of t_widen_tex only: CPU-filled textures widened too
+    if (!kind || !(d.usage & MTLTextureUsageRenderTarget)) return;
+#else
+    if (!kind) return;
+#endif
+    NSUInteger nw = (NSUInteger)widen_width(w, (int)d.width, (int)d.height), nh = (NSUInteger)widen_height(w, (int)d.width, (int)d.height);
+    if (nw == d.width && nh == d.height) return;
+    if (atomic_fetch_add(&g_widen_n, 1) < 6) MLOG("widened storage: texture %llu %lux%lu format %#x → %lux%lu", (unsigned long long)t->serial, (unsigned long)d.width, (unsigned long)d.height, t->d.format,
+                                                  (unsigned long)nw, (unsigned long)nh);
+    d.width = nw; d.height = nh;
+}
+uint64_t mtl_widen_count(void) { return atomic_load(&g_widen_n); }
 // In-place upgrade: when the original texture was not created with PixelFormatView (off by default, to keep Apple GPU lossless compression) but a different-format view is needed, create a new one with the original spec + PixelFormatView, copy over every slice × level, and replace the registration.
 // Count: across the 4 screens character select / camp / wilderness / combat, 17473 textures needed a different-format view 0 times, so this is a fallback and does not rely on predicting which textures need it
 static id<MTLTexture> tex_upgrade_pfv(const tex_t *t, id<MTLTexture> base, MTLPixelFormat view_pf) {

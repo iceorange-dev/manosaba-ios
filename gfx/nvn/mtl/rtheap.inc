@@ -50,7 +50,7 @@ static id<MTLTexture> rt_heap_texture(const tex_t *t, MTLTextureDescriptor *d) {
         if (slot < 0) { RED_ONCE(98, "render-target heaps: more than 8 virtual pools, the rest keep textures of their own"); return nil; }
         MTLHeapDescriptor *hd = [MTLHeapDescriptor new];
         hd.type = MTLHeapTypePlacement; hd.storageMode = MTLStorageModePrivate; hd.hazardTrackingMode = MTLHazardTrackingModeUntracked;
-        hd.size = rt_heap_size(t->pool->size, g_rth_scale);
+        hd.size = rt_heap_size(t->pool->size, g_rth_scale * widen_scale());
         id<MTLHeap> h = [g_dev newHeapWithDescriptor:hd];
         if (!h) { RED_ONCE(99, "render-target heap of %.1f MiB not made: textures of their own", hd.size / 1048576.0); return nil; }
         res_add((id<MTLResource>)h);   // resident as a whole: its textures are not added one by one
@@ -59,7 +59,7 @@ static id<MTLTexture> rt_heap_texture(const tex_t *t, MTLTextureDescriptor *d) {
     }
     id<MTLHeap> h = g_rth[slot].heap;
     MTLSizeAndAlign need = [g_dev heapTextureSizeAndAlignWithDescriptor:d]; uint64_t at;
-    if (!rt_heap_place((uint64_t)t->off, t->size, g_rth_scale, need.size, need.align, h.size, &at)) { g_rth_out++; g_rth_out_b += need.size; return nil; }
+    if (!rt_heap_place((uint64_t)t->off, t->size, g_rth_scale * widen_scale(), need.size, need.align, h.size, &at)) { g_rth_out++; g_rth_out_b += need.size; return nil; }
     id<MTLTexture> mt = [h newTextureWithDescriptor:d offset:at];
     if (!mt) { g_rth_out++; g_rth_out_b += need.size; return nil; }
     g_rth_placed++; g_rth_placed_b += need.size;
@@ -159,6 +159,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
     { id<MTLTexture> lt = tex_linear(t); if (lt) { res_add(lt); serial_put(t->serial, lt); return lt; } }
     MTLTextureDescriptor *d = tex_desc(t, 0);
     if (!d) return nil;
+    tex_widen(t, d);   // plan item 320b
     { static int cls = -1; if (cls < 0) cls = getenv("DM_NVN_TEXCLASS") != NULL;   // diagnostic: a GPU-only texture's flags, its pool's flags and how much of its guest storage the CPU filled
       if (cls) { size_t nw = t->mem ? MIN((size_t)t->size, (size_t)64 << 20) / 8 : 0, nz = 0; const uint64_t *w = (const uint64_t *)(const void *)t->mem; for (size_t i = 0; i < nw; i++) nz += w[i] != 0;
           MLOG("[texclass] ser=%llu %ux%ux%u lv%u fmt=%#x tgt=%d tflags=%#x pflags=%#x storage %#x non-zero %.4f", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.levels,
