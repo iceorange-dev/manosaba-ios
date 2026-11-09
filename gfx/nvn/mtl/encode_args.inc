@@ -190,6 +190,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
 #ifndef DM_TEST_WIDEN_SAMPLED_HUD   // negative control of t_widen_draw only: a draw sampling a widened texture taken for the HUD when it reads its projection
             if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && t && tid < g_ntreg && tex_is_widened(t, &g_treg[tid].t)) wfl |= 4;   // samples a widened texture (320d)
+            if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && nvn_stage == 1 && t && tid < g_ntreg && (g_treg[tid].t.d.width > 8 || g_treg[tid].t.d.height > 8)) wfl |= 16;   // a texture larger than 8x8 (320f: its HUD draw not pushed)
             if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && b->six && t && tid < g_ntreg && nsc < NVN_REFL_MAXB) {   // its storage's ratio at the view's level (320f)
                 const treg_t *tr = &g_treg[tid]; unsigned lv = tr->has_v && tr->v.set_levels ? tr->v.base_level : 0;
                 double rx = (double)t.width / mip_extent(tr->t.d.width ? tr->t.d.width : 1, lv), ry = (double)t.height / mip_extent(tr->t.d.height ? tr->t.d.height : 1, lv);
@@ -299,10 +300,12 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
 #ifndef DM_TEST_WIDEN_SCALE_ONE
     if (sup_aid >= 0 && __builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0)) {
         int frag = nvn_stage == 1 && (g_pass.kx != 1 || g_pass.ky != 1) && ((g_wd_fl | wfl) & 7) != 2;
-        if (frag || nsc) {
+        int push = nvn_stage == 0 && g_wd_push_on && g_pass.kx != 1;   // the vertex edge push (draw.inc): (1 − 1/k, ((1 − 3‰)/k)², 1 − 1/k)
+        if (frag || nsc || push) {
             ARENA_OUT id<MTLBuffer> sb; size_t so = arena_alloc(SUPPORT_LEN, &sb); uint8_t *d = g_cur_arena->cpu + so; memcpy(d, support_buf().contents, SUPPORT_LEN);
             float kx = frag ? (float)g_pass.kx : 1.0f, ky = frag ? (float)g_pass.ky : 1.0f;
             memcpy(d + 192, &kx, 4); memcpy(d + SUPPORT_RENDER_SCALE_Y, &ky, 4);
+            if (push) { float k = (float)g_pass.kx, pp[3] = {1 - 1 / k, (0.997f / k) * (0.997f / k), 1 - 1 / k}; memcpy(d + SUPPORT_WIDEN_PUSH, pp, sizeof pp); }
             for (int i = 0; i < nsc; i++) {
                 float rx = frag && sc_x[i] != 1.0f && fabsf(sc_x[i] - kx) < 1e-6f ? -sc_x[i] : sc_x[i], ry = frag && sc_y[i] != 1.0f && fabsf(sc_y[i] - ky) < 1e-6f ? -sc_y[i] : sc_y[i];
                 memcpy(d + 192 + 16 * sc_ix[i], &rx, 4); memcpy(d + SUPPORT_RENDER_SCALE_Y + 16 * sc_ix[i], &ry, 4);

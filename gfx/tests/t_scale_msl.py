@@ -5,7 +5,9 @@ HelperFunctionManager.cs, TexturePass.cs): the support buffer gains render_scale
 shader divides the fragment coordinate's y by render_scale_y[0] (its x by render_scale[0]), none y by render_scale[0]; every helper
 reading render_scale[i] also reads render_scale_y[i] (the axis' scale: TexelFetchScale, TextureSizeUnscale); the reflections give texture
 bindings their scale index (Tears of the Kingdom's upscale ac58fc18eda5f387: its one texture 0, as its MSL passes) and fragment shaders
-frag_coord. The chain before (b-ce89a37d8939, the broken variant): 4 fail.
+frag_coord; widen_push after render_scale_y at the offset the Metal host writes (SUPPORT_WIDEN_PUSH), and every vertex shader ends with the
+edge push (EmitterContext.EmitWidenPush: its three values read, the 0.994009 bound). The chain before (b-ce89a37d8939, the broken variant):
+5 fail; b-8f8b45e7aaca (no push yet): 1 fails.
 Usage: t_scale_msl.py [<shader cache>/b-<chain version>]   (default: $DM_ROOT/build/cache/metal_shader_cache/b-<this chain>)"""
 import glob, json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.join(HERE, '..', '..')
@@ -52,5 +54,15 @@ up = os.path.join(d, 'ac58fc18eda5f387_b.json'); refl = json.load(open(up)) if o
 tex = [b for b in refl.get('bindings', []) if b.get('kind') == 'tex']
 print(f'ac58fc18eda5f387: texture bindings {[(b["msl_name"], b.get("scale_ix")) for b in tex]}, frag_coord {refl.get("frag_coord")}')
 check('the reflection gives the upscale\'s one texture its scale index 0, and fragment shaders frag_coord', len(tex) == 1 and tex[0].get('scale_ix') == 0 and 'frag_coord' in refl)
+pm = (lay or [])[-1] if lay and lay[-1][1] == 'float4' and lay[-1][2] == 1 and len(arrays) == 2 and lay[-1][3] > arrays[1][3] else None
+host_push = re.search(r'#define SUPPORT_WIDEN_PUSH (\d+)', open(os.path.join(ROOT, 'gfx/nvn/mtl/args.inc')).read())
+vs = tails = 0
+for f in files:
+    jf = f[:-6] + '.json'
+    if not os.path.exists(jf) or json.load(open(jf)).get('stage') != 'vs': continue
+    vs += 1; src = open(f, errors='ignore').read()
+    tails += bool(pm and all(re.search(r'support_buffer\)\.%s\.%s;' % (pm[0], c), src) for c in 'xyz') and '0.9940090179443359375' in src)
+print(f'widen_push at {pm and pm[3]} (the Metal host writes {host_push and host_push.group(1)}); vertex shaders {vs}, ending with the edge push {tails}')
+check('widen_push where the host writes it, and every vertex shader ends with the edge push', pm is not None and host_push and pm[3] == int(host_push.group(1)) and vs > 0 and tails == vs)
 print(f'== {n} checks, {fail} failed ==')
 sys.exit(fail != 0)

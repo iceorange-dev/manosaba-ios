@@ -465,7 +465,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   Kingdom's prologue no dispatch writes a 16:9 image and no copy or clear meets widened storage, 0-1.2 draws a frame into targets not widened
   sample it; clears and copies mapped (batch 169); compute and a copy's destination widened after its source (S2Arm's rules) when a frame
   needs them, the census watching.
-  320f (the chain's part: batch 170; the scales per draw: batch 171) the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
+  320f (the chain's part: batch 170; the scales per draw: batch 171; the HUD's edge push: batch 172) the shaders' part (a chain change): fragment coordinates scaled for screen-space effects, the vertex tail that pushes full-canvas HUD quads to
   the screen's edge, the UV extension of translucent overlays. Found in batch 169: the chain already carries Ryujinx's resolution scale (the
   support buffer's `render_scale`): 3,028 fragment shaders divide the fragment coordinate by `render_scale[0]`, integer texel reads go through
   `TexelFetchScale` and size queries through `TextureSizeUnscale` with `render_scale[1 + i]`, i the texture's descriptor index (images after
@@ -1778,3 +1778,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke (no
   widening): Tears of the Kingdom's two red lines as before, s1300 Zelda with the torch a moment apart (looked at), instructions a draw as
   before (27,187-39,111); manosaba none.
+- [x] batch 172 · 320f, the HUD's edge push: chain 8f8b45e7aaca → 28614768c859, every shader translated again. Every vertex shader (the last
+  stage before the rasteriser) ends with S2Arm's edge push, written anew (`EmitterContext.EmitWidenPush`): with `widen_push` = (push,
+  threshold², shrink) from the support buffer (a new field after `render_scale_y`, at 2,560), x is shrunk by 1 − shrink, then a vertex on or
+  past the canvas' edge (t² > threshold²) but inside the screen (t² < 0.994009) moves out by sign(t) · push · w (with shrink 0 only those in the
+  band at the 16:9 edge); all 0, the position as it is. A HUD draw that samples nothing larger than 8x8 (a black fade, a veil) and whose
+  vertex shader has the support buffer is drawn with the whole viewport and its vertex stage encoded again with (1 − 1/k, ((1 − 3‰)/k)², 1 −
+  1/k): the canvas' inside where the centred band puts it, its edges at the screen's; one that samples more stays centred.
+  `gfx/tests/t_widen_push.m` 4 (a solid quad over the canvas reaches columns 10 and 1560, one over its middle half stays at 462-1101, a
+  textured one centred; `-DDM_TEST_WIDEN_PUSH_OFF` 1 fails); `t_scale_msl.py` 5 (all 16,099 vertex shaders end with the push, `widen_push` at
+  2,560 where the host writes it; chain 8f8b45e7aaca fails that one). Tears of the Kingdom's opening widened: the title over black at frames
+  700-1200 had the scene behind it in the side bands (the first and last 200 columns' mean 187 / 105 of 255); now 0 / 0, one draw a frame
+  pushed. gfx 196 / 196 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs (the new libraries);
+  Android: built (the new bundle), the phone not connected. Smoke on the new chain (no widening): Tears of the Kingdom's two red lines as
+  before, s1300 and s1800 the same scenes a moment apart, instructions a draw as before (27,009-39,889); manosaba none, its s600 the title
+  page (looked at).

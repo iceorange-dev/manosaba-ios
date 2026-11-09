@@ -68,7 +68,9 @@ static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex,
 // render_scale_y's offset (plan item 320f, the translator's SupportBuffer.cs: after tfe_offset 1360 and tfe_vertex_count 1376, Std140's 16 bytes a
 // field; tools/tests/t_support_layout.py checks it against the chain's MSL)
 #define SUPPORT_RENDER_SCALE_Y 1392
-#define SUPPORT_LEN (SUPPORT_RENDER_SCALE_Y + 73 * 16)   // the buffer's fields up to render_scale_y's end (a draw's copy, encode_args.inc)
+#define SUPPORT_WIDEN_PUSH 2560   // widen_push (the vertex edge push, plan item 320f): after render_scale_y; gfx/tests/t_scale_msl.py checks it
+#define SUPPORT_LEN (SUPPORT_WIDEN_PUSH + 16)   // the buffer's fields up to widen_push's end (a draw's copy, encode_args.inc)
+static int g_wd_push_on;   // the vertex stage being encoded for a HUD draw pushed to the screen's edges (draw.inc)
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;
     b = [g_dev newBufferWithLength:65536 options:MTLResourceStorageModeShared]; res_add(b);   // All 0 when newly created

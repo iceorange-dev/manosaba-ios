@@ -312,6 +312,40 @@ namespace Ryujinx.Graphics.Shader.Translation
 
                 this.Store(StorageKind.Output, IoVariable.Position, null, Const(2), this.FPFusedMultiplyAdd(z, ConstF(0.5f), halfW));
             }
+
+            if (TranslatorContext.Stage == ShaderStage.Vertex || TranslatorContext.Stage == ShaderStage.TessellationEvaluation)
+            {
+                EmitWidenPush();
+            }
+        }
+
+        // (dm, plan item 320f; S2Arm's vertex edge push, written anew) A HUD drawn over a screen wider than 16:9 is placed in the middle at its own
+        // size; a full-canvas element (a black fade, a dimming veil) must still reach the screen's edges. The host draws such a draw with the whole
+        // viewport and support_buffer.widen_push = (push, threshold², shrink): x is first shrunk, x × (1 − shrink) (the same place as the centred
+        // viewport gives), then a vertex whose t = x / w lies on or past the canvas' edge (t² > threshold²) but inside the screen (t² < 0.994009,
+        // (1 − 3‰)²) moves out by sign(t) · push · w, so the canvas' edge lands on the screen's; with shrink 0 only those in the narrow band at the
+        // 16:9 edge (t² < threshold² × 1.012073, ((1 + 3‰) / (1 − 3‰))²). All 0: the position as it is (x × 1, no vertex moved)
+        private void EmitWidenPush()
+        {
+            Operand x = this.Load(StorageKind.Output, IoVariable.Position, null, Const(0));
+            Operand w = this.Load(StorageKind.Output, IoVariable.Position, null, Const(3));
+            Operand push = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.WidenPush), Const(0));
+            Operand thr2 = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.WidenPush), Const(1));
+            Operand shrink = this.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.WidenPush), Const(2));
+
+            Operand xs = this.FPMultiply(x, this.FPSubtract(ConstF(1f), shrink));
+            Operand t = this.FPDivide(xs, w);
+            Operand t2 = this.FPMultiply(t, t);
+
+            Operand past = this.FPCompareLess(thr2, t2);
+            Operand inside = this.FPCompareLess(t2, ConstF(0.994009f));
+            Operand band = this.BitwiseOr(this.FPCompareLess(ConstF(0f), shrink), this.FPCompareLess(t2, this.FPMultiply(thr2, ConstF(1.012073f))));
+            Operand move = this.BitwiseAnd(this.BitwiseAnd(past, inside), band);
+
+            Operand by = this.FPMultiply(push, w);
+            Operand moved = this.ConditionalSelect(this.FPCompareLess(ConstF(0f), t), this.FPAdd(xs, by), this.FPSubtract(xs, by));
+
+            this.Store(StorageKind.Output, IoVariable.Position, null, Const(0), this.ConditionalSelect(move, moved, xs));
         }
 
         public void PrepareForVertexReturn(out Operand oldXLocal, out Operand oldYLocal, out Operand oldZLocal)

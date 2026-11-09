@@ -48,10 +48,10 @@ void mtl_pp_stats(uint64_t out[12]);
 void mtl_chunk_stats(uint64_t out[2]);
 void mtl_pool_stats(uint64_t out[6]);
 void mtl_widen_scan_stats(uint64_t out[10]);
-void mtl_widen_draw_stats(uint64_t out[2]); void mtl_widen_rw_stats(uint64_t out[4]); void mtl_widen_census(uint64_t out[10]);
+void mtl_widen_draw_stats(uint64_t out[3]); void mtl_widen_rw_stats(uint64_t out[4]); void mtl_widen_census(uint64_t out[10]);
 __attribute__((weak)) void dm_gate_counts(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }   // host/hle/hle.c; the graphics unit tests link without it
 static void power_line(uint64_t frame) {
-    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6], pws[10], pwd[2], pwr[4], pwc[10];
+    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6], pws[10], pwd[3], pwr[4], pwc[10];
     static int counts = -1; if (counts < 0) counts = getenv("DM_NVN_COUNTS") && strcmp(getenv("DM_NVN_COUNTS"), "0");
     dm_power pw; int have_pw = dm_power_now(&pw);   // (plat.h: none on Android yet, the other lines still come)
     uint64_t t = now_ns(), cpu = pw.cpu_ns, p = pw.pcpu_ns, e = pw.energy_nj, iw = pw.wakeups;
@@ -86,10 +86,10 @@ static void power_line(uint64_t frame) {
                                   "found a frame: %.1f projections, %.1f view-projections, %.1f inverse projections, %.1f HUD orthographic, %.1f screen sizes, %.1f aspect pairs; %.1f MB scanned a frame",
                                   frame, (ws[0] - pws[0]) / nf, (ws[1] - pws[1]) / nf, (ws[2] - pws[2]) / nf, (ws[3] - pws[3]) / nf, (ws[4] - pws[4]) / nf, (ws[5] - pws[5]) / nf, (ws[6] - pws[6]) / nf,
                                   (ws[7] - pws[7]) / nf, (ws[8] - pws[8]) / nf, (ws[9] - pws[9]) / 1048576.0 / nf); }
-        { uint64_t wd[2], wr[4]; mtl_widen_draw_stats(wd); mtl_widen_rw_stats(wr);   // the widening (DM_WIDEN_SCREEN), plan item 320d
-          if (wd[0] + wd[1] > pwd[0] + pwd[1]) LOG("[nvn] widening up to frame %llu: draws into widened targets a frame %.1f widened, %.1f centred as the HUD's; uniform blocks a frame %.1f scanned (%.2f MB), "
+        { uint64_t wd[3], wr[4]; mtl_widen_draw_stats(wd); mtl_widen_rw_stats(wr);   // the widening (DM_WIDEN_SCREEN), plan item 320d
+          if (wd[0] + wd[1] + wd[2] > pwd[0] + pwd[1] + pwd[2]) LOG("[nvn] widening up to frame %llu: draws into widened targets a frame %.1f widened, %.1f centred as the HUD's, %.1f the HUD's pushed to the screen's edges; uniform blocks a frame %.1f scanned (%.2f MB), "
                                                 "%.1f the content of an earlier scan, %.1f bound rewritten",
-                                                frame, (wd[1] - pwd[1]) / nf, (wd[0] - pwd[0]) / nf, (wr[0] - pwr[0]) / nf, (wr[2] - pwr[2]) / 1048576.0 / nf, (wr[3] - pwr[3]) / nf, (wr[1] - pwr[1]) / nf);
+                                                frame, (wd[1] - pwd[1]) / nf, (wd[0] - pwd[0]) / nf, (wd[2] - pwd[2]) / nf, (wr[0] - pwr[0]) / nf, (wr[2] - pwr[2]) / 1048576.0 / nf, (wr[3] - pwr[3]) / nf, (wr[1] - pwr[1]) / nf);
           uint64_t wc[10]; mtl_widen_census(wc);   // plan item 320e's census
           if (wd[0] + wd[1] > pwd[0] + pwd[1]) LOG("[nvn] widening's census up to frame %llu, a frame: dispatches writing a 16:9 image %.1f (its storage widened %.1f); widened storage cleared %.1f (%.1f a whole level of the game's size, cleared whole); "
                                                 "texture copies widened to widened %.1f (%.1f mapped onto the storage), widened to plain %.1f, plain to widened %.1f; draws into targets not widened sampling widened storage %.1f; fragment stages given resolution scales %.1f",

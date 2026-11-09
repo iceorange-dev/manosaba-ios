@@ -1,6 +1,7 @@
 // gfx/nvn/mtl/draw.inc, part of nvn_mtl.m (included there in order, one translation unit): Draws and dispatches (copies, texels and texture clears: copies.inc)
-static uint64_t g_wd_hud, g_wd_wide;   // draws into widened targets centred as the HUD's / widened (320d)
-void mtl_widen_draw_stats(uint64_t out[2]) { out[0] = g_wd_hud; out[1] = g_wd_wide; }
+static uint64_t g_wd_hud, g_wd_wide, g_wd_pushed;   // draws into widened targets centred as the HUD's / widened (320d) / the HUD's pushed to the screen's edges (320f)
+void mtl_widen_draw_stats(uint64_t out[3]) { out[0] = g_wd_hud; out[1] = g_wd_wide; out[2] = g_wd_pushed; }
+static int has_support(const NvShader *sh) { if (!sh) return 0; for (int i = 0; i < sh->rf.nb; i++) if (sh->rf.b[i].kind == NVN_RB_SUPPORT) return 1; return 0; }
 // The draw, in three stages: what keeps it from drawing or comes before it (draw_admit), the render pass it draws in (draw_pass), its encoding
 // (draw_encode). draw() is also how deferred and merged draws are drawn again (defer_replay, defer_fallback, fz_check_run)
 static id<MTLFunction> g_draw_fz_fn;   // Specialized fragment function for this draw of the later pass in a merged render pass (nil = use the original version)
@@ -178,6 +179,16 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
     // The HUD into a widened target (plan item 320d): a draw that read the HUD's orthographic projection and no projection to change is placed in the
     // centred 16:9 band at its own size instead of widened (its viewport and scissor moved by half the added width / height)
 #ifndef DM_TEST_WIDEN_HUD_WIDE   // negative control of t_widen_draw only: the HUD widened with the rest
+    // A HUD draw that samples nothing larger than 8x8 (a black fade, a veil, a flat panel) and whose vertex shader has the chain's edge push
+    // (plan item 320f): the whole viewport, as a widened draw's, and its vertex stage again with the push (shrunk to the middle, the canvas'
+    // edges to the screen's: S2Arm's rule); one that samples more stays centred (a texture would stretch)
+#ifndef DM_TEST_WIDEN_PUSH_OFF   // negative control of t_widen_push only: every HUD draw centred
+    if (__builtin_expect(kx != 1, 0) && ky == 1 && (g_wd_fl & 7) == 2 && !(g_wd_fl & 16) && has_support(pr->sh[0])) {
+        g_wd_push_on = 1; g_args_dirty[0] = 1; int ok = encode_args(en, pr->sh[0], 0, 1); g_wd_push_on = 0; g_args_dirty[0] = 1;   // (the next draw's vertex stage encoded again without it)
+        if (!ok) return 0;
+        g_wd_pushed++;
+    } else
+#endif
     if (__builtin_expect(kx != 1 || ky != 1, 0) && (g_wd_fl & 7) == 2) {
         double ox = (tw - tw / kx) / 2, oy = (th - th / ky) / 2; g_wd_hud++;
         if (S.has_vp) enc_r_viewport(en, (MTLViewport){S.vp[0][0] + ox, S.vp[0][1] + oy, S.vp[0][2], S.vp[0][3], S.dr[0], S.dr[1]});
