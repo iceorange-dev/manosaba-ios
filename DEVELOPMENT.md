@@ -409,7 +409,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 314c the Vulkan vertex formats checked for VERTEX_BUFFER support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and
   the swapchain acquire bounded (100 ms, the present skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the
   window goes; S2Arm 4c0bec5): on the K100 when it is connected again (314a, b, d, e: batch 153).
-- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154) 315b a mid-submission chunk
+- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154; 315b, 315c: batch 155) 315b a mid-submission chunk
   committed only when the GPU has run out of work (S2Arm: "the GPU waited 5-40 ms with the next one already committed"; 310's A/B of 75 against 150
   draws showed no difference in power at 11.6 against 7.8 command buffers a frame); 315c pools only textures come from kept out of the residency set
   (the GPU deswizzle's `mtl_addr` wires the whole pool on iOS: 583 pools, about 919 MB resident on the Air; S2Arm uses a no-copy buffer over the
@@ -1504,3 +1504,23 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Documents/boot.txt is still the previous run's. gfx 180 / 180 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests,
   both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before (69.3 MB a frame of stores saved in its
   30 fps prologue), the shots the same scenes as batch 153's (s1300 and s1800 a moment apart, looked at); manosaba none.
+- [x] batch 155 · 315b, 315c (S2Arm 4c0bec5, Apache-2.0, written anew). 315b a mid-submission commit that is due waits while the game's work is
+  on the GPU (`g_inflight`: the earlier parts, the last submission's end; the keep-alive's spin kernels are not counted) and is made at the first
+  encoder boundary after the GPU has run out (S2Arm starts its draw count again instead); `DM_NVN_CHUNK_BUSY=0` commits at once as before; a timing
+  line counts the commits and the boundaries that held one (`gfx/tests/t_chunk.m --busy` 6, `-DDM_TEST_CHUNK_BUSY_IGNORED` 2 fail; `t_chunk` and
+  `t_rstream` start with the GPU idle). On the M5, the prologue with product60 at 60 Hz, alternating twice: 9.9 → 3.0 commits a frame (61-67
+  boundaries a frame held one), GPU p50 6.5-7.0 against 5.5-9.0 ms, 0.93-0.98 against 0.92-1.01 W, the shots the same. On the iPhone Air, Great Sky
+  Island standing (product60, 30 fps, thermal 1-2): 13.2 → 2.1-2.2 commits a frame, GPU p50 24.5-25.4 against 23.6-26.9 ms, CPU 18.7-23.5 against
+  20.3-26.4 mJ a frame, submit cycles 18.4-21.1 against 17.2-20.7 M a frame: no difference beyond the scene's spread, as 310's 75 against 150
+  draws; kept on for the command buffers it saves. The first run after each install ran unpaced (48-66 frames/s at frames 4500-4800) and is not
+  counted. 315c a texture upload from a pool not yet resident reads the storage through a zero-copy buffer over the texture's own pages, resident
+  for its upload batch and retired with the batch's staging, instead of the pool's buffer (which put the whole pool into the residency set, on iOS
+  wired); a resident pool is read through its own; `DM_NVN_UP_TEXBUF=0` as before. That buffer is made over pages the dirty tracker has just
+  protected: the GPU only reads through it, and the pool's own buffer still takes GPU writes after (`gfx/tests/t_up_texsrc.m` 14,
+  `-DDM_TEST_UP_SRC_POOL` 5 fail); a timing line gives the pools resident. The M5's prologue, three pairs: 896 → 335 MB of pools resident (169-171
+  → 150 of 1,564 pools), one upload a frame through its own pages, GPU p50 6.47-9.25 against 6.50-7.32 ms in the last window (the scene's spread),
+  the shots the same; the Air, two pairs: 969 → 406-408 MB resident (577-578 → 543-544 of 2,686 pools), 1.0-2.1 such uploads a frame (up to 0.8
+  MB), GPU p50 24.5-25.1 against 24.7-25.2 ms, footprint 3,376-3,385 MiB either way (wired memory is not in it), the shots the same, the same two
+  red lines. gfx 183 / 183 on Metal 4 and Metal 3, host 205 / 205, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
+  connected. Smoke: Tears of the Kingdom's two red lines as before, the shots the same scenes as batch 154's (s1300 a moment apart, looked at);
+  manosaba none.

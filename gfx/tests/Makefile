@@ -189,6 +189,8 @@ t_uppool: t_uppool.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_uppool.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_upbound: t_upbound.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_upbound.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_up_texsrc: t_up_texsrc.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_up_texsrc.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_retire: t_retire.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_retire.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ppred: t_ppred.m $(CRASH) $(GFX) $(GFX_H)
@@ -465,6 +467,7 @@ run: \
 	t_ubren \
 	t_uppool \
 	t_upbound \
+	t_up_texsrc \
 	t_upwait \
 	t_usnap \
 	t_vfetch \
@@ -649,12 +652,15 @@ run: \
 	./t_chunk --no-chunks
 	MTL_DEBUG_LAYER=1 ./t_chunk --tbdr-nomerge
 	MTL_DEBUG_LAYER=1 ./t_chunk --tbdr-all
+	MTL_DEBUG_LAYER=1 ./t_chunk --busy
+	DM_NVN_CHUNK_BUSY=0 ./t_chunk --busy
 	MTL_DEBUG_LAYER=1 ./t_esfilter
 	MTL_DEBUG_LAYER=1 ./t_vbelide
 	MTL_DEBUG_LAYER=1 ./t_sbufpast
 	./t_psouser
 	./t_uppool
 	./t_upbound
+	MTL_DEBUG_LAYER=1 ./t_up_texsrc
 	./t_upwait
 	MTL_DEBUG_LAYER=1 ./t_restart
 	MTL_DEBUG_LAYER=1 ./t_qstrip

@@ -159,9 +159,10 @@ static _Atomic uint64_t g_reg_gen = 1;   // Change generation of memory pool / t
 // So a pool is not put into the residency set when created; it is put in, and the residency set committed on the spot, the first time the GPU gets its address through mtl_addr / mtl_gpu_addr
 // (these are the only two ways the GPU gets pool addresses; committing on the spot = earlier than any command buffer commit that uses it, without relying on each commit point calling res_commit). Caller holds g_mu
 static uint64_t g_cb_commits, g_pool_res_at;   // number of command buffers committed (main + upload); this number at the last on-demand residency (0 = nothing pending to check)
+static uint64_t g_pool_res_n, g_pool_res_bytes;   // pools put into the residency set so far, their bytes (timing line, plan item 315c)
 static void pool_res(int i) {
     if (g_pools[i].res) return;
-    res_add(g_pools[i].buf); res_commit(); g_pools[i].res = 1; g_pool_res_at = g_cb_commits + 1;
+    res_add(g_pools[i].buf); res_commit(); g_pools[i].res = 1; g_pool_res_at = g_cb_commits + 1; g_pool_res_n++; g_pool_res_bytes += g_pools[i].buf.length;
     MLOG("on-demand memory pool residency: a %llu MB pool had its address taken for the first time, added to the residency set and committed (command buffers committed so far: %llu)",
          (unsigned long long)((g_pools[i].hi - g_pools[i].lo) >> 20), (unsigned long long)g_cb_commits);
 }
@@ -300,6 +301,13 @@ int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) {
     const pc_ent *c = pc_get(addr, len);
     if (c) { *buf = (__bridge void *)c->buf; *off = addr - c->base; return 1; }
     return pool_lookup(addr, len, buf, off, NULL);
+}
+// The pool holding [addr, addr + len), its buffer's range and whether it is resident, without putting it in (texture uploads read a pool not yet
+// resident through a buffer of their own pages: upload.inc up_texsrc, plan item 315c)
+static int mtl_pool_peek(uint64_t addr, uint64_t len, uintptr_t *base, uint64_t *blen, int *res) {
+    pthread_mutex_lock(&g_mu); int i = pool_find(&g_pfind, g_pools, sizeof *g_pools, g_npool, addr, len);
+    if (i >= 0) { *base = g_pools[i].base; *blen = g_pools[i].buf.length; *res = g_pools[i].res; }
+    pthread_mutex_unlock(&g_mu); return i >= 0;
 }
 int mtl_pool_has(uint64_t addr, uint64_t len) {
     pthread_mutex_lock(&g_mu); int i = pool_find(&g_pfind, g_pools, sizeof *g_pools, g_npool, addr, len); pthread_mutex_unlock(&g_mu);

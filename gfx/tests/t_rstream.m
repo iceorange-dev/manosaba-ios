@@ -64,6 +64,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     p_draw dw = {NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3, 0, 1}; emit(&c, OP_DRAW, &dw, sizeof dw);
     emit(&c, OP_END, NULL, 0);
     uint64_t pass0 = rs_enabled() ? g_rs_passes : 0, chunks0 = g_chunk_commits;
+    for (int i = 0; i < 500 && atomic_load(&g_inflight); i++) usleep(10000);   // the GPU idle: a due mid-submission commit waits while the game's work is on it (315b)
     state_reset(); memset(&R, 0, sizeof R); mtl_sub_begin(); uint64_t hh = (uint64_t)(uintptr_t)c.p; mtl_sub_index(&hh, 1); mtl_sub_snapshot(&hh, 1); nvn_exec(c.p);
     id<MTLBuffer> rb = [g_dev newBufferWithLength:(size_t)3 * W * W * 4 options:MTLResourceStorageModeShared]; res_add(rb);
     const tex_t *ts[3] = {&a, &b, &cl};

@@ -17,6 +17,7 @@ void mtl_use_stats(uint64_t *call, uint64_t *skip) { *call = *skip = 0; }
 void mtl_alloc_stats(uint64_t *a, uint64_t *b, int *n) { *a = *b = 0; *n = 0; }
 void mtl_border_census(uint64_t *a, uint64_t *b) { *a = *b = 0; }
 void mtl_bw(uint64_t *load, uint64_t *store, uint64_t *full_rw_passes) { *load = *store = *full_rw_passes = 0; }
+void mtl_chunk_stats(uint64_t out[2]) { out[0] = out[1] = 0; }
 void mtl_clear_only_stats(uint64_t *n, uint64_t *bytes) { *n = *bytes = 0; }
 void mtl_counter_stats(uint64_t rep[32], uint64_t rst[32]) { memset(rep, 0, 32 * sizeof *rep); memset(rst, 0, 32 * sizeof *rst); }
 void mtl_counts(uint64_t out[13]) { memset(out, 0, 13 * sizeof *out); }
@@ -30,6 +31,7 @@ void mtl_fbx_fetch_stats(uint64_t out[1]) { out[0] = 0; }
 void mtl_pkg_age(uint64_t out[5]) { memset(out, 0, 5 * sizeof *out); }
 uint64_t mtl_pkg_miss(void) { return 0; }
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = *reuploads = 0; }
+void mtl_pool_stats(uint64_t out[6]) { memset(out, 0, 6 * sizeof *out); }
 void mtl_pp_stats(uint64_t out[12]) { memset(out, 0, 12 * sizeof *out); }
 uint64_t mtl_udc_saved_bytes(void) { return 0; }
 uint64_t mtl_upload_bytes(void) { return 0; }

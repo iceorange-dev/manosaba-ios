@@ -452,6 +452,36 @@ uint64_t mtl_upload_gpu_ns_take(void) { return atomic_exchange(&g_upload_gpu_ns,
 void mtl_create_stats(uint64_t *lib, uint64_t *pso) { *lib = g_bp.lib_n; *pso = g_bp.pso_n; }
 void mtl_create_ns(uint64_t *lib_ns, uint64_t *pso_ns) { *lib_ns = g_bp.lib_ns; *pso_ns = g_bp.pso_ns; }   // Cumulative time spent synchronously creating shader libraries / pipelines on the spot (the long-frame log takes the per-frame difference)
 uint64_t mtl_upload_bytes(void) { return g_bp.up_bytes; }   // Cumulative texture upload bytes
+// Texture uploads from a pool not yet resident (plan item 315c; S2Arm, Apache-2.0, written anew): the GPU deswizzle reads the swizzled storage
+// through a buffer, and mtl_addr gave it the pool's own, which puts the whole pool into the residency set, on iOS wired for good (on the iPhone Air
+// 583 pools, about 919 MB, one of 503 MB). A pool the GPU otherwise never addresses (textures only: their MTLTextures are separate) is read
+// through a zero-copy buffer over just the texture's pages instead, resident for its upload batch and retired with the batch's staging; a pool
+// already resident is read through its own. The buffer is made over pages the dirty tracker has just protected: the GPU only reads through it
+// (a buffer made over read-only pages loses GPU writes, plan item 310; t_up_texsrc). DM_NVN_UP_TEXBUF=0: through the pool's buffer, as before
+static uint64_t g_up_src_n, g_up_src_bytes;
+static __weak id g_up_src_last;   // the last such buffer (t_up_texsrc: gone once its batch has retired)
+static int up_texbuf_on(void) {
+#ifdef DM_TEST_UP_SRC_POOL   // negative control of t_up_texsrc only: the pool's own buffer, as before
+    return 0;
+#endif
+    static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_UP_TEXBUF"); v = !e || atoi(e) != 0; if (!v) MLOG("DM_NVN_UP_TEXBUF=0: texture uploads read their pool through its own buffer (the whole pool resident)"); }
+    return v;
+}
+static int up_texsrc(uint64_t addr, uint64_t len, uintptr_t base, uint64_t blen, void **buf, uint64_t *off) {   // after up_begin: the buffer goes with this batch
+    uintptr_t pg = (uintptr_t)getpagesize(), a = (uintptr_t)addr & ~(pg - 1), b = ((uintptr_t)(addr + len) + pg - 1) & ~(pg - 1);
+    if (a < base) a = base;
+    if (b > base + blen) b = base + blen;
+    if (b <= a || addr < a || addr + len > b) return 0;
+    id<MTLBuffer> tb = [g_dev newBufferWithBytesNoCopy:(void *)a length:b - a options:MTLResourceStorageModeShared deallocator:nil];
+    if (!tb) { RED_ONCE(120, "texture upload: no zero-copy buffer over the texture's pages %p+%#llx, its whole pool made resident instead", (void *)a, (unsigned long long)(b - a)); return 0; }
+    res_add(tb); [g_up_keep addObject:tb]; g_up_src_n++; g_up_src_bytes += b - a; g_up_src_last = tb;
+    *buf = (__bridge void *)tb; *off = addr - a; return 1;
+}
+void mtl_pool_stats(uint64_t out[6]) {   // timing line (hle/timing.inc): pools, their MB, resident pools, their MB, uploads read through their own pages' buffer, those bytes
+    uint64_t n = 0, by = 0, rn = 0, rb = 0;
+    pthread_mutex_lock(&g_mu); for (int i = 0; i < g_npool; i++) { n++; by += g_pools[i].buf.length; if (g_pools[i].res) { rn++; rb += g_pools[i].buf.length; } } pthread_mutex_unlock(&g_mu);
+    out[0] = n; out[1] = by; out[2] = rn; out[3] = rb; out[4] = g_up_src_n; out[5] = g_up_src_bytes;
+}
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse) {
     MTLTextureDescriptor *d = tex_desc(t, t->has_layout);   // a CPU-filled texture without a packaged layout may become a render target later (see tex_gpu_write)
     if (!d) return nil;
@@ -476,7 +506,9 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     int ga1 = a1 && t->d.target != 2 && b1a_pso();   // BC1 without BC: GPU deswizzle, then b1a into ASTC blocks behind the BC1 ones (3D: the CPU)
     size_t ctotal = 0;   // Staging size of the compressed blocks (with GPU decompression the staging area holds compressed blocks)
     if (gdec || ga1) for (unsigned l = 0; l < d.mipmapLevelCount; l++) { uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u); ctotal += (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh) * layers; }
-    int use_gpu = (!unp || gdec) && (!a1 || ga1) && g_nvn_deswz_gpu && mtl_addr((uint64_t)t->mem, t->size, &mb, &mo);
+    uintptr_t sb = 0; uint64_t sbl = 0; int sres = 1;   // a pool not yet resident: read through a buffer of the texture's own pages, made once the batch is open
+    int own = g_nvn_deswz_gpu && up_texbuf_on() && mtl_pool_peek((uint64_t)t->mem, t->size, &sb, &sbl, &sres) && !sres;
+    int use_gpu = (!unp || gdec) && (!a1 || ga1) && g_nvn_deswz_gpu && (own || mtl_addr((uint64_t)t->mem, t->size, &mb, &mo));
     if (g_nvn_deswz_gpu && !use_gpu && !unp) RED_ONCE(40, "swizzled texture storage is not in a memory pool, falling back to the CPU");
     if (use_gpu) {
         // The GPU reads the memory pool at execution time, which is closer to a real Switch than a snapshot at CPU upload time; the dirty-page stamp is still taken before encoding, and later writes still trigger a re-upload.
@@ -484,6 +516,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         up_bound(stg_n); up_begin();
         id<MTLBuffer> stg = up_alloc(stg_n, &stg_off);
         size_t off = 0, aoff = ctotal; int enc_ok = g_up_ce != nil, nb0 = g_nup_blits, nd0 = g_nup_decs, na0 = g_nup_a1s, np0 = g_nup_posts;
+        if (own && !up_texsrc((uint64_t)t->mem, t->size, sb, sbl, &mb, &mo) && !mtl_addr((uint64_t)t->mem, t->size, &mb, &mo)) enc_ok = 0;
         for (unsigned l = 0; enc_ok && l < d.mipmapLevelCount; l++) {
             uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
             size_t pitch = (size_t)((w + bw - 1) / bw) * bpb, rows = (h + bh - 1) / bh;

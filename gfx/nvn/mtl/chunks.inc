@@ -9,14 +9,21 @@
 // on (defer, fuse, hoist: their passes span the submission; MacNativeGames turns the rewrites off for Tears of the Kingdom); the others decide within a
 // pass or at its end, and a commit comes only where no encoder is open (plan item 228: DM_NVN_TBDR=1 DM_NVN_TBDR_OFF=defer,fuse,hoist keeps the
 // commits). DM_NVN_CHUNK_DRAWS=<n> (default 75, 0 = off), DM_NVN_CHUNK_FIRST=<n> (default 60)
-static int g_chunk_first = -1, g_chunk_size, g_sub_chunks; static uint64_t g_chunk_mark, g_chunk_commits;
+// A commit is there so that the GPU does not sit idle while the replay encodes; with the game's work still on the GPU (g_inflight: earlier parts, the
+// last submission's end; the keep-alive's spin kernels are not counted) it gains nothing and puts one more command buffer in the queue (plan item
+// 315b; S2Arm, Apache-2.0, written anew: "the GPU waited 5-40 ms with the next one already committed"). So a commit that is due waits for the first
+// encoder boundary where the GPU has none of the game's work left (S2Arm starts the draw count again instead); the parts' clocks (nvn_ts.h) then
+// cover the merged parts. DM_NVN_CHUNK_BUSY=0: every due commit is made, the GPU busy or not
+static int g_chunk_first = -1, g_chunk_size, g_sub_chunks, g_chunk_busy = -1; static uint64_t g_chunk_mark, g_chunk_commits, g_chunk_held;
 static int tbdr_merging(void) { return tbdr_part(TBP_DEFER) || tbdr_part(TBP_FUSE) || tbdr_part(TBP_HOIST); }
 static void chunk_cfg(void) {
     if (g_chunk_first >= 0) return;
     const char *e = getenv("DM_NVN_CHUNK_DRAWS"), *f = getenv("DM_NVN_CHUNK_FIRST");
     g_chunk_size = e ? atoi(e) : 75; g_chunk_first = f ? atoi(f) : 60;
     if (g_chunk_size <= 0 || g_chunk_first <= 0) g_chunk_size = g_chunk_first = 0;
-    if (g_chunk_size && !tbdr_merging()) MLOG("mid-submission commits: after %d draws, then every %d draws (DM_NVN_CHUNK_DRAWS=0 turns them off)%s", g_chunk_first, g_chunk_size,
+    const char *b = getenv("DM_NVN_CHUNK_BUSY"); g_chunk_busy = !b || atoi(b) != 0;
+    if (g_chunk_size && !tbdr_merging()) MLOG("mid-submission commits: after %d draws, then every %d draws%s (DM_NVN_CHUNK_DRAWS=0 turns them off)%s", g_chunk_first, g_chunk_size,
+                                              g_chunk_busy ? ", each at the first encoder boundary where the GPU has none of the game's work left (DM_NVN_CHUNK_BUSY=0: at once)" : ", the GPU busy or not (DM_NVN_CHUNK_BUSY=0)",
                                               tbdr_on() ? ", with the TBDR rewrites that do not merge or defer passes" : "");
 }
 static void mtl_sub_split(void) {
@@ -57,10 +64,14 @@ static void chunk_maybe_split(void) {   // where a new encoder is about to open 
     if (!g_chunk_size || !g_cb || g_enc || tbdr_on()) return;
 #endif
     if (g_stat_draw - g_chunk_mark < (uint64_t)(g_sub_chunks ? g_chunk_size : g_chunk_first)) return;
+#ifndef DM_TEST_CHUNK_BUSY_IGNORED   // negative control of t_chunk --busy only: committed with the GPU busy, as before
+    if (g_chunk_busy && atomic_load_explicit(&g_inflight, memory_order_relaxed) > 0) { g_chunk_held++; return; }   // the count goes on: the next boundary looks again
+#endif
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     mtl_sub_split();
 }
 uint64_t mtl_chunk_commits(void) { return g_chunk_commits; }
+void mtl_chunk_stats(uint64_t out[2]) { out[0] = g_chunk_commits; out[1] = g_chunk_held; }   // timing line (hle/timing.inc): commits made, boundaries that held a due commit
 static void chunk_reset(void) { g_sub_chunks = 0; g_chunk_mark = g_stat_draw; }   // mtl_sub_begin
 static void fz_end(void);   // Wrap-up of the readable-tile pass merge (defined before draw)
 static void defer_fallback(void);

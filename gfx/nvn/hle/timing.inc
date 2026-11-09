@@ -45,9 +45,11 @@ void mtl_counts(uint64_t out[13]);
 void mtl_pkg_age(uint64_t out[5]);
 void mtl_fbx_stats(uint64_t out[3]); void mtl_fbx_split_stats(uint64_t out[2]); void mtl_fbx_fetch_stats(uint64_t out[1]);
 void mtl_pp_stats(uint64_t out[12]);
+void mtl_chunk_stats(uint64_t out[2]);
+void mtl_pool_stats(uint64_t out[6]);
 __attribute__((weak)) void dm_gate_counts(uint64_t out[4]) { memset(out, 0, 4 * sizeof *out); }   // host/hle/hle.c; the graphics unit tests link without it
 static void power_line(uint64_t frame) {
-    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12];
+    static uint64_t pt, pe, pcpu, pp, piw, pf, pld, pst, pfu, pudc, prep, prst, pfold, pc[13], pg[4], pfx[3], pff[1], psp[2], psw[3], ppr[12], pck[2], ppo[6];
     static int counts = -1; if (counts < 0) counts = getenv("DM_NVN_COUNTS") && strcmp(getenv("DM_NVN_COUNTS"), "0");
     dm_power pw; int have_pw = dm_power_now(&pw);   // (plat.h: none on Android yet, the other lines still come)
     uint64_t t = now_ns(), cpu = pw.cpu_ns, p = pw.pcpu_ns, e = pw.energy_nj, iw = pw.wakeups;
@@ -74,6 +76,12 @@ static void power_line(uint64_t frame) {
         { uint64_t sw[3]; void nvn_syncwait_stats(uint64_t out[3]); nvn_syncwait_stats(sw);
           if (sw[0] > psw[0]) LOG("[nvn] sync waits up to frame %llu: %.2f a frame, %.2f of them on the newest submission still on the GPU, %.2f ms a frame waiting (plan item 177)",
                                   frame, (sw[0] - psw[0]) / nf, (sw[1] - psw[1]) / nf, (sw[2] - psw[2]) / 1e6 / nf); }
+        { uint64_t ck[2]; mtl_chunk_stats(ck);   // mid-submission commits (mtl/chunks.inc), plan item 315b
+          if (ck[0] > pck[0] || ck[1] > pck[1]) LOG("[nvn] mid-submission commits up to frame %llu: %.1f a frame; %.1f encoder boundaries a frame held a due one, the GPU still on the game's work (DM_NVN_CHUNK_BUSY=0 commits there)",
+                                                   frame, (ck[0] - pck[0]) / nf, (ck[1] - pck[1]) / nf); }
+        { uint64_t po[6]; mtl_pool_stats(po);   // memory pools' residency (mtl/upload.inc up_texsrc), plan item 315c
+          if (po[2] != ppo[2] || po[4] > ppo[4]) LOG("[nvn] memory pools up to frame %llu: %llu of %llu resident, %.0f of %.0f MB; %.1f texture uploads a frame read a pool not resident through their own pages (%.1f MB a frame; DM_NVN_UP_TEXBUF=0 makes the pool resident)",
+                                                     frame, (unsigned long long)po[2], (unsigned long long)po[0], po[3] / 1048576.0, po[1] / 1048576.0, (po[4] - ppo[4]) / nf, (po[5] - ppo[5]) / 1048576.0 / nf); }
         { uint64_t pr[12]; mtl_pp_stats(pr);   // the pipeline prediction (nvn_mtl.m pso_predict_rest) over the window, when it scanned
           if (pr[4] > ppr[4]) LOG("[nvn] pipeline prediction up to frame %llu: %llu scans (ended by commands %llu / keys %llu / time %llu), %llu pipelines kicked, %llu taken by draws, "
                                   "%llu freed untaken, %llu refused with the table full, %llu in the table; the submit thread waited %.1f ms on %llu and compiled %llu itself", frame, pr[4] - ppr[4], pr[5] - ppr[5], pr[6] - ppr[6], pr[7] - ppr[7],
@@ -94,7 +102,7 @@ static void power_line(uint64_t frame) {
     { uint64_t rep[32], rst[32]; int open; mtl_counter_stats(rep, rst); mtl_vis_state(&open, &pfold); prep = rep[NVN_COUNTER_TYPE_SAMPLES_PASSED]; prst = rst[NVN_COUNTER_TYPE_SAMPLES_PASSED]; }
     if (counts) { mtl_counts(pc); dm_gate_counts(pg); }
     mtl_pp_stats(ppr);
-    mtl_fbx_stats(pfx); mtl_fbx_fetch_stats(pff); mtl_fbx_split_stats(psp); { void nvn_syncwait_stats(uint64_t out[3]); nvn_syncwait_stats(psw); }
+    mtl_fbx_stats(pfx); mtl_fbx_fetch_stats(pff); mtl_fbx_split_stats(psp); mtl_chunk_stats(pck); mtl_pool_stats(ppo); { void nvn_syncwait_stats(uint64_t out[3]); nvn_syncwait_stats(psw); }
 }
 static void tsummary(uint64_t frame) {
     char line[1024]; size_t o = 0;
