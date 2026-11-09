@@ -97,6 +97,7 @@ typedef struct thr {
     int next_host;             // This thread is about to create a host-work thread (svc CreateThread inside nn::os::CreateThread takes it)
     int preempt;               // A higher-priority thread waits for this thread's core: give it up at the next svc
     uint64_t cseq; struct thr *cnext;   // Core wait chain
+    uint64_t ncpu, cw_n, cw_ns, ncpu_seen, cw_n_seen, cw_ns_seen; int cpu_ever;   // DM_SCHED_STATS: 0x10 calls, waits for a core and their time (plan item 315f)
 } thr_t;
 static thr_t *g_all;
 
@@ -215,7 +216,9 @@ static void core_take(thr_t *t) {   // holding G; waits until a core of t's mask
     t->cseq = ++g_wseq; t->cnext = g_core_wait; g_core_wait = t;
     if (core_migrate(t)) return;
     for (int i = 0; i < NCORE; i++) if (core_allowed(t, i) && g_core_owner[i] && g_core_owner[i]->prio > t->prio) g_core_owner[i]->preempt = 1;
+    uint64_t w0 = sched_on() ? now_ns() : 0;
     while (t->cur_core < 0) pthread_cond_wait(&t->cv, &G);
+    if (w0) { t->cw_n++; t->cw_ns += now_ns() - w0; }
 }
 // The next thread the calling thread creates runs host work (hle_guestthread.c): it holds no virtual core, since it waits on host primitives and
 // would keep its core for good (the audio renderer kept core 0 and the main thread never got it back)
@@ -848,13 +851,21 @@ static void kt_dump(int last) {
         fprintf(stderr, "[dm]   %8.3f s ago  %#x %-9s %#llx%s words %#x -> %#x arg %#x\n", (t1 - e->ns) / 1e9, e->thread, nm[e->kind < 6 ? e->kind : 0],
                 (unsigned long long)e->addr, lk, e->w0, e->w1, e->arg); }
 }
+static void sched_threads(double sec, char *out, size_t n) {   // holding G: the per-thread line of DM_SCHED_STATS (schedstats.h sched_thr_report)
+    static sched_thr v[128]; int nv = 0;
+    for (thr_t *t = g_all; t && nv < 128; t = t->all) { if (t->exited || t->host_work) continue;
+        sched_thr *e = &v[nv++]; char nb[32]; *e = (sched_thr){t->handle, t->prio, t->mask, "", t->ncpu - t->ncpu_seen, t->cw_n - t->cw_n_seen, t->cw_ns - t->cw_ns_seen, t->cpu_ever};
+        snprintf(e->name, sizeof e->name, "%s", thr_name(t, nb, sizeof nb)); t->ncpu_seen = t->ncpu; t->cw_n_seen = t->cw_n; t->cw_ns_seen = t->cw_ns; }
+    sched_thr_report(v, nv, sec, out, n);
+}
 int svc_thread(int num, uint64_t *regs) {
     { thr_t *me = pthread_getspecific(g_keythr); if (me) { me->last_svc = num; me->last_lr = regs[30]; me->nsvc++; core_checkpoint(me); } }
     if (sched_on()) {
         sched_svc(&g_sched, num); static _Atomic uint64_t next; uint64_t t = now_ns(), nx = atomic_load(&next);
         if (!nx) { pthread_mutex_lock(&G); if (!g_sched.t0) g_sched.t0 = t; pthread_mutex_unlock(&G); atomic_compare_exchange_strong(&next, &nx, t + 5000000000ull); }
         else if (t >= nx && atomic_compare_exchange_strong(&next, &nx, t + 5000000000ull)) {
-            char line[1200]; pthread_mutex_lock(&G); sched_report(&g_sched, t, line, sizeof line); pthread_mutex_unlock(&G); LOG("[sched] %s", line);
+            char line[1200], tl[1200]; pthread_mutex_lock(&G); double sec = (t - g_sched.t0) / 1e9; sched_report(&g_sched, t, line, sizeof line); sched_threads(sec, tl, sizeof tl);
+            pthread_mutex_unlock(&G); LOG("[sched] %s", line); LOG("[sched] %s", tl);
         }
     }
     if (g_flag.thr && num != 0x0B) { thr_t *me = pthread_getspecific(g_keythr); LOG("[%#x] svc %#x x0=%#llx x1=%#llx x2=%#llx x3=%#llx", me ? me->handle : 0, num, regs[0], regs[1], regs[2], regs[3]); }
@@ -963,7 +974,7 @@ int svc_thread(int num, uint64_t *regs) {
         if (g_flag.thr) LOG("SetThreadCoreMask h=%#x core %d mask %#llx -> %#x (ideal %d, runs on %d)", (unsigned)regs[0], (int)regs[1], (unsigned long long)regs[2], r, t ? t->core : 0, t ? t->act : 0);
         regs[0] = r; return 1;
     }
-    case 0x10: { thr_t *t = cur(); regs[0] = (uint64_t)(uint32_t)(t->cur_core >= 0 ? t->cur_core : t->act); return 1; }   // GetCurrentProcessorNumber: the core the thread runs on (the virtual core it holds), not the ideal core
+    case 0x10: { thr_t *t = cur(); if (sched_on()) { t->ncpu++; t->cpu_ever = 1; } regs[0] = (uint64_t)(uint32_t)(t->cur_core >= 0 ? t->cur_core : t->act); return 1; }   // GetCurrentProcessorNumber: the core the thread runs on (the virtual core it holds), not the ideal core
     case 0x25: { thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; return 1; }
 
     case 0x1A: {  // ArbitrateLock(w0 owner handle, x1 address, w2 this thread's tag)

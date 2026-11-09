@@ -409,7 +409,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 314c the Vulkan vertex formats checked for VERTEX_BUFFER support with a red line (32-bit UI2F / I2F fall to R32_UINT / SINT and read raw bits) and
   the swapchain acquire bounded (100 ms, the present skipped; `vk_present.c` waits for ever holding `g_mu`, which the main thread takes when the
   window goes; S2Arm 4c0bec5): on the K100 when it is connected again (314a, b, d, e: batch 153).
-- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154; 315b, 315c: batch 155; 315d, 315e: batch 156) 315b a mid-submission chunk
+- 315 Tears of the Kingdom on the iPhone (bandwidth, heat, memory), each measured before it is kept: (315a: batch 154; 315b, 315c: batch 155; 315d, 315e: batch 156; 315f, 315g: batch 157) 315b a mid-submission chunk
   committed only when the GPU has run out of work (S2Arm: "the GPU waited 5-40 ms with the next one already committed"; 310's A/B of 75 against 150
   draws showed no difference in power at 11.6 against 7.8 command buffers a frame); 315c pools only textures come from kept out of the residency set
   (the GPU deswizzle's `mtl_addr` wires the whole pool on iOS: 583 pools, about 919 MB resident on the Air; S2Arm uses a no-copy buffer over the
@@ -1547,3 +1547,16 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   belong (looked at), and the self-test's 18 checks passed. gfx 183 / 183 on Metal 4 and Metal 3, host 206 / 206, sanitizer, texture, audit and
   tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s1300 and s1800 other
   moments of the same cutscenes than batch 155's (the cave behind Zelda, Zelda speaking; looked at); manosaba none.
+- [x] batch 157 · 315f, 315g measured, nothing changed. 315f: `DM_SCHED_STATS=1` gets a line a thread every 5 s (the threads that would keep a
+  virtual core in S2Arm's on-demand mode, those that called GetCurrentProcessorNumber or may run on one core only, against the others, and the six
+  that waited longest; `host/tests/t_schedstats.c` 9, `-DDM_TEST_SCHED_THR_ONE_CORE_FREE` 1 fails). Tears of the Kingdom's prologue on the M5: 51
+  of its 52 threads would keep their core (most have a mask of one core: ModuleSystemWorker1 0x2, the Presentation Thread 0x2, ModuleSystemWorker2
+  0x4; the rest called 0x10), waiting 38-42 ms/s for a core after loading (819 ms/s while it loads); the free one 0.00-0.02 ms/s (two free
+  ones 4.9 ms/s while loading). The masks are the game's own, so the phone's are the same: the mode would free nothing here; not taken (only Tears of the Kingdom
+  has virtual cores). 315g: the NaNs 315d's counts found at a frame's end (11,296-80,192 values) are not written by the game's passes: a snapshot
+  of every pass drawing into 400x224, 200x112 or 100x56 at frame 1800 of the prologue (`DM_NVN_TEXSNAP`, counted as end-of-frame targets) has
+  none, and with the render target heap off (`DM_NVN_RT_HEAP=0`) the frame's end has none either, on the M5 (frame 1800) and on the Air (Great
+  Sky Island frames 3047 and 3347). They are the bits of other targets the game places later at the same offsets of its virtual pool (the heap
+  shares that memory as the Switch does, rtheap.inc), read as half floats; nothing reads them so. gfx 183 / 183 on Metal 4 and Metal 3, host 207 /
+  207, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as
+  before, s1300 Zelda with the torch as in batch 155 (batch 156's another moment), s1800 Zelda speaking (looked at); manosaba none.

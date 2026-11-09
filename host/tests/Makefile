@@ -151,6 +151,7 @@ run: \
 	$(B)/t_shadercache_metal \
 	$(B)/t_schedstats \
 	$(B)/t_schedstats_start \
+	$(B)/t_schedstats_onefree \
 	$(B)/t_rtld_order \
 	$(B)/t_rtld_ours \
 	$(B)/t_coolstart_onelook \
@@ -581,6 +582,10 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_schedstats_start.log)" -ne 1 ]; then \
 	   cat $(B)/t_schedstats_start.log; echo "t_schedstats_start: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_schedstats_start: the latency counted from the wait's start reads long, as expected"
+	@status=0; $(B)/t_schedstats_onefree > $(B)/t_schedstats_onefree.log 2>&1 || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_schedstats_onefree.log)" -ne 1 ]; then \
+	   cat $(B)/t_schedstats_onefree.log; echo "t_schedstats_onefree: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_schedstats_onefree: a thread on one core only counted as free misplaces its waits, as expected"
 	@status=0; TMPDIR="$(abspath $(B))" $(B)/t_survey_cols > $(B)/t_survey_cols.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_survey_cols.log)" -ne 1 ] || ! grep -q "the rotation's rows.*✗" $(B)/t_survey_cols.log; then \
 	   cat $(B)/t_survey_cols.log; echo "t_survey_cols: unexpected negative-control result ($$status)"; exit 1; \
@@ -1144,6 +1149,8 @@ $(B)/t_schedstats: t_schedstats.c ../schedstats.h | $(B)
 	clang -O1 -Wall -I.. -o $@ t_schedstats.c
 $(B)/t_schedstats_start: t_schedstats.c ../schedstats.h | $(B)
 	clang -O1 -Wall -I.. -DDM_TEST_SCHED_WAKE_FROM_START -o $@ t_schedstats.c
+$(B)/t_schedstats_onefree: t_schedstats.c ../schedstats.h | $(B)
+	clang -O1 -Wall -I.. -DDM_TEST_SCHED_THR_ONE_CORE_FREE -o $@ t_schedstats.c
 $(B)/t_coolstart: t_coolstart.c ../coolstart.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_coolstart.c
 $(B)/t_coolstart_onelook: t_coolstart.c ../coolstart.h | $(B)

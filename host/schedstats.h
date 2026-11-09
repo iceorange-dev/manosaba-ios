@@ -35,3 +35,26 @@ static inline void sched_report(sched_stats *s, uint64_t now, char *out, size_t 
     for (int i = 0; i < 5; i++) s->k[i] = (sched_kind){0};
     s->t0 = now;
 }
+// Per thread over the same span (plan item 315f, measured before S2Arm's on-demand virtual cores: there only a thread that asks for its core,
+// GetCurrentProcessorNumber, or may run on one core only holds one; the others run free): its 0x10 calls and its waits for a virtual core.
+// hle_thread.c fills one entry a live thread; sched_thr_report gives the waits of the threads that would still hold a core and of those that would
+// not, then the six that waited longest
+typedef struct { uint32_t handle; int prio; uint64_t mask; char name[24]; uint64_t cpu_calls, waits, wait_ns; int cpu_ever; } sched_thr;
+static inline int sched_thr_needs_core(const sched_thr *t) {
+#ifndef DM_TEST_SCHED_THR_ONE_CORE_FREE   // negative control of t_schedstats only: a thread on one core only counted as free
+    if (__builtin_popcountll(t->mask & 7) == 1) return 1;
+#endif
+    return t->cpu_ever;
+}
+static inline void sched_thr_report(sched_thr *v, int nv, double sec, char *out, size_t n) {
+    uint64_t need_ns = 0, free_ns = 0; int need_n = 0, free_n = 0; size_t o = 0; if (sec <= 0) sec = 1;
+    for (int i = 0; i < nv; i++) { if (sched_thr_needs_core(&v[i])) { need_n++; need_ns += v[i].wait_ns; } else { free_n++; free_ns += v[i].wait_ns; } }
+    o += (size_t)snprintf(out + o, n - o, "core waits: %d threads asking for their core or on one core %.2f ms/s, %d others %.2f ms/s;", need_n, need_ns / 1e6 / sec, free_n, free_ns / 1e6 / sec);
+    for (int k = 0; k < 6 && o < n; k++) {
+        int b = -1; for (int i = 0; i < nv; i++) if (v[i].waits && (b < 0 || v[i].wait_ns > v[b].wait_ns)) b = i;
+        if (b < 0) break;
+        o += (size_t)snprintf(out + o, n - o, " %#x \"%s\" prio %d mask %#llx 0x10 %.0f/s%s, %.0f waits/s %.2f ms/s;", v[b].handle, v[b].name, v[b].prio, (unsigned long long)v[b].mask,
+                              v[b].cpu_calls / sec, sched_thr_needs_core(&v[b]) ? "" : " (free)", v[b].waits / sec, v[b].wait_ns / 1e6 / sec);
+        v[b].waits = 0;
+    }
+}
