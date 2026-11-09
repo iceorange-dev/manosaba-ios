@@ -518,8 +518,11 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 324 the iPhone Air started hot (batch 183's fourth run in a row, thermal state serious at launch, so 30 fps from the boot's settings): 15.0
   fps for about 150 s, every frame 66.7 ms with the GPU at p50 29 / p95 34 ms, and 28 fps (35 ms a frame, the same GPU times) once the state
   fell to fair and the hold ended; the run before it, started the same way, dipped to 19-22 fps. Where the state reaches serious while the
-  game runs the same hold gives 27.4 fps (late frames 44 ms, not 66.7). To find: what a hold set at launch (DM_FPS from the settings) paces
-  differently from one set later (`mtl_fps_set`), on the Mac first.
+  game runs the same hold gives 27.4 fps (late frames 44 ms, not 66.7). The logs' difference: both are present pacing mode 3 (the display
+  link asked for 30 Hz), but the link made in that mode at launch (0 → 3 at frame 1) ticks 30.0 times a second, so a 35 ms frame takes
+  every other tick, while the one switched to it (1 → 3) ticks 27.4 times a second with a present on each (two launches each way). To find:
+  why the link made at 30 Hz does not follow the frames as the switched one does (`present_thread.inc` link_main against link_sync: the
+  range and the frame latency it is made with), on a ProMotion screen; a fix would be checked on the phone started hot.
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
