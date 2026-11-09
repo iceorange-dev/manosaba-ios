@@ -425,7 +425,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 316 (batch 158) manosaba's short sleeps (88: about 24,000 SleepThread calls of 20 µs-1 ms a second) backed off: a run of sleeps under 1 ms from one return
   address with no other system call and at most 20 µs of guest code between them, each sleep after 2 ms of the run max(asked, run / 8) up to 100 µs
   (S2Arm on a Unity game: 5.13 W for the device, 4.03 W at 100 µs with 0.03 % slow frames; 250 µs gave 1.72 W but moved its threads to the
-  efficiency cores); the sleeps counted per return address first, on the iPhone and the K100. 316b (from 316's counts): Tears of the Kingdom's
+  efficiency cores); the sleeps counted per return address first, on the iPhone and the K100. 316b (batch 159; from 316's counts): Tears of the Kingdom's
   64,000-122,000 SleepThread(20 µs) calls a second return at once (`sleep_precise` does not sleep within 20 µs of the deadline; none of them in a
   run): what sleeping them does to its frame and its CPU, measured on the Mac and the iPhone first.
 - 317 diagnostics on iOS: 317a MetricKit's exit counts (memory limit, watchdog, bad access, ...), crash and hang payloads kept by their own time
@@ -1577,3 +1577,15 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   3, host 210 / 210, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two
   red lines as before, s1300 the cave behind Zelda again (looked at); manosaba none, its shots as batch 157's, wakeups 25,500-27,000 → 9,800-9,900
   a second and CPU 0.30 / 0.20 / 0.49 → 0.27 / 0.17 / 0.45 W against batch 157's run.
+- [x] batch 159 · 316b: a SleepThread asked within 20 µs of its deadline sleeps once instead of returning at once (`sleep_precise` kept a 20 µs
+  margin for the timer's slack, so a 20 µs sleep never slept). Tears of the Kingdom's ModuleSystem waits (`main+0x794b0`, a loop of yields and
+  work taking) call SleepThread(20 µs) about 100,000 times a second, none in a run: a busy loop through the system call. On the M5, its prologue
+  with product60 at 60 Hz, alternating twice: 130,000 → 7,200 such calls a second (each now 23-34 µs), CPU 105 → 86 % of a core and 0.97 → 0.80
+  W, wakeups 800 → 8,000 a second, frame time p50 16.67 / p95 16.82-16.85 ms and GPU p50 7.1-7.8 ms either way, the shots no further apart than
+  two runs of the old. On the iPhone Air, Great Sky Island standing (thermal 2; the first run after the install not counted): 59,000-94,000 →
+  5,100-6,000 a second, CPU 137-187 → 124-146 %, 21.3-22.9 → 19.2-22.7 mJ a frame, frame time p50 33.3-33.5 ms and GPU p50 24.8-26.3 ms either
+  way, the time from launch to frame 300 and to frame 1200 the same (11.3-11.5 s, 30 s). `DM_SLEEP_SHORT_REAL=0` returns at once as before
+  (`host/tests/t_sleepshort.c` 3, `-DDM_TEST_SLEEP_SHORT_SKIP` 2 fail). manosaba's sleeps (25 µs) were already slept. gfx 183 / 183 on Metal 4
+  and Metal 3, host 212 / 212, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the
+  Kingdom's two red lines as before, its 30 fps prologue CPU 95-97 → 74-79 % and 0.22-0.28 → 0.17-0.18 W against batch 158's, s1300 Zelda with the
+  torch (looked at); manosaba none, its shots as batch 158's.

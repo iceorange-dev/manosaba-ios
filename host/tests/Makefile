@@ -35,6 +35,8 @@ run: \
 	$(B)/t_waitsync \
 	$(B)/t_vcores \
 	$(B)/t_vcores_nomove \
+	$(B)/t_sleepshort \
+	$(B)/t_sleepshort_skip \
 	$(B)/t_waitsync_rescan \
 	$(B)/t_coremask \
 	$(B)/t_coremask_noproc \
@@ -273,6 +275,11 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_vcores_nomove.log)" -ne 2 ]; then \
 	   cat $(B)/t_vcores_nomove.log; echo "t_vcores_nomove: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_vcores_nomove: a thread kept waiting behind a movable owner, as expected"
+	$(B)/t_sleepshort
+	@status=0; $(B)/t_sleepshort_skip > $(B)/t_sleepshort_skip.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_sleepshort_skip.log)" -ne 2 ]; then \
+	   cat $(B)/t_sleepshort_skip.log; echo "t_sleepshort_skip: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_sleepshort_skip: short sleeps returning at once fail both, as expected"
 	$(B)/t_waitsync
 	@status=0; $(B)/t_waitsync_rescan > $(B)/t_waitsync_rescan.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_waitsync_rescan.log)" -ne 1 ]; then \
@@ -1004,6 +1011,10 @@ $(B)/t_vcores: t_vcores.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | 
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_vcores.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_vcores_nomove: t_vcores.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_NO_MIGRATE -I.. -o $@ t_vcores.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_sleepshort: t_sleepshort.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_sleepshort.c ../hle/hle_thread.c ../runtime/plat_apple.c
+$(B)/t_sleepshort_skip: t_sleepshort.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
+	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_SLEEP_SHORT_SKIP -I.. -o $@ t_sleepshort.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_waitsync: t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c ../runtime/plat_apple.c
 $(B)/t_waitsync_rescan: t_waitsync.c t_condvar_stub.c ../hle/hle_thread.c ../dm.h ../runtime/plat_apple.c | $(B)

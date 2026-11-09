@@ -844,9 +844,20 @@ static void sleep_stat(thr_t *t, const uint64_t *regs, uint64_t asked, uint64_t 
     pthread_mutex_unlock(&g_sl_mu);
     if (line[0]) LOG("[sleep] %s", line);
 }
+// A sleep asked within 20 µs of its deadline sleeps that once (plan item 316b); it returned at once, and Tears of the Kingdom's ModuleSystem waits
+// (main+0x794b0) call SleepThread(20 µs) about 100,000 times a second: a busy loop through the system call. Sleeping them: on the M5 its prologue
+// at 60 Hz 130,000 -> 7,200 such calls a second, CPU 105 -> 86 % of a core and 0.97 -> 0.80 W, frame times and GPU time the same; on the iPhone
+// Air (Great Sky Island, thermal 2) CPU 137-187 -> 124-146 %, 21.3-22.9 -> 19.2-22.7 mJ a frame, frame times, GPU time and loading the same.
+// DM_SLEEP_SHORT_REAL=0: returning at once, as before
+static int sleep_short_real(void) {
+#ifdef DM_TEST_SLEEP_SHORT_SKIP   // negative control of t_sleepshort only: returning at once, as before
+    return 0;
+#endif
+    static int v = -1; if (v < 0) { const char *e = getenv("DM_SLEEP_SHORT_REAL"); v = !e || atoi(e) != 0; if (!v) LOG("DM_SLEEP_SHORT_REAL=0: sleeps within 20 µs of their deadline return at once"); } return v; }
 static void sleep_precise(uint64_t deadline) {
     for (int i = 0; i < 16; i++) {
-        uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); if (now + 20000 >= deadline) return;
+        uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        if (now + 20000 >= deadline) { if (!i && now < deadline && sleep_short_real()) { struct timespec ts = {0, (long)(deadline - now)}; nanosleep(&ts, 0); } return; }
         uint64_t rem = deadline - now, s = rem < 100000 ? rem : rem - rem / 4;
         struct timespec ts = {(time_t)(s / 1000000000u), (long)(s % 1000000000u)}; nanosleep(&ts, 0);
     }
