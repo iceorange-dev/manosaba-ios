@@ -1,4 +1,6 @@
 // gfx/nvn/mtl/draw.inc, part of nvn_mtl.m (included there in order, one translation unit): Draws and dispatches (copies, texels and texture clears: copies.inc)
+static uint64_t g_wd_hud, g_wd_wide;   // draws into widened targets centred as the HUD's / widened (320d)
+void mtl_widen_draw_stats(uint64_t out[2]) { out[0] = g_wd_hud; out[1] = g_wd_wide; }
 // The draw, in three stages: what keeps it from drawing or comes before it (draw_admit), the render pass it draws in (draw_pass), its encoding
 // (draw_encode). draw() is also how deferred and merged draws are drawn again (defer_replay, defer_fallback, fz_check_run)
 static id<MTLFunction> g_draw_fz_fn;   // Specialized fragment function for this draw of the later pass in a merged render pass (nil = use the original version)
@@ -170,8 +172,24 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
     static id<MTLBuffer> zero; if (!zero) { zero = [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]; res_add(zero); }
     static uint64_t zero_gpu; if (!zero_gpu) zero_gpu = zero.gpuAddress;
     if (!g_es.vb_zero) { enc_r_vbuf(en, 30, zero_gpu); g_es.vb_zero = 1; }
+    g_wd_fl = 0;
     if (pr->sh[0] && !encode_args(en, pr->sh[0], 0, 1)) return 0;
     if (pr->sh[1] && !encode_args(en, pr->sh[1], 1, 0)) return 0;
+    // The HUD into a widened target (plan item 320d): a draw that read the HUD's orthographic projection and no projection to change is placed in the
+    // centred 16:9 band at its own size instead of widened (its viewport and scissor moved by half the added width / height)
+#ifndef DM_TEST_WIDEN_HUD_WIDE   // negative control of t_widen_draw only: the HUD widened with the rest
+    if (__builtin_expect(kx != 1 || ky != 1, 0) && (g_wd_fl & 3) == 2) {
+        double ox = (tw - tw / kx) / 2, oy = (th - th / ky) / 2; g_wd_hud++;
+        if (S.has_vp) enc_r_viewport(en, (MTLViewport){S.vp[0][0] + ox, S.vp[0][1] + oy, S.vp[0][2], S.vp[0][3], S.dr[0], S.dr[1]});
+        else enc_r_viewport(en, (MTLViewport){ox, oy, tw / kx, th / ky, 0, 1});
+        long x0 = R.has_sc ? (R.sc.x < 0 ? 0 : R.sc.x) : 0, y0 = R.has_sc ? (R.sc.y <= 0 ? 0 : R.sc.y) : 0;
+        long x1 = R.has_sc ? (long)R.sc.x + R.sc.w : (long)(tw / kx), y1 = R.has_sc ? (long)R.sc.y + R.sc.h : (long)(th / ky);
+        x0 = (long)floor(x0 + ox); x1 = (long)ceil(x1 + ox); y0 = (long)floor(y0 + oy); y1 = (long)ceil(y1 + oy);
+        if (x1 > (long)tw) x1 = tw; if (y1 > (long)th) y1 = th;
+        if (x1 <= x0 || y1 <= y0) return 1;
+        enc_r_scissor(en, (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)});
+    } else if (__builtin_expect(kx != 1 || ky != 1, 0)) g_wd_wide++;
+#endif
     // Binding them can end the pass: a texture bound through a view of another format is made again with format views allowed and copied there on
     // a blit encoder (tex_upgrade_pfv), which ends the render pass first. Encoded on that ended encoder, the draw crashed in the driver (seedds/nxnative
     // 81ccacf, MIT: Need for Speed: Hot Pursuit Remastered); it is begun again in a new pass, where the texture is the upgraded one (plan item 296)

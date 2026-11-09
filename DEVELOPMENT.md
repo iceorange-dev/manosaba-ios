@@ -457,7 +457,7 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   its size stays (`DM_WIDEN_SCREEN=<w>x<h>` stands in for a phone's screen on the Mac); the render target heap's placement scaled for it.
   320c (batch 165: the mapping; the HUD's centring with 320d) viewports and scissors into a widened target: a 3D draw's × k; a draw reading no rewritten projection (the HUD) in the centred 16:9 band; a
   full-canvas 2D page with black side bands.
-  320d (the recogniser and its measurement: batch 166) the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
+  320d (the recogniser and its measurement: batch 166; the rewrite and the HUD: batch 167) the projections in the uniform data: perspective projections, view-projections and their inverses (row- or column-major, by their shape)
   found in the blocks a draw binds, their x row divided by k in a copy for the draw (reused while the block is unchanged); orthographic ones left.
   320e sampling and copies: a 16:9-geometry draw sampling a widened texture reads its middle band; copies and blits between widened and plain
   textures mapped; compute writing a widened image with its groups × k.
@@ -1693,3 +1693,14 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   190 / 190 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
   Smoke (no scan): Tears of the Kingdom's two red lines as before; manosaba none, its s600 the same title page with the butterflies elsewhere
   (looked at).
+- [x] batch 167 · 320d (the rewrite and the HUD): a draw into a widened target binds, for each uniform block (its source's GPU address: the pool,
+  the submit call's snapshot or an update's private copy), a copy in the submission's arena with what `widen_rw.h` changes, or the block itself
+  when nothing does; each block is scanned once a submission (a table of 4,096), and the flags go with a reused argument block. A draw that read
+  the HUD's orthographic projection and no projection to change is placed in the centred 16:9 band at its own size (viewport and scissor moved by
+  half the added width); the others are widened (`DM_WIDEN_RW=0` rewrites nothing). In `gfx/tests/t_widen_draw.m` (5 and 2 with --norw;
+  `-DDM_TEST_WIDEN_HUD_WIDE` 1 fails): a 16:9 projection's P00 reads 203 of 255 (0.974 / k) instead of 248 and the draw reaches column 1560 of 1564;
+  a HUD draw covers columns 142-1421 only. Tears of the Kingdom's prologue on the M5 with `DM_WIDEN_SCREEN=2868x1320` (the shots 2346x1080, the
+  display texture widened): the cave and Zelda in proportion over the whole width, the subtitles at their own size in the middle, the same two red
+  lines; at frame 3500 a softer, brighter rectangle over Zelda's right side, where a screen-space pass is placed or sampled wrongly: 320e / 320f's.
+  gfx 192 / 192 on Metal 4 and Metal 3, host 216 / 216, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
+  connected. Smoke (no widening): Tears of the Kingdom's two red lines as before, s1800 Zelda speaking a moment apart (looked at); manosaba none.
