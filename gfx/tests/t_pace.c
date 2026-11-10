@@ -250,6 +250,15 @@ int main(void) {
             {got4 == 10000000, "... without it: 1.25 x the p90, 10 ms"},
         };
         for (int i = 0; i < (int)(sizeof f / sizeof *f); i++) { n++; printf("%-72s %s\n", f[i].why, f[i].ok ? "✓" : "✗"); fail += !f[i].ok; } }
+    {   // when a present reached the screen, by its ticket (plan item 71b)
+        struct { int ok; const char *why; } f[] = {
+            {nvn_pres_time(1, 2400, 12.5) == 12.5, "a present with a ticket: the present thread's time for it"},
+            {nvn_pres_time(1, 2400, 0) == 0, "... not on screen yet: no reading"},
+            {nvn_pres_time(1, 2400, -1) == -1, "... dropped by the present thread: dropped"},
+            {nvn_pres_time(1, 0, 0) == -1, "discarded before it was queued (no ticket): counted as dropped [-DDM_TEST_PRES_DISCARD_NO_READING]"},
+            {nvn_pres_time(0, 0, 0) == 0, "its ticket not known yet (the present job has not run): no reading"},
+        };
+        for (int i = 0; i < (int)(sizeof f / sizeof *f); i++) { n++; printf("%-72s %s\n", f[i].why, f[i].ok ? "\xe2\x9c\x93" : "\xe2\x9c\x97"); fail += !f[i].ok; } }
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }

@@ -302,9 +302,17 @@ Correctness that needs play, saves or the console:
 
 At the Mac or with hardware:
 - 97 a present with a deadline against the GPU clock drop: needs a window and `powermetrics` (the password).
-- 71b the covered window (`DM_WINDOW=1 DM_TEST_COVER=30,10`), the Metal 4 screen on a device (`DM_TEST_NO_METAL4=1` in env.txt), the backup
-  exclusion in Settings, uncapped pacing in a window; the window checks of 123 and 127; 153's latency default (`DM_PRESENT_LATENCY=auto`) after
-  a check of the 30 fps setting.
+- 71b (the Mac's window checks: batch 190) left: the Metal 4 screen on a device (`DM_TEST_NO_METAL4=1` in env.txt), the backup exclusion in Settings;
+  127's window checks by hand (the title bar's drag, the bars); 153's latency default (`DM_PRESENT_LATENCY=auto`) on a device; the fps line's
+  on-screen count after the app has been in the background (below). In a window on the Mac (batch 190): covered by an opaque window for 10 s
+  (`DM_TEST_COVER=30,10`, manosaba) its presents are dropped (280 and 60 discarded in the two 300-frame lines), the game goes on at 60 fps (frame time
+  p50 16.66 ms), no stall line, and they are back when it is uncovered; Tears of the Kingdom's product60 standing on Great Sky Island is paced at the
+  window's 60 Hz (frame time p50 16.67 / p95 16.8 ms, none of 300 presents a line dropped; the same with `DM_UNCAPPED_HZ=display`); with the 30 fps
+  setting (`DM_FPS=30`, 123) 33.34 / 33.5 ms and 30 on screen, none dropped. What the cover showed: the on-screen statistics (the fps line's "on
+  screen", the dropped counts, `@presented_ms`) asked for a present's time by the game's count of presents, while a present made under the discard
+  gets no ticket from the present thread; the count ran ahead of the tickets and no later present was found, "on screen –" for the rest of the run
+  (after any time in the background on iOS too, where presents are discarded the same way). They ask by each present's own ticket now (`nvn_pace.h`
+  nvn_pres_time, `hle/pacing.inc`): 60 on screen again from the first line after the cover.
 - 71d displays above 120 Hz (macOS rounds a 60 Hz request to 72 on a 144 Hz panel).
 - 66 a Switch Pro controller with the printed-letter face buttons (2); 67 gyro and rumble with a controller and the phone.
 - 62 other devices: the cold-texture census (56) under a device's memory limit; 62c2 BC2 / BC3 / BC7 → ASTC and BC4 / BC5 → EAC on GPUs without
@@ -2183,3 +2191,11 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots (looked at), 0.2-0.7 tile reads and no
   copy a frame, instructions a draw 26,241-38,046 (26,238-35,832 in batch 188: within the spread of its six windows); manosaba none, its frames the
   same.
+- [x] batch 190 · 71b's window checks on the Mac, and the on-screen statistics after discarded presents. `gfx/nvn/nvn_pace.h` nvn_pres_time;
+  `gfx/nvn/hle/pacing.inc`: what each of the last 16 presents got (a ticket, or on the translation thread a present job, whose ticket is looked up
+  once it has run), asked for 8 presents later; a present discarded before it was queued counts as dropped, as the line's "discarded" says. `t_pace`
+  +5 (126; `-DDM_TEST_PRES_DISCARD_NO_READING` 1 fails); the window run itself is the check of the lookup (batch 189's host: "on screen –" from the
+  cover on; this one: 60 again; `-DDM_TEST_PRES_BY_COUNT` is the old lookup). The checks: 71b above. gfx 203 / 203 on Metal 4 and Metal 3, host 219 /
+  219, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as
+  before, s800 the same, s1300 and s1800 nearer moments of the same two shots (14 % and 3 % of pixels past 8), 0.2-0.7 tile reads and no copy a frame,
+  instructions a draw 26,174-37,852; manosaba none, its frames the same.

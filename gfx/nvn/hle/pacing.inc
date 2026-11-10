@@ -203,6 +203,8 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
       if (ha > 0 && g_frame == (uint64_t)hb) nvn_fps_hold(0); }   // a freeze on purpose (host/runtime/crash.c's frames-stopped watch)
     gfx_enter();
     uint64_t t0 = now_ns();
+    static struct { uint64_t id; uint8_t job, set; } ptk[16];   // what each of the last presents got: a ticket, or a present job (the statistics below ask by it)
+    ptk[o->presents % 16].set = 0;
     if (xlat_on()) {   // a job after the frame's submissions (plan item 61): ticket[idx] holds the job, rfence[idx] the token of the frame's last submission
         if (idx >= 0 && idx < o->ntex && idx < 4) { xjob j = {.kind = XJ_PRESENT, .tex = CTX(o->tex[idx]), .period = present_period(o) / 1e9}; memcpy(j.crop, o->crop, sizeof j.crop);
             pthread_mutex_lock(&g_xord_mu); o->ticket[idx] = x_push(&j); o->rfence[idx] = x_token() | SYNC_TOKEN; pthread_mutex_unlock(&g_xord_mu); }
@@ -211,6 +213,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     if (idx >= 0 && idx < o->ntex && idx < 4) { o->ticket[idx] = mtl_present(CTX(o->tex[idx]), present_period(o) / 1e9, o->crop); o->rfence[idx] = mtl_last_fence(); }   // enqueue only, return immediately; the frame's work is committed (QueueSubmitCommands replays and commits at once)
     gfx_mt_leave();
     }
+    if (idx >= 0 && idx < o->ntex && idx < 4) { ptk[o->presents % 16].id = o->ticket[idx]; ptk[o->presents % 16].job = (uint8_t)xlat_on(); ptk[o->presents % 16].set = 1; }
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
     trace_end(TR_PRESENT, tr, (uint64_t)idx, g_frame);
@@ -307,7 +310,17 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     if (idx >= 0 && idx < 4) o->avail[idx] = period ? slot + period : 0;
     static uint64_t prev_slot; if (prev_slot && period) trow(f, "@display_ms", (slot - prev_slot) / 1e6); prev_slot = slot;   // display interval between two adjacent frames on screen (this is the one to look at for dropped frames)
     // Actual presentation interval (windowed mode): taken 8 presents late (the presented callback has arrived by then), as the difference between the n-th and the (n−1)-th; −1 = discarded
-    if (o->presents > 9) { uint64_t n = o->presents - 8; double a_ = mtl_presented_time(n), b_ = mtl_presented_time(n - 1);
+    if (o->presents > 9) { uint64_t n = o->presents - 8; double ab_[2];
+        for (int q = 0; q < 2; q++) {   // by each present's own ticket (nvn_pace.h nvn_pres_time: the count runs ahead of the tickets once presents were discarded)
+#ifndef DM_TEST_PRES_BY_COUNT   // negative control (a window run with DM_TEST_COVER): by the count, as before
+            uint64_t id = ptk[(n - q) % 16].id, tk = id; int known = ptk[(n - q) % 16].set;
+            if (known && ptk[(n - q) % 16].job) { pthread_mutex_lock(&g_xq_mu); known = g_xtk[id % XF].job == id; tk = known ? g_xtk[id % XF].tk : 0; pthread_mutex_unlock(&g_xq_mu); }
+            ab_[q] = nvn_pres_time(known, tk, known && tk ? mtl_presented_time(tk) : 0);
+#else
+            ab_[q] = mtl_presented_time(n - (uint64_t)q);
+#endif
+        }
+        double a_ = ab_[0], b_ = ab_[1];
         if (a_ < 0) trow(f - 8, "@presented_ms", -1); else if (a_ > 0 && b_ > 0) trow(f - 8, "@presented_ms", (a_ - b_) * 1e3);
         g_pres_exp[g_presn % TWIN] = g_pres_exp_last = nvn_expect_ms(g_hold_ring[(n - 1) % 16], g_hold_ring[n % 16]);   // judged against its own presents' holds
         g_pres_iv[g_presn++ % TWIN] = a_ < 0 ? -1 : (a_ > 0 && b_ > 0 ? (a_ - b_) * 1e3 : 0);

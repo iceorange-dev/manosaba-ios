@@ -61,6 +61,20 @@ static inline int nvn_link30_step(nvn_link30 *s, unsigned itv, unsigned hz, uint
 // that; slow (the frame interval line): over 1.1 × its hold. Against a fixed 16.7 / 25 ms every frame of a 30 fps game counted (299 of 300).
 // Unit test tests/t_pace.c
 static inline double nvn_hold_ms(uint64_t period_ns) { return period_ns ? period_ns / 1e6 : 1000.0 / 60; }
+// When a present reached the screen, for the statistics above (plan item 71b): by the ticket the present thread gave it, not by the game's count of
+// presents. A present made while presents are discarded (a covered window, the app in the background) gets no ticket, so the count ran ahead of the
+// tickets from then on and no later present was ever found: "on screen –" for the rest of the run. known: PresentTexture's ticket is known (on
+// the translation thread its job has run); ticket 0: discarded before it was queued; shown: the present thread's time for that ticket (seconds;
+// 0 none yet, -1 dropped). Returns seconds, 0 for no reading, -1 for dropped or discarded
+static inline double nvn_pres_time(int known, uint64_t ticket, double shown) {
+    if (!known) return 0;
+#ifndef DM_TEST_PRES_DISCARD_NO_READING   // negative control of t_pace only: a discarded present is no reading (it was not counted as dropped)
+    if (!ticket) return -1;
+#else
+    if (!ticket) return 0;
+#endif
+    return shown;
+}
 static inline double nvn_expect_ms(double hold_prev, double hold_cur) { return hold_prev > hold_cur ? hold_prev : hold_cur; }
 static inline int nvn_dropped(double iv_ms, double expect_ms) {
 #ifdef DM_TEST_DROP_60HZ   // negative control of t_pace only: against 60 fps whatever the hold, as before
