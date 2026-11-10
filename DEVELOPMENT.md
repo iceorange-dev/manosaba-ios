@@ -380,10 +380,13 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   memory; looked at), no target given memory, and under Metal's API validation (the opening, and a new game for 75 s) no failure. The ledger's seven
   red lines at the opening (`xv ... submit lookahead read/need`: a target left unstored after its trial of frames is read again when the scene
   changes, one line a key, the key then off) are as before this batch (batch 186's host gives the same seven); shots every four frames across them are
-  the camera's motion apart from a run with the ledger off (looked at). Left: the peak on the phone (`work/scripts/mano_trial_dev.sh`); the
-  characters' pixels per unit lowered in the RomFS's `resources.assets` (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250
-  at 75 instead of 100, the Switch's file has the same 50 entries; a 2930-row target is drawn at most 1260 rows high on a phone), an asset change for
-  the user to decide. Heaps buy little: in the census the targets' pools overlap in two pairs (9 MB).
+  the camera's motion apart from a run with the ledger off (looked at). Batch 193: the ledger is off for manosaba (`DM_NVN_XV=0` in its defaults). It
+  saved the game nothing: render targets stored a frame are the same with it on and off in every 300-frame line from the title through the trial's
+  opening into the debate (34.8 MB at the title, 64-151 MB after) and in a new game (24.9 MB), the GPU's time too (p50 2.1-2.8 ms), while each run of
+  the opening read seven targets it had left unstored. With it off: no red line there, the memory as in batch 188. Left: the peak on the phone
+  (`work/scripts/mano_trial_dev.sh`); the characters' pixels per unit lowered in the RomFS's `resources.assets` (PR #2's `patch_character_ppu.py` for
+  the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100, the Switch's file has the same 50 entries; a 2930-row target is drawn at most 1260 rows
+  high on a phone), an asset change for the user to decide. Heaps buy little: in the census the targets' pools overlap in two pairs (9 MB).
 - 281 native resolution: done for manosaba in batch 109 and for Tears of the Kingdom up to 1920x1080 in batch 121 (below). Left: Tears of the
   Kingdom above 1080 (the heap overlay of `games/totk/heapdef.py`, which on iOS also needs a larger application pool than `ios_pool_add_mb` 0 and a
   heap region above `guest_heap_mb` 2176 inside the 6144 MB reservation: none of it tried on a device), and for other games the backend route:
@@ -2224,3 +2227,9 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots
   (looked at), 0.1-0.6 tile reads and no copy a frame, instructions a draw 26,313-38,280 (26,351-38,034 in batch 191); manosaba none, its frames the
   same.
+- [x] batch 193 · manosaba's validity ledger off by default (280's finding). `games/manosaba/defaults.c`: `DM_NVN_XV=0` unless set. `host/tests`
+  `t_mano_defaults` +2 (4; `-DDM_TEST_MANO_XV_ON` 1 fails, `-DDM_TEST_MANO_DS_MEMORY` 1). The trial's opening on the Mac: seven red lines → none, RSS
+  at its sampled peak 2,178 MB (2,120-2,199 in batch 188); a new game for 75 s with it on and off: 24.9 MB stored a frame either way. gfx 203 / 203 on
+  Metal 4 and Metal 3, host 220 / 220, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of
+  the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots, 0.2-0.9 tile reads and no copy a frame,
+  instructions a draw 26,262-36,342; manosaba none, its frames the same.
