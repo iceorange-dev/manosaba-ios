@@ -239,8 +239,16 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   On the iPhone Air it changes nothing, by design: thermal state serious comes 44-58 s into Great Sky Island from a cool start, the app then
   holds 30 fps and frames are judged against that; before it too few are late. Left: its case measured on a phone with room (the 17 Pro's
   56 fps), then a setting in the app.
-- 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its middle,
-  and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576).
+- [-] 218 the G-buffer split by compute: two depth-probe dispatches (3c8e9ba061067c07_b, bc58d5dec860c367_b) sample the G-buffer's depth in its
+  middle, and each split stores and reloads four colour targets and the depth (about 24 MB at 1024x576). Looked at in batch 185 (their MSL, a
+  pass dump of Great Sky Island): both fill a coarse grid of depths in the 23,232-byte buffer (from byte 19,456). The first, after the
+  G-buffer's first 173 draws, writes the depth at each point; the second, after the next 97, writes the depth where it came nearer and 1.0
+  where it did not; later dispatches read the grid (c223a938382abd73_b the depth once more, b08e92c3143f9a12_b). So each needs the depth of
+  exactly its place: deferred, it samples other draws' depth, and a kernel cannot read a pass's depth while the pass is open (nor a fragment
+  shader the depth target). What would avoid the two splits is the 270 draws drawn depth-only first, the dispatches, then one pass with
+  those draws again under a depth test changed from less to less-or-equal: coplanar fragments would then resolve to the last drawn instead
+  of the first, and the gain is two of the frame's splits (about 18 MB loaded and 18 stored each at 1280x720, of 315 MB loaded and 304
+  stored a frame). Not taken. What the dump did show is 325.
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
   less traffic, but 66.6 ms frames without the commits. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read`
   without `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
@@ -535,6 +543,28 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   link, `DM_FPS=30`, the report times stretched by `DM_NVN_TS_DVFS=10` so the game picks 3): 66.67 ms a frame before, 50.00 after, the link
   at 60 Hz from the first interval 3 and at 30 Hz again 3 s after the last. Left: the second change on a phone (a launch with `DM_FPS=30`:
   the log's "ProMotion: the frame rate held at 30 fps, presents at 120").
+- 325 (batch 185; left: the phone measured again) the decals' tile reads lost behind the vertex edge push. From chain 28614768c859 (batch
+  172, 2026-11-09) every vertex shader ends with the translator's edge push (320f), which writes the position's x and y last, and
+  `gfx/tools/dmsh_fetch.py` screen_locn took the position from its last write: no vertex shader's screen output was proven any more (2,388
+  before), so no draw that samples its own pass read the tile (181). Great Sky Island on the iPhone Air before and after that batch: 272
+  tile reads and 6 copies a frame became 13 splits with 31 copies; render targets loaded 236 → 508 MB a frame, stored 236 → 480; the GPU
+  under the 30 fps hold 15 → 26-34 ms and the hold's 29.8 fps → 27.4. Batch 183's measurements on the Air were taken with it, and 324's log:
+  a GPU at 29-34 ms is what made the game set interval 3 there. Found from 218's pass dump (the G-buffer in 15 passes, each loading and
+  storing five or six 1280x720 attachments) and a new line of the dump naming why a draw is not read from the tile (`f`, `mtl/tile_merge.inc`
+  fbx_fetch). Nothing had shown it: the unit test's vertex shader had no tail, and the smoke's 0.2-0.7 tile reads a frame going to copies
+  was not in the batch report. Now screen_locn takes the position's x and y from before the push when the tail is exactly the push (every
+  statement `EmitWidenPushAxis` emits, the field at the host's offset; with the field 0 the push returns its input bit for bit), the host
+  never pushes a draw that reads the tile (`mtl/draw.inc` wd_push_ok), and a vertex shader's screen_locn is made in the build's second stage
+  (`dmsh_build.py` fetch_finish: taken from the shader cache it was the tool before's, so the first rebuild still had none). Chain
+  fd1036a8b871: 2,388 vertex shaders with a screen position again. On the Mac (Great Sky Island standing, 1280x720, the chain before
+  against this one): 0 → 274 tile reads and 31 → 6 copies a frame, render targets loaded 508 → 315 MB and stored 480 → 304 MB a frame, GPU
+  p50 8.5 → 5.9 ms and p95 14.1 → 11.3; the two shots differ by where the clouds are (looked at). Left: the Air again (Great Sky Island
+  under the hold; 190 and 285 were judged with the regression).
+- 326 the three draws a frame on Great Sky Island that still get copies and a split (fragment shaders ecbe4aa4417b3f80, c345c12c5f1a4f06,
+  5f9b0657c39ac2cb; e3a11670702f91c2 and c2093bd96a8bb59c elsewhere): they sample colour targets of their pass at the projected screen
+  position as the decals do, but `dmsh_fetch.py` variant makes no readable-tile version of a fragment shader with more than four colour
+  outputs (theirs: colours 0, 1, 3, 5 and 7) or a depth output (ecbe4aa4: three colours and gl_FragDepth). Each costs a split of five or
+  six 1280x720 attachments and its copies.
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -2021,3 +2051,22 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
   connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots
   (looked at), instructions a draw as before (27,211-39,283); manosaba none, its frames the same (s600 the title page fading in, looked at).
+- [x] batch 185 · 325, the decals' tile reads back (a regression of batch 172, found while 218 was looked at), 218 closed.
+  218's two dispatches fill a grid of depths, each from the depth of exactly its place in the G-buffer: nothing to take (the item). Its pass
+  dump of Great Sky Island showed the G-buffer in 15 passes, 13 of them ended by a draw sampling its own pass and copied for, none read from
+  the tile; a new `f` line of the dump (`mtl/tile_merge.inc` fbx_fetch) named why: the vertex shaders' screen position not proven. The
+  cause: `gfx/tools/dmsh_fetch.py` screen_locn read the position's x and y from their last write, since chain 28614768c859 the edge push's
+  (320f). It now takes them from before the push when the tail is exactly the push; `mtl/draw.inc` wd_push_ok never pushes a draw that
+  reads the tile; `dmsh_build.py` makes screen_locn in its second stage (from the shader cache it came back as the tool before had made
+  it: the first rebuild, chain e40b753d737f, still had none, which the new check caught). Chain fd1036a8b871, every shader rebuilt.
+  `tools/tests/t_dmsh_fetch.py` +9 (24: the push in x and y seen through, spvFMul forms, five tails that are not the push, the fields'
+  offsets against the host's; `DM_TEST_FETCH_NO_TAIL=1` 3 fail), `gfx/tests/t_scale_msl.py` +1 (7: 2,388 vertex shaders with a screen
+  position, the four decal ones theirs; the chain before fails 1), `t_widen_push.m` +3 (7 in each of its two runs;
+  `-DDM_TEST_WIDEN_PUSH_TILE_READ` 1 fails). The batch report now prints the smoke's copies against tile reads beside the batch before
+  (here 0.1-0.6 tile reads and no copy a frame, against 0.1-0.7 copies and no tile read).
+  On the Mac, Great Sky Island standing: 274 tile reads and 6 copies a frame (0 and 31), render targets loaded 508 → 315 MB and stored
+  480 → 304 MB a frame, GPU p50 8.5 → 5.9 ms; the shots looked at (the clouds' places differ). What it cost on the iPhone Air is in the
+  item, from the logs before and after batch 172; the Air is not measured again yet. The three draws a frame still copied for: 326.
+  gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built (the new
+  bundle), the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of
+  the same two shots (looked at), instructions a draw as before (26,995-39,560); manosaba none, its frames the same.

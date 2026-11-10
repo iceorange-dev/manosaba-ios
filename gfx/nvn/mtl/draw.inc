@@ -2,6 +2,15 @@
 static uint64_t g_wd_hud, g_wd_wide, g_wd_pushed;   // draws into widened targets centred as the HUD's / widened (320d) / the HUD's pushed to the screen's edges (320f)
 void mtl_widen_draw_stats(uint64_t out[3]) { out[0] = g_wd_hud; out[1] = g_wd_wide; out[2] = g_wd_pushed; }
 static int has_support(const NvShader *sh) { if (!sh) return 0; for (int i = 0; i < sh->rf.nb; i++) if (sh->rf.b[i].kind == NVN_RB_SUPPORT) return 1; return 0; }
+// Whether a HUD draw into a widened target is pushed to the screen's edges (plan item 320f; fl: g_wd_fl): one that read the HUD's projection
+// and samples nothing larger than 8x8, whose vertex shader has the chain's edge push. Never one that reads its own pixel from the tile
+// (fbx_fetch): its sample is proven for the position the push leaves alone (dmsh_fetch.py screen_locn, plan item 325)
+static int wd_push_ok(int widened, int fl, int support, int tile_read) {
+#ifdef DM_TEST_WIDEN_PUSH_TILE_READ   // negative control of t_widen_push only: a draw reading the tile pushed all the same
+    tile_read = 0;
+#endif
+    return widened && (fl & 7) == 2 && !(fl & 16) && support && !tile_read;
+}
 // The draw, in three stages: what keeps it from drawing or comes before it (draw_admit), the render pass it draws in (draw_pass), its encoding
 // (draw_encode). draw() is also how deferred and merged draws are drawn again (defer_replay, defer_fallback, fz_check_run)
 static id<MTLFunction> g_draw_fz_fn;   // Specialized fragment function for this draw of the later pass in a merged render pass (nil = use the original version)
@@ -201,7 +210,7 @@ static int draw_encode(id<MTLRenderCommandEncoder> en, __unsafe_unretained NvPro
     // (plan item 320f): the whole viewport, as a widened draw's, and its vertex stage again with the push (shrunk to the middle, the canvas'
     // edges to the screen's: S2Arm's rule); one that samples more stays centred (a texture would stretch)
 #ifndef DM_TEST_WIDEN_PUSH_OFF   // negative control of t_widen_push only: every HUD draw centred
-    if (__builtin_expect(kx != 1 || ky != 1, 0) && (g_wd_fl & 7) == 2 && !(g_wd_fl & 16) && has_support(pr->sh[0])) {   // (either axis, 320g)
+    if (__builtin_expect(kx != 1 || ky != 1, 0) && wd_push_ok(1, g_wd_fl, has_support(pr->sh[0]), g_fbx_fn && !g_defer_replaying)) {   // (either axis, 320g)
         g_wd_push_on = 1; g_args_dirty[0] = 1; int ok = encode_args(en, pr->sh[0], 0, 1); g_wd_push_on = 0; g_args_dirty[0] = 1;   // (the next draw's vertex stage encoded again without it)
         if (!ok) return 0;
         g_wd_pushed++;

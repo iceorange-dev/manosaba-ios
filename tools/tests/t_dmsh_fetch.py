@@ -4,8 +4,13 @@
   (operands in either order, spvFMul too), with the input's location; a flat input, x and y of different inputs, the w of another input, swapped
   components and a value defined twice are left alone; an unprojected sample stays a plain call;
 - a vertex shader's screen outputs: ((w + x) * 0.5, (w - y) * 0.5, -, w) of the final position; a later flip of y, a write inside a block, the sign
-  of y wrong, another w, a second return and a whole-vector write after the components are not proven.
-DM_TEST_FETCH_NO_PROJ=1 (projected samples left alone, as before 2026-10-22) fails 2."""
+  of y wrong, another w, a second return and a whole-vector write after the components are not proven;
+- the translator's own edge push after the game's code (plan items 320f / 320g: the position's x and y written last from
+  support_buffer.widen_push / widen_push_y) is seen through, in x and y, with spvFMul / spvFAdd / spvFSub too: the screen output is still
+  proven (plan item 325: it was not from chain 28614768c859 to ba6c7622e044, and every decal of Tears of the Kingdom was copied for). A tail
+  that is not exactly the push is not seen through: another bound, the other field, a field at another offset, a position's w written after
+  the push read it, a second change of x after the push; the fields' offsets are the Metal host's (gfx/nvn/mtl/args.inc).
+DM_TEST_FETCH_NO_PROJ=1 (projected samples left alone, as before 2026-10-22) fails 2; DM_TEST_FETCH_NO_TAIL=1 (the push not seen through) 3."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'gfx', 'tools'))
 import dmsh_fetch as f
@@ -115,4 +120,69 @@ check('the sign of y wrong ((w + y) / 2): not proven', vs(src=VS.replace('float 
 check('another w: not proven', vs(src=VS.replace('    out.m_54.w = _356;', '    out.m_54.w = _364;')) == [])
 check('a second return: not proven', vs('    if (_356 > 0.0)\n    {\n        return out;\n    }\n') == [])
 check('a whole-vector write after the components: not proven', vs('    out.m_54 = float4(0.0, 0.0, 0.0, 1.0);\n') == [])
+
+# The edge push as EmitterContext.EmitWidenPushAxis emits it (Tears of the Kingdom's 1986375bdaab24ad_b, the SSA names renumbered)
+SUPPORT = '''struct _10
+{
+    uint _m0;
+    uint4 _m1[8];
+    float4 _m2;
+    float4 _m3;
+    int _m4;
+    float4 _m5[73];
+    int4 _m6;
+    int _m7;
+    float4 _m8[73];
+    float4 _m9;
+    float4 _m10;
+};
+
+struct spvDescriptorSetBuffer0
+{
+    constant _10* support_buffer [[id(0)]];
+};
+
+'''
+def push(axis, mem, n):
+    return f'''    float _{n} = out.gl_Position.{axis};
+    float _{n+2} = out.gl_Position.w;
+    float _{n+4} = (*spvDescriptorSet0.support_buffer).{mem}.x;
+    float _{n+6} = (*spvDescriptorSet0.support_buffer).{mem}.y;
+    float _{n+8} = (*spvDescriptorSet0.support_buffer).{mem}.z;
+    float _{n+10} = 1.0 - _{n+8};
+    float _{n+12} = _{n} * _{n+10};
+    float _{n+14} = _{n+12} / _{n+2};
+    float _{n+16} = _{n+14} * _{n+14};
+    bool _{n+18} = _{n+6} < _{n+16};
+    bool _{n+20} = _{n+16} < 0.9940090179443359375;
+    bool _{n+22} = 0.0 < _{n+8};
+    float _{n+24} = _{n+6} * 1.012073040008544921875;
+    bool _{n+26} = _{n+16} < _{n+24};
+    bool _{n+28} = _{n+22} || _{n+26};
+    bool _{n+30} = _{n+18} && _{n+20};
+    bool _{n+32} = _{n+30} && _{n+28};
+    float _{n+34} = _{n+4} * _{n+2};
+    bool _{n+36} = 0.0 < _{n+14};
+    float _{n+38} = _{n+12} + _{n+34};
+    float _{n+40} = _{n+12} - _{n+34};
+    int _{n+42} = _{n+36} ? as_type<int>(_{n+38}) : as_type<int>(_{n+40});
+    int _{n+44} = _{n+32} ? _{n+42} : as_type<int>(_{n+12});
+    float _{n+1001} = as_type<float>(_{n+44});
+    out.gl_Position.{axis} = _{n+1001};
+'''
+VSP = VS.replace('struct main0_out', SUPPORT + 'struct main0_out').replace('main0(main0_in in [[stage_in]])', 'main0(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]])')
+PX, PY = push('x', '_m9', 500), push('y', '_m10', 600)
+check('the edge push in x and y after the game\'s code: output 6 still holds the screen position [DM_TEST_FETCH_NO_TAIL=1: not]', vs(PX + PY, VSP) == [6])
+spv = (PX + PY).replace('_500 * _510', 'spvFMul(_500, _510)').replace('_512 + _534', 'spvFAdd(_512, _534)').replace('_612 - _634', 'spvFSub(_612, _634)').replace('_604 * _602', 'spvFMul(_604, _602)')
+check('... written with spvFMul / spvFAdd / spvFSub', spv != PX + PY and vs(spv, VSP) == [6])
+check('the push in x alone (y as the game wrote it)', vs(PX, VSP) == [6])
+check('another bound in the tail (0.99 for 0.994009): not the push, not proven', vs(PX.replace('0.9940090179443359375', '0.99') + PY, VSP) == [])
+check('the tail of x reading widen_push_y: not proven', vs(push('x', '_m10', 500) + PY, VSP) == [])
+check('the field at another offset (a member less before it): not proven', vs(PX + PY, VSP.replace('    float4 _m3;\n', '')) == [])
+check('the position\'s w written after the push read it: not proven', vs(PX + PY + '    out.gl_Position.w = _356;\n', VSP) == [])
+check('x changed again after the push: not proven', vs(PX + PY + '    float _800 = -_358;\n    out.gl_Position.x = _800;\n', VSP) == [])
+args = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'gfx', 'nvn', 'mtl', 'args.inc')).read()
+import re
+hx, hy = re.search(r'#define SUPPORT_WIDEN_PUSH (\d+)', args), re.search(r'#define SUPPORT_WIDEN_PUSH_Y (\d+)', args)
+check('the fields\' offsets are the Metal host\'s (SUPPORT_WIDEN_PUSH, SUPPORT_WIDEN_PUSH_Y)', hx and hy and f.WIDEN_PUSH == {'x': int(hx.group(1)), 'y': int(hy.group(1))} and f._support_offsets(VSP).get('_m9') == f.WIDEN_PUSH['x'] and f._support_offsets(VSP).get('_m10') == f.WIDEN_PUSH['y'])
 print(f'== {total} checks, {fails} failed =='); sys.exit(fails != 0)

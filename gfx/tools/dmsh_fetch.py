@@ -9,11 +9,80 @@
 # G-buffer, which read their own pixel of the pass they draw into): at a pixel centre that is exactly the pixel's texel centre when the paired vertex
 # shader writes that output as ((w + x) * 0.5, (w - y) * 0.5, -, w) of its final position (screen_locn below, the vertex side of the proof) and the
 # viewport covers the whole target; the host checks both. After OJZen/totk-mobile's framebuffer-fetch proof (host/nvn_framebuffer_fetch.inc,
-# Apache-2.0), written anew for this tool
+# Apache-2.0), written anew for this tool.
+# The final position's x and y are written last by the translator's own edge push (EmitterContext.EmitWidenPushAxis, plan items 320f / 320g:
+# x' = x * (1 - shrink), moved by push * w inside a band, from support_buffer.widen_push / widen_push_y). With those fields all 0, as the host
+# leaves them for every draw but a HUD draw it pushes (and it pushes none that reads the tile: gfx/nvn/mtl/draw.inc), x' is x bit for bit:
+# x * 1.0, no move (the band's two tests both false), an int reinterpreted back. screen_locn takes the position's x and y from before that
+# tail when the tail is exactly the push (_push_tail). Taking the tail's result instead, the proof found no vertex shader at all from chain
+# 28614768c859 on: Tears of the Kingdom's decals went back to copies and splits (plan item 325)
 import os, re
 
 NFB = 8
 _NO_PROJ = bool(os.environ.get('DM_TEST_FETCH_NO_PROJ'))   # negative control of tools/tests/t_dmsh_fetch.py only: projected samples left alone (before 2026-10-22)
+_NO_TAIL = bool(os.environ.get('DM_TEST_FETCH_NO_TAIL'))   # negative control of tools/tests/t_dmsh_fetch.py and gfx/tests/t_fetch_cache.py only: the edge push not seen through (chains 28614768c859 to ba6c7622e044)
+WIDEN_PUSH = {'x': 2560, 'y': 2576}   # support_buffer.widen_push / widen_push_y (gfx/nvn/mtl/args.inc SUPPORT_WIDEN_PUSH, SUPPORT_WIDEN_PUSH_Y; t_dmsh_fetch.py compares)
+_SIZE = {'uint': (4, 4), 'int': (4, 4), 'float': (4, 4), 'uint4': (16, 16), 'int4': (16, 16), 'float4': (16, 16), 'char': (1, 1)}
+
+def _support_offsets(src):
+    """{member: offset} of the support buffer's struct, by Metal's alignment (as gfx/tests/t_scale_msl.py measures it); {} without one"""
+    m = re.search(r'constant (\w+)\* support_buffer \[\[id\(\d+\)\]\];', src)
+    body = m and re.search(r'struct %s\s*\{(.*?)\};' % m.group(1), src, re.S)
+    if not body: return {}
+    out, off = {}, 0
+    for t, nm, cnt in re.findall(r'^\s*(\w+) (\w+)(?:\[(\d+)\])?;', body.group(1), re.M):
+        if t not in _SIZE: return {}
+        sz, al = _SIZE[t]; off = (off + al - 1) // al * al; out[nm] = off; off += sz * int(cnt or 1)
+    return out
+
+def _push_tail(b, axis, v, offsets):
+    """b: a vertex function's body, v: the value last written to gl_Position.<axis>. When v is exactly the translator's edge push of that axis
+    (every statement EmitWidenPushAxis emits, whatever the SSA names) reading the support buffer's field at WIDEN_PUSH[axis]: the offset in b of
+    the statement that loads gl_Position.<axis> for it (the game's value: what the push returns when the field is 0). Else None"""
+    def d(x):   # the only definition of an SSA value of any scalar type, with where it is
+        r = list(re.finditer(r'\n +(?:float|bool|int|uint) %s = ([^;\n]+);' % re.escape(x), b)) if x else []
+        return (r[0].group(1), r[0].start()) if len(r) == 1 else (None, -1)
+    def m(x, pat):   # the groups of x's definition against pat (%s: an SSA name), or None
+        e = d(x)[0]
+        r = e and re.fullmatch(pat.replace('%s', r'(_\d+)'), e)
+        return r.groups() if r else None
+    def two(x, op, fn):   # a op b, or spv<fn>(a, b)
+        return m(x, r'%s ' + re.escape(op) + r' %s') or m(x, 'spv' + fn + r'\(%s, %s\)')
+    def field(x, comp):   # the support buffer member x is loaded from, when its component is comp
+        e = d(x)[0]
+        r = e and re.fullmatch(r'\(\*spvDescriptorSet0\.support_buffer\)\.(\w+)\.%s' % comp, e)
+        return r.group(1) if r else None
+    g = m(v, r'as_type<float>\(%s\)')
+    g = g and m(g[0], r'%s \? %s : as_type<int>\(%s\)')
+    if not g: return None
+    move, sel, xs = g
+    g = two(xs, '*', 'FMul')
+    if not g: return None
+    x0, s1 = g
+    e0, p0 = d(x0)
+    sh = m(s1, r'1\.0 - %s')
+    mem = sh and field(sh[0], 'z')
+    if e0 != 'out.gl_Position.' + axis or not mem or offsets.get(mem) != WIDEN_PUSH[axis]: return None
+    sh = sh[0]
+    g = m(move, r'%s && %s'); pi, band = g if g else (None, None)
+    g = m(pi, r'%s && %s'); past, inside = g if g else (None, None)
+    g = m(past, r'%s < %s'); thr, t2 = g if g else (None, None)
+    if field(thr, 'y') != mem or m(inside, r'%s < 0\.9940090179443359375') != (t2,): return None
+    g = m(band, r'%s \|\| %s'); shpos, near = g if g else (None, None)
+    g = m(near, r'%s < %s'); thrk = g[1] if g and g[0] == t2 else None
+    if m(shpos, r'0\.0 < %s') != (sh,) or (m(thrk, r'%s \* 1\.012073040008544921875') or m(thrk, r'spvFMul\(%s, 1\.012073040008544921875\)')) != (thr,): return None
+    g = two(t2, '*', 'FMul'); t = g[0] if g and g[0] == g[1] else None
+    g = m(t, r'%s / %s'); w0 = g[1] if g and g[0] == xs else None
+    ew, pw = d(w0)
+    if ew != 'out.gl_Position.w': return None
+    g = m(sel, r'%s \? as_type<int>\(%s\) : as_type<int>\(%s\)'); pos, a, c = g if g else (None, None, None)
+    ga, gc = two(a, '+', 'FAdd'), two(c, '-', 'FSub')
+    if m(pos, r'0\.0 < %s') != (t,) or not ga or not gc or ga[0] != xs or gc[0] != xs or ga[1] != gc[1]: return None
+    g = two(ga[1], '*', 'FMul')
+    if not g or field(g[0], 'x') != mem or g[1] != w0: return None
+    if re.search(r'^ +out\.gl_Position(\.w)? = ', b[pw:], re.M): return None   # the w it read is the final one
+    return p0
+
 
 def _def(src, v):   # the only definition "float v = ...;" of an SSA value (None when there is not exactly one)
     d = re.findall(r'\n +float %s = ([^;\n]+);' % re.escape(v), src)
@@ -45,15 +114,21 @@ def screen_locn(vs):
     b = body.group(1)
     rets = [m.start() for m in re.finditer(r'^ +return\b', b, re.M)]
     if len(rets) != 1 or b[rets[0]:].rstrip() != '    return out;': return []
-    def last(vec, comp):
+    def last(vec, comp, end=None):   # (end: only the writes before that offset of the body)
         if re.search(r'^ +out\.%s\.[xyzw]{2,4} = ' % vec, b, re.M): return None   # (a swizzled write)
         every = [(m.start(), m.group(2)) for m in re.finditer(r'^( +)out\.%s\.%s = ([^;\n]+);$' % (vec, comp), b, re.M) if len(m.group(1)) == 4] + \
                 [(m.start(), None) for m in re.finditer(r'^( +)out\.%s\.%s = ' % (vec, comp), b, re.M) if len(m.group(1)) != 4]
+        if end is not None: every = [e for e in every if e[0] < end]
         if not every: return None
         p, v = max(every)
         if v is None or not re.fullmatch(r'_\d+', v) or any(m.start() > p for m in re.finditer(r'^ +out\.%s = ' % vec, b, re.M)): return None
         return v
-    X, Y, W = last('gl_Position', 'x'), last('gl_Position', 'y'), last('gl_Position', 'w')
+    offsets = _support_offsets(vs)
+    def position(axis):   # the position's x or y: its last write, or the one before the translator's edge push of that axis
+        v = last('gl_Position', axis)
+        p0 = None if _NO_TAIL or not v else _push_tail(b, axis, v, offsets)
+        return v if p0 is None else last('gl_Position', axis, p0)
+    X, Y, W = position('x'), position('y'), last('gl_Position', 'w')
     if not (X and Y and W): return []
     def half(v):   # v = s * 0.5 -> s
         e = _def(b, v) or ''

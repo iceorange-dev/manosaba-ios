@@ -284,37 +284,52 @@ static int fbx_fetch(NvProg *pr, unsigned need, const p_draw *dw, const p_draw_i
 #else
     static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_FBX_FETCH"); on = !e || strcmp(e, "0"); }
     NvShader *vs = pr->sh[0], *fs = pr->sh[1];
-    if (!on || !vs || !fs || !fs->rf.nfc || !fs->rf.nfo || (need & 0x100) || alpha_on()) return 0;
+#define FBX_NO(...) do { PD("f %llu no tile read (fragment shader %.16s): " FBX_NO_1(__VA_ARGS__), g_stat_pass, fs ? fs->key : "-" FBX_NO_2(__VA_ARGS__)); return 0; } while (0)
+#define FBX_NO_1(f, ...) f
+#define FBX_NO_2(f, ...) , ##__VA_ARGS__
+    if (!on || !vs || !fs) return 0;
+    if (!fs->rf.nfc) FBX_NO("its reflection lists no sample that reads its own pixel");
+    if (!fs->rf.nfo) FBX_NO("no readable-tile version");
+    if (need & 0x100) FBX_NO("it samples the depth target");
+    if (alpha_on()) FBX_NO("an alpha test");
     NSUInteger W = 0, H = 0; rt_dims(&W, &H);
-    if (S.has_vp && !(S.vp[0][0] == 0 && S.vp[0][1] == 0 && S.vp[0][2] == (float)W && S.vp[0][3] == (float)H)) return 0;
+    if (S.has_vp && !(S.vp[0][0] == 0 && S.vp[0][1] == 0 && S.vp[0][2] == (float)W && S.vp[0][3] == (float)H))
+        FBX_NO("viewport %g,%g %gx%g is not the whole %lux%lu target", S.vp[0][0], S.vp[0][1], S.vp[0][2], S.vp[0][3], (unsigned long)W, (unsigned long)H);
     int fx[32]; for (int i = 0; i < 32; i++) fx[i] = -1; uint8_t fbmask = 0;
     for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (!sh || sh->stage >= 6) continue;
         for (int i = 0; i < sh->rf.nb; i++) { const nvn_rbind *b = &sh->rf.b[i]; uint64_t h;
             if (b->kind == NVN_RB_IMG) h = b->reg < 32 ? S.img[sh->stage][b->reg] : 0; else if (b->kind == NVN_RB_TEX || b->kind == NVN_RB_TBUF) h = b->reg < 128 ? S.tex[sh->stage][b->reg] : 0; else continue;
             uint64_t ser = h ? h_ser(h) : 0; if (!ser) continue;
             int j = -1; for (int m = 0; m < R.rt.n && m < 8; m++) if (R.rt.color[m] && R.rt.color[m]->serial == ser) { j = m; break; }
-            if (j < 0) { if (R.rt.depth && R.rt.depth->serial == ser) return 0; continue; }
-            if (sh != fs || b->kind != NVN_RB_TEX || (fs->rf.fc_mixed[b->reg >> 6] >> (b->reg & 63) & 1)) return 0;
+            if (j < 0) { if (R.rt.depth && R.rt.depth->serial == ser) FBX_NO("slot %d of stage %d holds the depth target", b->reg, sh->stage); continue; }
+            if (sh != fs || b->kind != NVN_RB_TEX) FBX_NO("stage %d slot %d (kind %d) holds colour target %d: not a fragment texture slot", sh->stage, b->reg, b->kind, j);
+            if (fs->rf.fc_mixed[b->reg >> 6] >> (b->reg & 63) & 1) FBX_NO("slot %d (colour target %d) is also sampled at other coordinates", b->reg, j);
             const tex_t *a = R.rt.color[j]; uint64_t s_; int lv, sl; rt_sub(&R.rt, j, &s_, &lv, &sl);
-            if (lv || sl || a->d.samples > 1 || MAX(a->d.width, 1u) != W || MAX(a->d.height, 1u) != H) return 0;
+            if (lv || sl || a->d.samples > 1 || MAX(a->d.width, 1u) != W || MAX(a->d.height, 1u) != H) FBX_NO("colour target %d is level %d layer %d, %u samples, %ux%u", j, lv, sl, a->d.samples, a->d.width, a->d.height);
             int tid = h_tid(h); void *tv_ = NULL; if (tid) tex_fast_rid(tid, &tv_); __unsafe_unretained id<MTLTexture> tv = (__bridge id<MTLTexture>)tv_;
-            if (!tv) return 0;
+            if (!tv) FBX_NO("slot %d has no texture", b->reg);
             uint32_t apf = tv.parentTexture ? (uint32_t)tv.parentTexture.pixelFormat : (uint32_t)tv.pixelFormat; uint8_t swz[4];
-            if (R.rt.has_cview[j] && R.rt.cview[j].set_format && !(nvn_fmt_to_mtl(R.rt.cview[j].format, &apf, swz) && apf)) return 0;
+            if (R.rt.has_cview[j] && R.rt.cview[j].set_format && !(nvn_fmt_to_mtl(R.rt.cview[j].format, &apf, swz) && apf)) FBX_NO("colour target %d is attached through a view of an unknown format", j);
             MTLTextureSwizzleChannels sw = tv.swizzle;
             if ((tv.parentTexture && (tv.parentRelativeLevel || tv.parentRelativeSlice)) || tv.pixelFormat != (MTLPixelFormat)apf || tv.sampleCount > 1 ||
-                !fbx_swizzle_plain(sw, tv.pixelFormat)) return 0;
+                !fbx_swizzle_plain(sw, tv.pixelFormat))
+                FBX_NO("slot %d's view of colour target %d is not the attachment itself (level %lu layer %lu, format %lu against %u, swizzle %d%d%d%d)", b->reg, j,
+                       tv.parentTexture ? (unsigned long)tv.parentRelativeLevel : 0ul, tv.parentTexture ? (unsigned long)tv.parentRelativeSlice : 0ul, (unsigned long)tv.pixelFormat, apf, (int)sw.red, (int)sw.green, (int)sw.blue, (int)sw.alpha);
             int any = 0;
             for (int c = 0; c < fs->rf.nfc; c++) if (fs->rf.fc_reg[c] == b->reg) { int l = fs->rf.fc_locn[c];
-                if (fs->rf.fc_proj >> c & 1 ? !(l < 32 && (vs->rf.scr_locn >> l & 1)) : !uv_proof(vs, l, dw, di)) return 0;
+                if (fs->rf.fc_proj >> c & 1 ? !(l < 32 && (vs->rf.scr_locn >> l & 1)) : !uv_proof(vs, l, dw, di))
+                    FBX_NO("slot %d (colour target %d): the coordinate from varying %d is not proven this pixel's (%s; vertex shader %.16s)", b->reg, j, l, fs->rf.fc_proj >> c & 1 ? "projected, not its screen position" : "the uv proof", vs->key);
                 fx[c] = j; fbmask |= (uint8_t)(1u << j); any = 1; }
-            if (!any) return 0;
+            if (!any) FBX_NO("slot %d (colour target %d) is sampled by no call the reflection lists", b->reg, j);
         } }
-    if (!fbmask) return 0;
+    if (!fbmask) FBX_NO("no colour target sampled");
     memset(g_fbx_lmap, 0xff, sizeof g_fbx_lmap);
     for (int o = 0; o < fs->rf.nfo; o++) { int c = fs->rf.fo_color[o]; if (c < 8 && c < R.rt.n && R.rt.color[c]) g_fbx_lmap[c] = (uint8_t)c; }
-    id<MTLFunction> fn = bf_fn(fs, fx, fbmask, g_fbx_lmap); if (!fn) return 0;
+    id<MTLFunction> fn = bf_fn(fs, fx, fbmask, g_fbx_lmap); if (!fn) FBX_NO("its readable-tile version was not made");
     memset(&g_fbx_desc, 0, sizeof g_fbx_desc); g_fbx_desc.kind = 1; g_fbx_desc.fbmask = fbmask; for (int i = 0; i < 32; i++) g_fbx_desc.fx[i] = (int8_t)fx[i];
     g_fbx_fn = fn; return 1;
+#undef FBX_NO
+#undef FBX_NO_1
+#undef FBX_NO_2
 #endif
 }

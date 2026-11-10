@@ -141,7 +141,7 @@ def publish_cache(key, digest, rule_fp, code_fp):
         for name in names:
             if name.endswith('.json'):
                 src = os.path.join(out if label == 'mac' else IOSOUT, name)
-                value = json.load(open(src)); value.pop('fetch', None)
+                value = json.load(open(src)); value.pop('fetch', None); value.pop('screen_locn', None)   # (the second stage's: fetch_finish)
                 atomic_json(os.path.join(d, name), value)
     atomic_json(cache_meta_path(key), {'digest': digest, 'rule_fp': rule_fp, 'code_fp': code_fp})
 
@@ -179,7 +179,12 @@ def write_refl(key, refl):
         value = dict(refl, chain_metal=rec)
         atomic_json(os.path.join(d, key + '_b.json'), value)
 
+# The second stage, what dmsh_fetch.py gives a shader: made again for a shader taken from the cache too, whose key does not hold that tool. A
+# vertex shader's screen_locn was made in the first stage and came back from the cache as the tool before had found it: after plan item 325's
+# change of the proof every reflection still said none (gfx/tests/t_scale_msl.py counts them in the built chain)
 def fetch_finish(key, src, refl):
+    if refl['stage'] == 'vs':   # outputs holding the projected screen position (the vertex side of a projected fetch proof)
+        refl['screen_locn'] = dmsh_fetch.screen_locn(src); write_refl(key, refl); return refl
     if refl['stage'] != 'ps' or key.endswith('_i'): return refl   # (an integer-output variant has no readable-tile variant of its own)
     # Those with rewritable samples get variants as before; those without get an output-mapping-only variant, and only for keys in the list (bf_want.tsv, produced by the host planner)
     fv, fmeta = dmsh_fetch.variant(src, refl['bindings'], om_only_ok=key in BF_WANT)
@@ -471,7 +476,8 @@ def vs_init(src):
     return src[:k] + ''.join(f'\n    out.{n} = float4(0.0, 0.0, 0.0, 1.0);' for n in outs) + src[k:]
 
 RULES = []   # MSL rewrite rules attached by shader name (function, applicability test); the former dark-range remap toe has been removed (back to the original Switch brightness)
-# The first-stage code fingerprint does not include dmsh_fetch.py; readable-tile variants get a separate second-stage cache keyed on the generated MSL.
+# The first-stage code fingerprint does not include dmsh_fetch.py; readable-tile variants get a separate second-stage cache keyed on the generated MSL,
+# and a vertex shader's screen_locn is made each time (fetch_finish).
 CODE_FP = hashlib.sha256(source_without_rule_bodies().encode() + b''.join(b'\0' + open(m.__file__, 'rb').read() for m in (dmsh_chain,) + ((ios_metal,) if IOSOUT else ()))).hexdigest()
 TOOL_FP = tool_fingerprint().encode()
 
@@ -636,9 +642,8 @@ def finish(key, w, j, c1):
             'raster': raster_facts(j['stage'], src), 'vs_pad': pad, 'alpha_test': j['stage'] == 'ps' and ALPHA,
             'frag_coord': bool(res.get('uses_frag_coord'))}   # plan item 320f: the shader reads the fragment coordinate (Ryujinx's UsesFragCoord)
     if vi_locs: refl['vi_entry'] = 'main0_vi'; refl['vi_int'] = vi_locs
-    if j['stage'] == 'vs': refl['screen_locn'] = dmsh_fetch.screen_locn(src)   # outputs holding the projected screen position (the vertex side of a projected fetch proof)
     write_refl(key, refl)
-    fetch_finish(key, src, refl)
+    fetch_finish(key, src, refl)   # (a vertex shader's screen_locn, a fragment shader's readable-tile version)
     return 'ok', '', refl
 
 keys = sorted(want) if want else sorted(CAP_RECS)
@@ -692,7 +697,7 @@ def wave(wkeys):
     def fin(key):
         if key in cache_hits:
             refl = json.load(open(os.path.join(out, key + '_b.json')))
-            src = open(os.path.join(out, key + '_b.metal')).read() if refl['stage'] == 'ps' else ''
+            src = open(os.path.join(out, key + '_b.metal')).read() if refl['stage'] in ('ps', 'vs') else ''
             return key, 'ok', '', fetch_finish(key, src, refl)
         if key in xerr or not os.path.exists(os.path.join(w, key + '.spv')): return key, 'translation failed', xerr.get(key, 'no spv'), None
         result = (key,) + finish(key, w, jobs[key], c1s[key])

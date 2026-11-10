@@ -7,8 +7,10 @@ reading render_scale[i] also reads render_scale_y[i] (the axis' scale: TexelFetc
 bindings their scale index (Tears of the Kingdom's upscale ac58fc18eda5f387: its one texture 0, as its MSL passes) and fragment shaders
 frag_coord; widen_push after render_scale_y at the offset the Metal host writes (SUPPORT_WIDEN_PUSH), and every vertex shader ends with the
 edge push in x and in y (EmitterContext.EmitWidenPushAxis: the three values of widen_push and of widen_push_y read, the 0.994009 bound); the
-reflections give uniform bindings the slots their shader reads (the upscale's: 0, 1 and 4). The chains before: b-ce89a37d8939 6 fail,
-b-8f8b45e7aaca 2, b-28614768c859 2, b-36a510fd7866 (no push in y) 1.
+reflections give uniform bindings the slots their shader reads (the upscale's: 0, 1 and 4); and the edge push does not hide the game's
+position from the fetch proof (plan item 325, gfx/tools/dmsh_fetch.py screen_locn): the reflections of 2,388 vertex shaders carry a screen
+position, among them the four that draw Great Sky Island's decals. The chains before: b-ce89a37d8939 6 fail,
+b-8f8b45e7aaca 2, b-28614768c859 2, b-36a510fd7866 (no push in y) 1, b-ba6c7622e044 (no screen position behind the push) 1.
 Usage: t_scale_msl.py [<shader cache>/b-<chain version>]   (default: $DM_ROOT/build/cache/metal_shader_cache/b-<this chain>)"""
 import glob, json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.join(HERE, '..', '..')
@@ -62,14 +64,20 @@ after = [x for x in (lay or []) if len(arrays) == 2 and x[3] > arrays[1][3] and 
 pm = after[0] if after else None; py = after[1] if len(after) > 1 else None
 args_inc = open(os.path.join(ROOT, 'gfx/nvn/mtl/args.inc')).read()
 host_push = re.search(r'#define SUPPORT_WIDEN_PUSH (\d+)', args_inc); host_push_y = re.search(r'#define SUPPORT_WIDEN_PUSH_Y (\d+)', args_inc)
-vs = tails = 0
+vs = tails = 0; scr = {}
 for f in files:
     jf = f[:-6] + '.json'
-    if not os.path.exists(jf) or json.load(open(jf)).get('stage') != 'vs': continue
+    if not os.path.exists(jf): continue
+    jr = json.load(open(jf))
+    if jr.get('stage') != 'vs': continue
+    if jr.get('screen_locn'): scr[os.path.basename(f)[:16]] = jr['screen_locn']
     vs += 1; src = open(f, errors='ignore').read()
     tails += bool(pm and py and all(re.search(r'support_buffer\)\.%s\.%s;' % (m[0], c), src) for m in (pm, py) for c in 'xyz') and '0.9940090179443359375' in src)
 print(f'widen_push at {pm and pm[3]}, widen_push_y at {py and py[3]} (the Metal host writes {host_push and host_push.group(1)}, {host_push_y and host_push_y.group(1)}); vertex shaders {vs}, ending with the edge push in x and y {tails}')
 check('widen_push and widen_push_y where the host writes them, and every vertex shader ends with the edge push in x and y', pm is not None and py is not None and host_push and host_push_y
       and pm[3] == int(host_push.group(1)) and py[3] == int(host_push_y.group(1)) and vs > 0 and tails == vs)
+decal = {'1986375bdaab24ad': [5], '20b374d4f2774345': [5], '6286c2c1758f4729': [1], 'aabb7cc61dc43bb1': [5]}
+print(f'vertex shaders whose reflection carries a screen position: {len(scr)}; Great Sky Island\'s decals {[(k, scr.get(k)) for k in decal]}')
+check('the edge push does not hide the position from the fetch proof: 2,388 vertex shaders with a screen position, the four decal ones theirs', len(scr) == 2388 and all(scr.get(k) == v for k, v in decal.items()))
 print(f'== {n} checks, {fail} failed ==')
 sys.exit(fail != 0)

@@ -6,7 +6,8 @@
 // 1300 not drawn, 700 drawn); the same full quad sampling a 16x16 texture stays centred (142-1421: 10 and 1560 not drawn, 700 drawn).
 // With DM_WIDEN_SCREEN=2853x2007 (the Duo's inner screen: ky 1.25, the target 1280x900; plan item 320g) the same in y with widen_push_y: the solid
 // quad over the canvas reaches rows 10 and 890, one over its middle half rows 270-629 (200 and 700 not drawn, 450 drawn), the textured one
-// 90-809. Every HUD draw centred (-DDM_TEST_WIDEN_PUSH_OFF): 1 fails, in either run.
+// 90-809. Every HUD draw centred (-DDM_TEST_WIDEN_PUSH_OFF): 1 fails, in either run. The rule itself (wd_push_ok): such a draw is pushed, one
+// that reads its own pixel from the tile is not (plan item 325; -DDM_TEST_WIDEN_PUSH_TILE_READ: 1 fails, in either run).
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -15,6 +16,11 @@ void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int fail, count;
 #define EXPECT(name, want, got) do { long long w=(want), g=(got); count++; printf("%-100s expected %-6lld → got %-6lld %s\n", name, w, g, w==g?"✓":"✗"); fail += w != g; } while (0)
+static void rule(void) {   // wd_push_ok, the rule alone (fl: g_wd_fl, 2 the HUD's projection read, 4 a widened draw, 16 a texture larger than 8x8 sampled)
+    EXPECT("the rule: a HUD draw sampling nothing large, the chain's push in its shader: pushed", 1, wd_push_ok(1, 2, 1, 0));
+    EXPECT("... not without widening, with a larger texture, a widened draw, or no push in its shader", 0, wd_push_ok(0, 2, 1, 0) || wd_push_ok(1, 2 | 16, 1, 0) || wd_push_ok(1, 4, 1, 0) || wd_push_ok(1, 2, 0, 0));
+    EXPECT("... and never a draw that reads its own pixel from the tile [-DDM_TEST_WIDEN_PUSH_TILE_READ: pushed]", 0, wd_push_ok(1, 2, 1, 1));
+}
 typedef struct { uint8_t *p; size_t n; } chain;
 static void emit(chain *c, unsigned op, const void *a, size_t n) { size_t z=(8+n+7)&~7ull; op_hdr h={op,(uint32_t)z}; memcpy(c->p+c->n,&h,8); if(n) memcpy(c->p+c->n+8,a,n); c->n+=z; }
 static prog_t g_pf, g_ph, g_pt; static uint8_t *g_cm, *g_ubo; static uint8_t g_px[1564 * 4], g_py[900 * 4];
@@ -79,6 +85,7 @@ int main(void) { @autoreleasepool {
         run(&g_pt, full, 1890);
         EXPECT("... the whole-canvas quad sampling a 16x16 texture: centred (90-809: 10 and 890 not, 450 drawn)", 1, redy(10) == 0 && redy(890) == 0 && redy(450) == 255);
         EXPECT("no command buffer error", 0, mtl_last_commit_error());
+        rule();
         printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
     }
     run(&g_pf, full, 0);
@@ -88,5 +95,6 @@ int main(void) { @autoreleasepool {
     run(&g_pt, full, 1890);
     EXPECT("the whole-canvas quad sampling a 16x16 texture: centred (142-1421: 10 and 1560 not, 700 drawn)", 1, red(10) == 0 && red(1560) == 0 && red(700) == 255);
     EXPECT("no command buffer error", 0, mtl_last_commit_error());
+    rule();
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
 } }
