@@ -58,7 +58,8 @@ int main(void){@autoreleasepool{setvbuf(stdout,NULL,_IONBF,0); mtl_init(); crash
         memcpy(um,GREEN,16);
         uint8_t rd[16]; pend_read(u,rd,16);
         EXPECT(on?"1. replay-time reads (pend_read) see the submit-time bytes":"1. off: replay-time reads see memory",on?0:1,(uint64_t)!memcmp(rd,GREEN,16));
-        nvn_exec(c.p);
+        uint64_t l0=g_cb_pool_n; nvn_exec(c.p);
+        EXPECT(on?"1. the snapshot stands for the block: its memory pool is not looked up [-DDM_TEST_CB_ALWAYS_POOL]":"1. off: the block's memory pool is looked up",on?0:1,g_cb_pool_n-l0);
         EXPECT(on?"1. the draw reads the block as it was at the submit call (red)":"1. off: the draw reads the rewritten block (green)",on?C_RED:C_GREEN,px0(&a));
     }
     g_us.on=1;

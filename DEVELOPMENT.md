@@ -331,27 +331,33 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   cannot be made cooler), so these runs are the cool case. What holds 60 for the first minutes: the option hold60 (batch 118) keeps the controller at 1, about 60 fps until thermal state serious
   (720 rows: p50 17.7-18 ms, p95 25 ms, GPU 14.6-15.4 ms, for a minute and more on USB power; 540 rows: 16.6-16.9 ms for 35 s), then our hold
   and the GPU's lowered clock (27 ms) give 30. Left: a run off USB power (the runs here were on it).
-- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off, batch 119 the memcmp
-  call of 8-byte hash keys (`nvn_hmap.h`, one word). The translation thread standing on Great Sky Island (M5, a Time Profiler run of batch 120):
-  render encoders made 20.5 % (the driver's, one a pass: fewer passes are 219's), dispatches 4.3 %; encode_args 15.5 %, of it the uniform updates'
-  private copies 5.7 % (upd_shadow_at, 4.3 % memmove: each copy is the whole bound range, 32-36 KB on average and 64 KB the largest, `[nvn-mtl]
-  renamed uniform updates`, about 88 copies a frame) and the texture IDs 5.6 % (tex_by_id's slow path 4.4 %, half of it tex_mtl's
-  once-a-submission check of textures that follow guest memory); pso_get 3.1 %, pc_get 1.2 %. Copies of only what a shader reads: in 6,000
-  translated shaders a uniform binding read at constant indices only is read in its first 31 vec4s (median) or 144 (90th percentile) of 4,096, but
-  1,371 of the shaders index one at run time; the extents would come from the reflection of `gfx/tools/dmsh_build.py`, and a change there changes
-  its code fingerprint, so every shader is translated and compiled again (Mac and iOS libraries). Not taken from MacNativeGames PR #750 (all its
-  switches together +11 % fps on an M4 MacBook Air): resolved uniform addresses cached (`TOTK_CBUF_CACHE`; pc_get above), argument bytes equal to
-  the shader's last block bind that block (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), dispatch arguments before the
-  encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`); the border key kept per shader is not worth it here (border_variant 0.0
-  % of the thread). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the passes of a submission, the driver segment filled only at the vec4
-  offsets a shader reads (`mtl/args.inc` fills all). Batch 187: the private copies hold only what their reader reads. The reflection has had the slots
-  each uniform binding's shader reads since 320g (no translation again); a copy is now made through the last of them and the 48 bytes after it
-  (`nvn_refl.h` crn, `core/upd.c` upd_shadow_at's need), and a reader of more takes what an earlier copy of the range holds and the rest from the
-  snapshot. Great Sky Island standing, five runs without and three with it, in turn: 329-333 copies a frame of 16.8-16.9 KB became 344 of 4.9 KB (5.5
-  → 1.6 MB copied a frame; the largest still 64 KB, a block indexed at run time), the translation 68.97-69.78 → 68.24-68.80 M instructions a frame
-  (about 1 % fewer) and 5.28-5.36 against 5.14-5.32 ms of CPU, which overlap: the copies were under 0.2 ms of it on the M5. (The first version made a
-  copy of fewer bytes no base for a reader of more: the title screen's copies then applied 31 log entries each instead of 5, 13 % more instructions a
-  draw there.)
+- 271 CPU per draw, 226's area. Batch 116 took the texture views made again on the same base texture (about 35 a frame) off, batch 119 the memcmp call
+  of 8-byte hash keys (`nvn_hmap.h`, one word). The translation thread standing on Great Sky Island (M5, a Time Profiler run of batch 120): render
+  encoders made 20.5 % (the driver's, one a pass: fewer passes are 219's), dispatches 4.3 %; encode_args 15.5 %, of it the uniform updates' private
+  copies 5.7 % (upd_shadow_at, 4.3 % memmove: each copy is the whole bound range, 32-36 KB on average and 64 KB the largest, `[nvn-mtl] renamed
+  uniform updates`, about 88 copies a frame) and the texture IDs 5.6 % (tex_by_id's slow path 4.4 %, half of it tex_mtl's once-a-submission check of
+  textures that follow guest memory); pso_get 3.1 %, pc_get 1.2 %. Copies of only what a shader reads: in 6,000 translated shaders a uniform binding
+  read at constant indices only is read in its first 31 vec4s (median) or 144 (90th percentile) of 4,096, but 1,371 of the shaders index one at run
+  time; the extents would come from the reflection of `gfx/tools/dmsh_build.py`, and a change there changes its code fingerprint, so every shader is
+  translated and compiled again (Mac and iOS libraries). Not taken from MacNativeGames PR #750 (all its switches together +11 % fps on an M4 MacBook
+  Air): resolved uniform addresses cached (`TOTK_CBUF_CACHE`; pc_get above), argument bytes equal to the shader's last block bind that block
+  (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), dispatch arguments before the encode stage's wait, generation maxima per 64
+  pages (`TOTK_DIRTY_FAST`); the border key kept per shader is not worth it here (border_variant 0.0 % of the thread). 4ppp44 cb21bec / d0d3cb1:
+  argument blocks reused across the passes of a submission, the driver segment filled only at the vec4 offsets a shader reads (`mtl/args.inc` fills
+  all). Batch 187: the private copies hold only what their reader reads. The reflection has had the slots each uniform binding's shader reads since
+  320g (no translation again); a copy is now made through the last of them and the 48 bytes after it (`nvn_refl.h` crn, `core/upd.c` upd_shadow_at's
+  need), and a reader of more takes what an earlier copy of the range holds and the rest from the snapshot. Great Sky Island standing, five runs
+  without and three with it, in turn: 329-333 copies a frame of 16.8-16.9 KB became 344 of 4.9 KB (5.5 → 1.6 MB copied a frame; the largest still 64
+  KB, a block indexed at run time), the translation 68.97-69.78 → 68.24-68.80 M instructions a frame (about 1 % fewer) and 5.28-5.36 against 5.14-5.32
+  ms of CPU, which overlap: the copies were under 0.2 ms of it on the M5. (The first version made a copy of fewer bytes no base for a reader of more:
+  the title screen's copies then applied 31 log entries each instead of 5, 13 % more instructions a draw there.) Batch 191, the translation thread
+  profiled again (Great Sky Island standing, the M5, 10 s of Time Profiler; the thread busy 31 % of the time, 5.2 ms a frame): the draws 77.8 % (their
+  encoding 54.2 %: the argument tables 27.2 %, the driver's indexed draws 10.5 %), passes opened 17.5 % (the driver's render encoders 9.7 %), state
+  commands 4.9 %, pipelines 4.2 %. Of the argument tables: the private copies 8.3 %, the pool lookups 6.4 % (`pc_get`, 6.2 % its own time: 57 % of the
+  calls for uniform bindings, 35 % for vertex and index buffers), texture IDs 6.2 %, the snapshots' lookup 3.7 %. memmove 5.0 % is now spread (state
+  commands 16 % of it, the snapshots 14 %, the update log's inserts 13 %, the private copies 8 %). A uniform binding's pool is now looked up only when
+  neither a private copy nor the submit call's snapshot stands for it (`mtl/encode_args.inc`; on Great Sky Island nearly every binding has one): three
+  runs each in turn, 67.83-68.94 → 67.16-68.00 M instructions a frame and 5.19-5.25 against 5.04-5.13 ms of CPU.
 - 280 (the depth targets: batch 188) manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start
   on the Mac (Metal: 105 colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's
   own memory 1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save:
@@ -2199,3 +2205,9 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   219, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of the Kingdom's two red lines as
   before, s800 the same, s1300 and s1800 nearer moments of the same two shots (14 % and 3 % of pixels past 8), 0.2-0.7 tile reads and no copy a frame,
   instructions a draw 26,174-37,852; manosaba none, its frames the same.
+- [x] batch 191 · 271, the translation thread profiled again and one lookup taken out. `gfx/nvn/mtl/encode_args.inc`: a uniform binding's memory pool
+  is looked up only when neither a private copy nor a snapshot stands for it (and for the pass dump). `t_usnap` +2 (50; `-DDM_TEST_CB_ALWAYS_POOL` 1
+  fails). gfx 203 / 203 on Metal 4 and Metal 3, host 219 / 219, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
+  connected. Smoke: Tears of the Kingdom's two red lines as before, its three frames the same (0.02-0.34 % of pixels past 8), 0.0-0.6 tile reads and
+  no copy a frame, instructions a draw 26,351-38,034; manosaba none, its frames the same. Great Sky Island standing with this host: no copy and 304
+  tile reads a frame, render targets 251 MB loaded and 241 stored, as in batch 186.

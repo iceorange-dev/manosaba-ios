@@ -38,6 +38,7 @@ static wrc_ent *wrc_slot(uint64_t addr, uint32_t n, int keep, uint32_t crh) {
     if (!g_wrc && !(g_wrc = calloc(8192, sizeof *g_wrc))) return NULL;
     return &g_wrc[(size_t)(((addr ^ ((uint64_t)n << 40) ^ ((uint64_t)keep << 63) ^ ((uint64_t)crh << 7)) * 0x9E3779B97F4A7C15ull) >> 51) & 8191];
 }
+static uint64_t g_cb_pool_n;   // uniform bindings whose memory pool was looked up (neither a private copy nor a snapshot stood for them; t_usnap)
 // The content a scan with the slots cr depends on (plan item 320g): each range and the 48 bytes after it (a matrix window starting in it), hashed
 static uint64_t wrw_hash_slots(const uint8_t *src, uint32_t n, const nvn_rbind *rb) {
     if (!rb || !rb->ncr) return pkg_hash(src, n);
@@ -173,8 +174,18 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
         int reg = b->reg, aid = b->aid;
         if (b->kind == NVN_RB_CBUF) {
             const p_bind_buf *u = reg < 16 ? &S.ubo[nvn_stage][reg] : NULL;
-            void *mb; uint64_t mo, gpu;
-            if (!u || !u->addr || !mtl_gpu_addr(u->addr, 1, &mb, &mo, &gpu)) { RED_ONCE(16, "stage %d cb%d has no uniform buffer bound", nvn_stage, reg); continue; }
+            void *mb = NULL; uint64_t mo = 0, gpu = 0;
+            if (!u || !u->addr) { RED_ONCE(16, "stage %d cb%d has no uniform buffer bound", nvn_stage, reg); continue; }
+            void *rb_ = NULL; uint64_t rg_ = upd_any() ? upd_shadow(u->addr, u->size, &rb_, b->crn) : 0;   // logged updates over it: its private copy, of what the shader reads (the reflection's crn, plan item 271)
+            const us_ent *sc = rg_ ? NULL : us_find(u->addr, u->size);   // contents as of the submit call
+            // Its place in a memory pool is looked up only when neither stands for it (plan item 271: the lookup, for every uniform binding of every
+            // stage encoded, was 3.6 % of the translation thread on Great Sky Island, and nearly every binding there has a copy or a snapshot)
+#ifndef DM_TEST_CB_ALWAYS_POOL   // negative control of t_usnap only: looked up for every binding, as before
+            int in_pool = !rg_ && !sc;
+#else
+            int in_pool = 1;
+#endif
+            if (in_pool || bl) { g_cb_pool_n += (uint64_t)in_pool; if (!mtl_gpu_addr(u->addr, 1, &mb, &mo, &gpu)) { RED_ONCE(16, "stage %d cb%d has no uniform buffer bound", nvn_stage, reg); continue; } }
             use_rec("buf", u->addr, u->size, 0, NULL);
             if (bl) {
                 PD("B %llu st%d cb reg%d addr=%#llx size=%llu pool=%#llx+%#llx f=%g,%g,%g,%g", g_stat_pass, nvn_stage, reg, (unsigned long long)u->addr, (unsigned long long)u->size,
@@ -186,8 +197,6 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
                     FILE *f = fopen(p, "wb"); if (f) { fwrite((const void *)u->addr, 1, u->size, f); fclose(f); } else RED_ONCE(30, "CBDUMP cannot write %s", p);
                 }
             }
-            void *rb_ = NULL; uint64_t rg_ = upd_any() ? upd_shadow(u->addr, u->size, &rb_, b->crn) : 0;   // logged updates over it: its private copy, of what the shader reads (the reflection's crn, plan item 271)
-            const us_ent *sc = rg_ ? NULL : us_find(u->addr, u->size);   // contents as of the submit call
             if (rg_) { gpu = rg_; mb = rb_; } else if (sc) { gpu = sc->gpu + (u->addr - sc->lo); mb = sc->buf; }
             if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && nvn_stage != 5) {   // a widened target (320d): a rewritten copy when the block holds what changes
                 uint64_t ng; id<MTLBuffer> __unsafe_unretained nb; wfl |= widen_cb_rewrite(u, gpu, mb, &ng, &nb, nvn_stage == 1 && sh->rf.frag_coord, b);
