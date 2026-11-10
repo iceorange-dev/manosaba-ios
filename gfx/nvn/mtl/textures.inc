@@ -41,7 +41,8 @@ static int ser_unaffected(uint64_t from, uint64_t to, uint64_t serial) {   // 1:
 // of its reference only (defer_obj_unref, the texture stays resident for the others); an entry nobody holds is kept STOR_IDLE submissions (objects
 // re-initialized at the same storage every frame take it back) and then retired. DM_NVN_TEX_SHARE=0: one texture per serial
 typedef struct { uint64_t mem, size; uint32_t w, h, d, levels, target, samples, fmt, pad; } stor_key;   // 48 bytes, no padding left uninitialized
-typedef struct { stor_key k; void *tex; uint64_t *ser; int nser, cap; uint64_t idle_fence, gone_fence; } stor_ent;   // tex: CFBridgingRetain'd; gone_fence: its pool was finalized then (0: alive)
+typedef struct { stor_key k; void *tex; uint64_t *ser; int nser, cap; uint64_t idle_fence, gone_fence, lost_sub; } stor_ent;   // tex: CFBridgingRetain'd; gone_fence: its pool was finalized then (0: alive); lost_sub: stor_note_store
+static uint64_t g_stor_lost_sub;   // the last submission with an unstored pass on an entry's texture (stor_note_store)
 static nvn_hmap g_stor = {.klen = sizeof(stor_key)}, g_stor_obj = {.klen = 8};   // key → entry; texture → entry (under g_smu)
 static stor_ent **g_stor_list; static int g_nstor, g_stor_cap;
 static uint64_t g_stor_shared, g_stor_entries, g_stor_swept, g_stor_usage_miss;
@@ -61,6 +62,10 @@ static void stor_add_holder_locked(id o, uint64_t ser) {
     uint64_t ok = (uint64_t)(uintptr_t)(__bridge void *)o; stor_ent *e = nvn_hm_get(&g_stor_obj, &ok); if (!e) return;
     e->gone_fence = 0;   // held again: its storage is in use
     for (int i = 0; i < e->nser; i++) if (e->ser[i] == ser) return;
+    // A new object on a texture a pass of this submission left unstored: when the pass ended only one object held it (nvn_be_tex_shared said no),
+    // so the lookahead, following that serial, took its contents for dead (plan item 219)
+    if (e->nser && e->lost_sub && e->lost_sub == g_sub_serial)
+        RED_ONCE(126, "texture %llu joins the storage of texture %llu, whose pass earlier in this submission was not stored: it reads undefined contents (the store lookahead follows a texture by its serial)", (unsigned long long)ser, (unsigned long long)e->ser[0]);
     if (e->nser == e->cap) { e->cap = e->cap ? e->cap * 2 : 4; e->ser = realloc(e->ser, (size_t)e->cap * sizeof *e->ser); if (!e->ser) MDIE("storage holder list"); }
     e->ser[e->nser++] = ser;
 }

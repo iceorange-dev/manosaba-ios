@@ -5,7 +5,8 @@
 // load action, none on C; the group at Q, then drawn and released. Not made: without a pending clear; when a pass between samples A; when Q
 // attaches A at another index; when a copy between writes A; when A is cleared again before Q (the index's screen); with DM_NVN_DEFER=0.
 // A Q slot no P colour maps to read as an index into the group's clears (-DDM_TEST_DEFER_LMAP_ANY, the broken variant, as the replay did
-// before batch 98): 1 fails.
+// before batch 98): 1 fails. Not made either when P's target has its storage held by another live texture object too (plan item 219;
+// -DDM_TEST_SHARED_NOT_SEEN, shared storage not looked for: 1 fails).
 #include "../nvn/core/defer.h"
 #include "../nvn/core/pass.h"
 #include "../nvn/core/store_index.h"
@@ -25,6 +26,8 @@ int nvn_be_prog_refl(const prog_t *p, const nvn_refl *rf[6], int stage[6]) {
 }
 int nvn_be_handle_view(uint64_t h, uint64_t *ser, view_t *v, int *has_v) { if (!h) return 0; *ser = h; memset(v, 0, sizeof *v); *has_v = 0; return 1; }
 
+static uint64_t g_shared;   // the serial of a texture whose storage another live object holds too (0: none); plan item 219
+int nvn_be_tex_shared(const tex_t *t) { return g_shared && t->serial == g_shared; }
 // ---- command streams ----
 static uint8_t g_mem[1 << 14] __attribute__((aligned(8))); static size_t g_len;
 static const uint8_t *g_ops[256]; static int g_nops;
@@ -93,6 +96,9 @@ int main(void) {
     d = p_start(); set_rt(&B, NULL); draw(); set_rt(&A, &C); draw(); end();
     setenv("DM_NVN_DEFER", "0", 1); check("DM_NVN_DEFER=0: none", 0, made(d, 1)); unsetenv("DM_NVN_DEFER");
     check("... and with it unset again the same stream makes one", 1, made(d, 1));
+    defer_reset(); g_shared = A.serial;
+    check("A's storage another object's too: none [-DDM_TEST_SHARED_NOT_SEEN]", 0, made(d, 1)); g_shared = 0;
+    check("... and one again without it", 1, made(d, 1));
     defer_reset();
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;

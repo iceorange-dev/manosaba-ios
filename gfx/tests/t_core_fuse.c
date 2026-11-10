@@ -6,6 +6,8 @@
 // when B is of another size, when the later pass clears an attachment P draws to, when a copy comes between; P's targets set again between are
 // taken into the merge unless the last pass opened was a clear-only one.
 // Attachments of another size taken into the union (-DDM_TEST_FUSE_ANY_SIZE, the broken variant): 1 fails.
+// Not planned either when a target of the union has its storage held by another live texture object too (plan item 219;
+// -DDM_TEST_SHARED_NOT_SEEN, shared storage not looked for: 1 fails).
 #include "../nvn/core/fuse.h"
 #include "../nvn/core/pass.h"
 #include "../nvn/core/store_index.h"
@@ -25,6 +27,8 @@ int nvn_be_prog_refl(const prog_t *p, const nvn_refl *rf[6], int stage[6]) {
 static int g_cover_calls;
 void nvn_be_fuse_cover(const p_set_rt *r2, const uint8_t *first, const int8_t *p2map, const uint8_t *clr, int n1, int n) { (void)r2; (void)first; (void)p2map; (void)clr; (void)n; g_cover_calls++; g_fz.cov2[n1] = 1; }
 
+static uint64_t g_shared;   // the serial of a texture whose storage another live object holds too (0: none); plan item 219
+int nvn_be_tex_shared(const tex_t *t) { return g_shared && t->serial == g_shared; }
 // ---- command streams ----
 static uint8_t g_mem[1 << 14] __attribute__((aligned(8))); static size_t g_len;
 static const uint8_t *g_ops[256]; static int g_nops;
@@ -81,6 +85,9 @@ int main(void) {
     d = p_start(); draw(); const uint8_t *again = set_rt(&A, NULL); draw(); set_rt(&B, NULL); clear(0); bind_prog(&g_p2); bind_tex(&A); draw(); end();
     check("P's targets set again between: taken into the merge", 1, planned(d, 0) && g_fz.nreuse == 1 && g_fz.reuse[0] == again);
     check("... not after a clear-only pass", 0, planned(d, 1));
+    d = p_start(); draw(); set_rt(&B, NULL); clear(0); bind_prog(&g_p2); bind_tex(&A); draw(); end();
+    g_shared = B.serial; check("B's storage another object's too: none [-DDM_TEST_SHARED_NOT_SEEN]", 0, planned(d, 0)); g_shared = 0;
+    check("... and planned without it", 1, planned(d, 0));
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }

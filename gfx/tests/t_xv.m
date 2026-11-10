@@ -59,4 +59,17 @@ int main(void){@autoreleasepool{setvbuf(stdout,NULL,_IONBF,0);setenv("DM_NVN_TBD
     { tex_t a=tex(8),b=tex(8); int aid=view(&a,0); t_two=1;
       xv_test_counts(&dc0,&viol0); cycle(&a,&b,aid,0,NULL); cycle(&a,&b,aid,2,px); for(int k=0;k<6;k++) cycle(&a,&b,aid,0,NULL);
       xv_test_counts(&dc,&viol); EXPECT("reader seen in trial period: not a violation",0,(uint64_t)(viol-viol0)); EXPECT("reader seen in trial period: A's key disabled (A does not enter the ledger)",0,(uint64_t)ST(a)); }
+    // ④ The load probe's readback (DM_NVN_LOADPROBE; plan item 219): it reads what the probed pass left, not what the texture held before the
+    // pass. A is black; a pass clears it to the sentinel and is probed: every pixel is a sentinel left. Then a pass clears it to black again and
+    // is probed: none left. Read in a command buffer of its own, committed before the pass's was (-DDM_TEST_LP_OWN_CB, as before): both fail
+    { tex_t a=tex(8); t_two=0;
+      for (int k=0;k<3;k++) { chain c=chain_new(); set_rt(&c,&a,NULL,0);
+          if (k==1) { p_clear_color x={.index=0,.mask=15,.rgba={0.123f,0.456f,0.789f,0.321f}}; emit(&c,OP_CLEAR_COLOR,&x,sizeof x); } else clear_color(&c,0,0,0,0);
+          emit(&c,OP_END,NULL,0); state_reset(); memset(&R,0,sizeof R);
+          mtl_sub_begin(); uint64_t hh=(uint64_t)c.p; mtl_sub_index(&hh,1); nvn_exec(c.p);
+          uint64_t ok0=atomic_load(&g_lp_ok), bad0=atomic_load(&g_lp_bad);
+          if (k) g_lp=[NSMutableArray arrayWithObject:@[tex_mtl(&a),@0,@0,@(g_stat_pass+1),@0,@(a.serial),@1]];   /* armed by hand: the pass ends at the commit */
+          commit();
+          if (k==1) EXPECT("load probe: a pass that leaves the sentinel everywhere is reported [-DDM_TEST_LP_OWN_CB]",1,(uint64_t)(atomic_load(&g_lp_bad)-bad0==1 && atomic_load(&g_lp_ok)==ok0));
+          if (k==2) EXPECT("load probe: a pass that covers the target leaves none, whatever it held before [-DDM_TEST_LP_OWN_CB]",1,(uint64_t)(atomic_load(&g_lp_ok)-ok0==1 && atomic_load(&g_lp_bad)==bad0)); } }
     unlink(path); printf("== %d checks, %d failed ==\n",count,fail); return fail!=0; }}

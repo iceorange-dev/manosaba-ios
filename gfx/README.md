@@ -136,7 +136,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/args.inc` | Argument buffers: dummy resources, bindings, the driver segment fill |
 | `nvn/mtl/uniform_rename.inc` | Inline uniform updates' backend side: the argument blocks they make stale, writing them to memory |
 | `nvn/mtl/encode_args.inc` | Draws that sample what their own pass draws (plan item 42), argument encoding |
-| `nvn/mtl/lookahead.inc` | Pass lookahead: the hoisted clears run (hoist_try), store actions, first-draw coverage, feedback copies |
+| `nvn/mtl/lookahead.inc` | Pass lookahead: the hoisted clears run (hoist_try), store actions, first-draw coverage (its vertices read from memory unless a GPU write to them is pending, `attr_read`), the load probe's readback, feedback copies |
 | `nvn/mtl/store_index.inc` | The store lookahead index's backend side: what the index needs of the backend, its build at the start of a submit, the ledger's check against it |
 | `nvn/mtl/tile_merge.inc` | Readable tile render pass merge: the later pass's draws proven and specialized, the in-run check; the deferred merged pass's Q opened and its kept draws drawn |
 | `nvn/mtl/u8_layers.inc` | 8-bit indices the GPU wrote, and layered passes |
@@ -151,7 +151,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/present_thread.inc` | The present thread and the display link, statistics getters |
 | `nvn/core/core.h`, `nvn/core/core.c` | The core's conventions; log lines and red lines once a tag (`MLOG`, `RED_ONCE`), shared with the backend; the pass dump (`PD`, `DM_NVN_PASSDUMP`) with the frame number and the pass and draw counts; a clock for statistics |
 | `nvn/core/tbdr.c`, `nvn/core/tbdr.h` | The TBDR rewrites' switches (`DM_NVN_TBDR`, `DM_NVN_TBDR_OFF`, the ruler, `DM_NVN_UNWRITTEN_DC`) and the cross-submission attachment validity ledger (`xv_*`) |
-| `nvn/core/rt.c`, `nvn/core/rt.h` | Render target helpers: a mip level's extent, an attachment's subresource, whether a scissor covers a target; whether two target sets are the same (`rt_same`) or two attachments one subresource (`rt_sub_eq`), a colour slot left out because another attaches the same subresource (`rt_dup_slot`) |
+| `nvn/core/rt.c`, `nvn/core/rt.h` | Render target helpers: a mip level's extent, an attachment's subresource, whether a scissor covers a target; whether two target sets are the same (`rt_same`) or two attachments one subresource (`rt_sub_eq`), a colour slot left out because another attaches the same subresource (`rt_dup_slot`); a target whose storage another live texture object holds too (`tex_shared`, `rt_any_shared`: the rewrites, which follow a texture by its serial, leave it alone) |
 | `nvn/core/pass.c`, `nvn/core/pass.h` | Pass planning: where the replay is and a cursor in replay order, the ops run before their place, the clear-only pass hoist's groups (`hoist_plan`), what a pass needs of depth and stencil (`pass_ds_need`), whether each attachment is stored at a pass end (`sd_decide`), the bandwidth ledger |
 | `nvn/core/defer.c`, `nvn/core/defer.h` | The deferred merged pass's decisions: whether a pass's draws wait for a later pass that attaches its colour targets (`defer_try`), the groups, Q's targets and load actions (`defer_q_enter`) |
 | `nvn/core/fuse.c`, `nvn/core/fuse.h` | The readable-tile pass merge's plan (`fuse_try`): whether the next pass merges into this one, the union of attachments, its clears and skipped ops |
@@ -165,7 +165,7 @@ Binding conventions used by the translation:
 | `nvn/core/pend.c`, `nvn/core/pend.h` | Buffer writes encoded but not executed on the GPU yet (copies, inline updates), and what a range reads as at a point of the replay |
 | `nvn/core/capture.c`, `nvn/core/capture.h` | The submit call's view for the translation thread (plan item 61): deferred handles, FenceSync tokens, the uniform bytes; the submission's uniform snapshot |
 | `nvn/core/frame.c`, `nvn/core/frame.h` | Measurements by frame: boot instrumentation (DM_BOOTPROF), the GPU time as the union of command buffer spans, DM_NVN_UB |
-| `nvn/core/upd.c`, `nvn/core/upd.h` | Inline uniform updates without ending the render pass: the update log, private copies of the ranges they reach |
+| `nvn/core/upd.c`, `nvn/core/upd.h` | Inline uniform updates without ending the render pass: the update log, private copies of the ranges they reach, each of as many bytes as its reader reads (the reflection's `crn`) |
 | `nvn/core/usnap.c`, `nvn/core/usnap.h` | Uniform snapshots: each submission's copies of the uniform ranges it binds; deferred binding handles read once a submission |
 | `nvn/core/state.c`, `nvn/core/state.h` | The replay's state: the draw state `S`, the render targets' state `R`, the commands that only set state (`st_op` answers what changed) |
 | `nvn/core/store_index.c`, `nvn/core/store_index.h` | The store lookahead index: one scan per submission, the first valid event after a pass end decides each attachment's write-back |
@@ -224,6 +224,7 @@ All are environment variables. The Mac host fills `DM_NVN_SHMAP` and `DM_MSL_DIR
 | `DM_NVN_UBLOG=1` | Log the raw arguments of every `UpdateUniformBuffer` and `BindUniformBuffer` call |
 | `DM_NVN_REUPLOG=<n>` | Log the first n re-uploads of memory-backed textures (which textures does the CPU keep rewriting?) |
 | `DM_NVN_PASSDUMP=<frame>` or `<a>-<b>` | Log each render pass (attachments, loads / stores, samples) for those frames to stderr; `DM_NVN_PASSDUMP_ALL=1` adds every draw. A draw that samples its own pass and is copied for instead of read from the tile says why (the `f` lines; plan item 325) |
+| `DM_NVN_LOADPROBE=1` / `2` / `3` | With the pass optimizations on: an attachment whose load the first draw's coverage proof elides is cleared to a sentinel colour instead (two fixed values; `3` or a float format: NaN) and read back after its pass in the same command buffer; a sentinel pixel left is a red line with its first positions |
 | `DM_NVN_KEY_WATCH=<key>[,<key>…]` | Log the first draw or dispatch with each listed shader (its 16-digit key, `_b` ignored): frame, pass, draw, target size. Finds the frames a shader is used in (plan item 322) |
 | `DM_NVN_PROF=1` | Time every implemented NVN function |
 | `DM_NVN_PASSGPU=<file>` | GPU time of each render pass and dispatch as TSV (timestamps: an `MTL4CounterHeap` on Metal 4, stage-boundary samples on Metal 3); every 300 frames a line with the GPU time a frame and the kinds of pass that took the most |

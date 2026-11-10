@@ -1,6 +1,8 @@
 // The pending-write table across submissions (nvn_mtl.m pend_note / pend_begin / pend_read_x): writes the GPU has not executed yet stay until their
 // submission completes, an inline update reads as its bytes, a GPU copy reads as what its source holds as of that copy (writes recorded before it),
 // nested copies too; a copy without a known source, and an overflow, read as unknown. CPU only: the submission fences are set by hand.
+// The vertices and indices the coverage proof and the tile read's proof take from memory (mtl/lookahead.inc attr_read, plan item 219): not read
+// while a pending write reaches them (reason 12). -DDM_TEST_ATTR_READ_NO_PEND (read whatever is pending, as before) fails 2.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -39,5 +41,17 @@ int main(void) {
     EXPECT("a copy without a source reads as unknown", 0xdeadbeef, rd(B));
     EXPECT("an address no write reaches reads memory", 0x1001, rd(A + 4));
     pend_begin(g_fence + 1);
+    {   static float vtx[3][4] = {{-1, -1, 0, 1}, {3, -1, 0, 1}, {-1, 3, 0, 1}}; static uint16_t idx[4] = {0, 1, 2, 0};
+        uint64_t V = (uint64_t)(uintptr_t)vtx, IX = (uint64_t)(uintptr_t)idx; static float PP[64][4];
+        S.nattr = 1; S.attr[0] = (va_st){.fmt = 0x2E, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){.stride = 16}; S.vbuf[0] = (NVNbufferRange){.address = V, .size = sizeof vtx};
+        p_draw dw = {.count = 3}; p_draw_idx di = {.count = 3, .itype = 1, .ibuf = IX};
+        EXPECT("attr_read: vertices in no pool, nothing pending: stops at the address (10)", 10, attr_read(0, &dw, NULL, PP));
+        pend_note(V, 16, NULL, 0);
+        EXPECT("... a pending GPU write reaches a vertex: not read (12) [-DDM_TEST_ATTR_READ_NO_PEND]", 12, attr_read(0, &dw, NULL, PP));
+        pend_begin(g_fence + 1); pend_note(IX, 6, NULL, 0);
+        EXPECT("... a pending GPU write reaches the indices: not read (12) [-DDM_TEST_ATTR_READ_NO_PEND]", 12, attr_read(0, NULL, &di, PP));
+        pend_begin(g_fence + 1);
+        EXPECT("... once its submission has completed: the address again (10)", 10, attr_read(0, NULL, &di, PP));
+    }
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0;
 }

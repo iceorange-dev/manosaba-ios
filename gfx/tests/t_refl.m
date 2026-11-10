@@ -2,6 +2,7 @@
 // uniform buffer (uniform slot reg, byte off): kind, slot, offset and the no-reuse flag; a missing, odd or out-of-range offset and a missing slot are refused.
 // The projected fetch proof's two halves: a fetch call's "proj" and a vertex shader's "screen_locn" (-DDM_TEST_REFL_NO_SCREEN, leaving both unread, fails 2).
 // The readable-tile version's outputs: up to eight colours (plan item 326; -DDM_TEST_REFL_FOUR_OUTPUTS, four as before, fails 2).
+// A uniform binding's slots read and the bytes they reach (plan item 271; -DDM_TEST_REFL_NO_CRN, the extent left unknown, fails 1).
 #import <Foundation/Foundation.h>
 #include <stdio.h>
 #include "../nvn/nvn_refl.h"
@@ -28,6 +29,13 @@ int main(void) { @autoreleasepool {
     EXPECT("argument blocks not reused (ubo_addr)", 1, o.ubo_addr);
     r = parse(@[@{@"kind": @"sbuf", @"reg": @0, @"rw": @YES, @"arg_id": @0, @"msl_name": @"vp_s0"}], &o, err);
     EXPECT("plain storage buffer: rw kept, argument blocks reusable", 1, !r && o.b[0].kind == NVN_RB_SBUFP && o.b[0].rw && !o.ubo_addr);
+    // a uniform binding's slots read (320g) and how far they reach (271: the private copies of updated ranges hold that much)
+    r = parse(@[@{@"kind": @"cbuf", @"reg": @2, @"arg_id": @0, @"msl_name": @"vp_c5", @"cb_slots": @[@[@0, @3], @[@30, @31]]},
+                @{@"kind": @"cbuf", @"reg": @3, @"arg_id": @1, @"msl_name": @"vp_c6"},
+                @{@"kind": @"cbuf", @"reg": @4, @"arg_id": @2, @"msl_name": @"vp_c7", @"cb_slots": [NSNull null]}], &o, err);
+    EXPECT("cb_slots: two ranges parse, the others' slots not known", 1, !r && o.b[0].ncr == 2 && o.b[0].cr[1][0] == 30 && o.b[0].cr[1][1] == 31 && !o.b[1].ncr && !o.b[2].ncr);
+    EXPECT("... read through slot 31 and the 48 bytes after it: 560 bytes [-DDM_TEST_REFL_NO_CRN]", 560, o.b[0].crn);
+    EXPECT("... not known: 0 (all of the block)", 0, o.b[1].crn + o.b[2].crn);
     EXPECT("sbuf_ubo without an offset is refused", 1, parse(@[@{@"kind": @"sbuf_ubo", @"reg": @1, @"arg_id": @0, @"msl_name": @"vp_s0"}], &o, err));
     EXPECT("sbuf_ubo with an unaligned offset is refused", 1, parse(@[@{@"kind": @"sbuf_ubo", @"reg": @1, @"off": @0x42, @"arg_id": @0, @"msl_name": @"vp_s0"}], &o, err));
     EXPECT("sbuf_ubo with an offset past 64 KiB is refused", 1, parse(@[@{@"kind": @"sbuf_ubo", @"reg": @1, @"off": @0x10000, @"arg_id": @0, @"msl_name": @"vp_s0"}], &o, err));

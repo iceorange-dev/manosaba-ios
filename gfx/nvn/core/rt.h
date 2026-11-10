@@ -16,6 +16,19 @@ static inline int scissor_full_of(const p_scissor *sc, int has_sc, const tex_t *
     return !has_sc || (sc->x <= 0 && sc->y <= 0 && (int64_t)sc->x + sc->w >= (int64_t)w && (int64_t)sc->y + sc->h >= (int64_t)h);
 }
 
+// 1 when another live texture object holds this one's GPU storage (the Metal backend keeps one texture for every GPU-only object of the same
+// storage, layout and format: mtl/textures.inc). The rewrites follow a texture by its serial, so what reads or clears it through the other object
+// is not seen by them: such an attachment is written back whatever the store lookahead found and stays out of the validity ledger, and a pass
+// with one is not hoisted, deferred or merged (plan item 219: a lead 62j left, from DavidZande/MacNativeGames 907138d)
+int nvn_be_tex_shared(const tex_t *t);   // (the backend provides)
+static inline int tex_shared(const tex_t *t) {
+#ifndef DM_TEST_SHARED_NOT_SEEN   // negative control of t_core_pass, t_core_defer and t_core_fuse only: shared storage not looked for, as before
+    return t && nvn_be_tex_shared(t);
+#else
+    (void)t; return 0;
+#endif
+}
+int rt_any_shared(const p_set_rt *r);   // any target of r, counted and logged (a rewrite's refusal)
 // Same set of targets: compared by texture serial and view (not by object pointer: the game may copy texture objects by value)
 int rt_same(const p_set_rt *a, const p_set_rt *b);
 // Attachment ka of a and kb of b (0–7 color, 8 depth) are the same subresource: one texture's level and layer

@@ -39,5 +39,8 @@ void upd_sub_end(void);   // mtl_sub_commit, after upd_flush
 int upd_any(void);        // The submission logged inline uniform updates (written to memory or not): a snapshot alone predates them
 uint64_t upd_overlap_seq(uint64_t lo, uint64_t hi);   // Updates not in memory yet
 void upd_apply(uint64_t lo, uint8_t *out, uint64_t n);  // Over a snapshot: every update of the submission
-uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub);   // GPU address of [lo, lo + size) with submission sub's updates, 0 to read as before (none overlaps, or memory holds them)
+// GPU address of [lo, lo + size) with submission sub's updates, 0 to read as before (none overlaps, or memory holds them). need: how many bytes
+// from lo the reader reads (0: all of it): only those are copied, the rest of the copy's range is not written (plan item 271: a copy was the
+// whole bound range, 32-36 KB on average in Tears of the Kingdom, of which a shader reads its first 31 vec4s at the median)
+uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub, uint64_t need);
 void ren_report(uint64_t f);   // Every 300 frames

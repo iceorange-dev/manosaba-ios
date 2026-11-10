@@ -255,10 +255,27 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   dispatches (218's two, and the first of a run of eleven that read no attachment), three have a seventh attachment the others lack. The
   rewrites there are do not merge those: on the Mac the same scene loads 251 MB and stores 241 MB a frame with them off, 230 and 231 with
   the store decisions and the same-target continuation alone (228's set; the translation's instructions the same), 221 and 227 with all
-  of them (instructions +15 %). On the Air under the hold (2026-11-10, one run each, the second started warmer): the store decisions and
-  the continuation give 30.0 fps against 29.8, the resolution 81 % of the frames at the 0.9 tier against 41 %, and cost the translation
-  68.3 M instructions and 13.0 ms a frame against 54.1 M and 11.0 ms. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read` without
-  `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
+  of them (instructions +15 %). On the Air under the hold (2026-11-10, one run each, the second started warmer): the store decisions and the
+  continuation give 30.0 fps against 29.8, the resolution 81 % of the frames at the 0.9 tier against 41 %, and cost the translation 68.3 M
+  instructions and 13.0 ms a frame against 54.1 M and 11.0 ms. The leads 62j left in those rewrites (186), batch 187. Shared storage: the Metal
+  backend keeps one texture for every GPU-only object of the same storage, layout and format (on Great Sky Island an object joins another's texture
+  about 28 times a frame), while the store lookahead, the validity ledger, the clear-only hoist, the deferral and the merge follow a texture by its
+  serial, so a read or a clear through the other object was not seen. A target whose storage another live object holds is now left alone by all five
+  (`core/rt.h` tex_shared): on Great Sky Island with every rewrite on, more than 8,192 store decisions and more than 32,768 attempts at a hoist, a
+  deferral or a merge in 4,500 frames met one (the traffic the same, 221 MB loaded and 227 stored a frame; the shot looked at), and an object that
+  joins a texture left unstored earlier in its submission is a red line (none in these runs). The coverage proof and the tile read's proof read their
+  vertices from memory: not while a GPU write to them is pending (`attr_read`, reason 12). The load probe (`DM_NVN_LOADPROBE`) read its attachment in
+  a command buffer of its own, committed before the probed pass's was, so it read what the texture held before the pass and could not find a sentinel:
+  now in the pass's command buffer, after it. Tears of the Kingdom never elides a load by coverage on Great Sky Island (no attachment probed in 4,500
+  frames), nor does manosaba's new game in 75 s (it clears every target it draws to: 0.0 MB loaded a frame), so the probe is checked by its test
+  alone. Under Metal's API validation with the rewrites on, both runs: no failure, no new red line. What is left to merge of the G-buffer's 8 passes
+  was looked at again (batch 187, the pass dump before 325 with the passes the tile reads now join): the run of eleven dispatches that read no
+  attachment could wait for the pass's end if no draw between reads what they write, which joins two draws to the pass before them (one store and load
+  of five targets, about 18 MB each way of 251); the passes with the seventh target follow a pass that draws that target alone, so one pass for both
+  needs every pipeline of the 2,000 draws before it made again with that target's format and no write mask (a probe on the M5: a pipeline with no
+  format for an attached target fails Metal's validation, and without validation the target came back zeroed). Not taken: about 7 % of the traffic,
+  which by 325's measurement on the Air (61 % more traffic for 16 % more GPU time) is under 2 % of the GPU's time. Left: the store decisions and the
+  continuation on the Air in turn (one run each so far).
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
   three runs without it, thermal state serious 46 s after start against 44-58 s, and 27.44 fps under the hold against 27.40-27.65.
@@ -312,7 +329,14 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   the shader's last block bind that block (`TOTK_AB_SAME`), a 256-entry pool table by page (`TOTK_POOL_HASH`), dispatch arguments before the
   encode stage's wait, generation maxima per 64 pages (`TOTK_DIRTY_FAST`); the border key kept per shader is not worth it here (border_variant 0.0
   % of the thread). 4ppp44 cb21bec / d0d3cb1: argument blocks reused across the passes of a submission, the driver segment filled only at the vec4
-  offsets a shader reads (`mtl/args.inc` fills all).
+  offsets a shader reads (`mtl/args.inc` fills all). Batch 187: the private copies hold only what their reader reads. The reflection has had the slots
+  each uniform binding's shader reads since 320g (no translation again); a copy is now made through the last of them and the 48 bytes after it
+  (`nvn_refl.h` crn, `core/upd.c` upd_shadow_at's need), and a reader of more takes what an earlier copy of the range holds and the rest from the
+  snapshot. Great Sky Island standing, five runs without and three with it, in turn: 329-333 copies a frame of 16.8-16.9 KB became 344 of 4.9 KB (5.5
+  → 1.6 MB copied a frame; the largest still 64 KB, a block indexed at run time), the translation 68.97-69.78 → 68.24-68.80 M instructions a frame
+  (about 1 % fewer) and 5.28-5.36 against 5.14-5.32 ms of CPU, which overlap: the copies were under 0.2 ms of it on the M5. (The first version made a
+  copy of fewer bytes no base for a reader of more: the title screen's copies then applied 31 log entries each instead of 5, 13 % more instructions a
+  draw there.)
 - 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
   colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
   1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
@@ -2105,3 +2129,15 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   bundle), the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments
   of the same two shots (looked at), 0.1-0.6 tile reads and no copy a frame as in batch 185, instructions a draw as before
   (27,291-39,276); manosaba none, its frames the same.
+- [x] batch 187 · 219's leads from 62j (186) and 271's private copies. Shared storage (`core/rt.h` tex_shared, rt_any_shared; the Metal
+  backend's `nvn_be_tex_shared`, `mtl/writeback.inc`; none on Vulkan): `core/pass.c` sd_decide writes such an attachment back (why 7) and
+  keeps it out of the ledger, hoist_plan, `core/defer.c` and `core/fuse.c` refuse a pass with one; `mtl/textures.inc` names an object that
+  joins a texture left unstored in its submission (stor_note_store). `mtl/lookahead.inc` attr_read: reason 12 for vertices or indices under
+  a pending GPU write; lp_finish in the submission's command buffer, compared in its commit block. `nvn_refl.h` crn, `core/upd.c`
+  upd_shadow_at's need, `mtl/encode_args.inc`. Tests: `t_core_pass` +4 (32; `-DDM_TEST_SHARED_NOT_SEEN` 3 fail), `t_core_defer` +2 (18; 1),
+  `t_core_fuse` +2 (13; 1), `t_pend` +4 (17; `-DDM_TEST_ATTR_READ_NO_PEND` 2), `t_xv` +2 (23; `-DDM_TEST_LP_OWN_CB`, the probe's own command
+  buffer as before, 2 on Metal 4 and on Metal 3), `t_core_upd` +7 (25; `-DDM_TEST_UBSH_WHOLE` 4, `-DDM_TEST_UBSH_BASE_FULL` 2), `t_refl` +3
+  (23; `-DDM_TEST_REFL_NO_CRN` 1). gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the
+  phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two
+  shots (looked at), 0.2-0.8 tile reads and no copy a frame, instructions a draw 26,166-36,582 (27,291-39,276 in batch 186); manosaba none,
+  its frames the same.

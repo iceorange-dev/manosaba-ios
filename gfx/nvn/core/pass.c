@@ -58,6 +58,7 @@ int hoist_plan(hoist_grp G[4]) {
                     for (int k = 0; k < nbh && nb < 512; k++) bound[nb++] = nvn_be_handle_ser(bh[k]);
                     for (int gi = 0; gi < ng; gi++) {   // Disjoint and not bound
                         hoist_grp *g = &G[gi]; if (!g->nops) return 0;
+                        if (rt_any_shared(g->rt)) return 0;   // bound through another object of its storage, its serial is on no slot (rt.h)
                         for (int k = 0; k < 9; k++) { if (k < 8 ? !g->clear_c[k] : !(g->clear_d || g->clear_s)) continue;
                             uint64_t ser; int lv, sl; rt_sub(g->rt, k, &ser, &lv, &sl); if (!ser) return 0;
 #ifndef DM_TEST_HOIST_BOUND_OK   // negative control of t_core_pass only: a cleared texture on a slot hoisted all the same
@@ -130,7 +131,7 @@ int pass_ds_need(void) {
 
 // ---- Store lookahead ----
 sd_att g_sd[SD_MAX]; int g_nsd;
-uint64_t g_sd_dead_bytes, g_sd_n_dead, g_sd_n_all;
+uint64_t g_sd_dead_bytes, g_sd_n_dead, g_sd_n_all, g_sd_n_shared;
 uint64_t g_bw_load, g_bw_store, g_pass_full_rw, g_udc_saved_bytes;
 static void sd_need(sd_att *t, int why) { if (!t->state) { t->state = 1; t->why = (uint8_t)why; } }   // why: 1 a draw reads it as a texture 2 as an attachment, drawn before cleared 3 copy 4 texture clear 5 scanned to the end undecided 6 no start point / index unavailable
 static int sdx_decide(uint8_t st[SD_MAX]) {   // Store lookahead decision by the index (gfx/nvn/core/store_index.c; built by mtl_sub_index): st[i] 2 redundant, otherwise why << 2 (the reason it is needed, same as sd_need). Returns 0 = index unavailable
@@ -166,9 +167,15 @@ void sd_decide(uint8_t store[SD_MAX]) {
         int xv_win = 0; for (int k = 0; k < R.rt.n && k < 8; k++) if (R.rt.color[k] && xv_present(R.rt.color[k]->serial)) xv_win = 1;
         uint64_t xtag = 0; int xvcand = xv_on() && !xv_win && t->depth == 0 && t->state != 2 && t->why == 5 && xv_first_good(t->ser, t->lv, t->sl) && !xv_present(t->ser)
                                         && !xv_disabled(xtag = xv_tag_pass(R.rt.color[t->idx], t->lv, t->idx, &R.rt));
+        // Another live object on its storage (rt.h tex_shared): a read or a clear through that one is under another serial, so neither the index's
+        // "cleared before it is read" nor the ledger's holds for it. Written back
+        if (t->state == 2 || xvcand) { const tex_t *tt = t->depth ? R.rt.depth : t->idx >= 0 && t->idx < 8 ? R.rt.color[t->idx] : NULL;
+            if (tex_shared(tt)) { if (t->state == 2) { t->state = 1; t->why = 7; } xvcand = 0;
+                uint64_t n = ++g_sd_n_shared; if (n <= 4 || !(n & (n - 1))) MLOG("store lookahead: texture %llu's storage is another texture object's too, written back (pass %llu; %llu so far)", (unsigned long long)t->ser, (unsigned long long)g_stat_pass, (unsigned long long)n); } }
         int xvdead = xvcand && xv_trial_get(xtag, 0) >= XV_TRIAL;   // Only after the trial period is the write-back really skipped
         if (xvcand && !xvdead) xv_set(t->ser, t->lv, t->sl, XV_PROBE, xtag);   // Trial period: write back as usual, only track the next touch
         int dead = t->state == 2 || udc_dead || xvdead;
+        t->lost = (uint8_t)(t->state == 2 || xvdead);
         if (xvdead) { xv_set(t->ser, t->lv, t->sl, XV_INVALID, xtag); g_xv.dc++; }
         store[i] = !dead;
         g_sd_n_all++; if (dead) { g_sd_n_dead++; g_sd_dead_bytes += t->bytes; g_bw_store -= t->bytes; if (udc_dead) g_udc_saved_bytes += t->bytes; }

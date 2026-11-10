@@ -10,6 +10,8 @@
 // stored, the rule off by DM_NVN_UNWRITTEN_DC=0; the bandwidth ledger. With the rewrites only, as before (-DDM_TEST_UDC_TBDR_ONLY): 1 fails.
 // A clear inside the pass taken as needing neither (-DDM_TEST_DS_CLEAR_FREE, a broken variant): 1 fails. A cleared texture on a slot hoisted all
 // the same (-DDM_TEST_HOIST_BOUND_OK, the other): 1 fails. Store records for 9 attachments, the old size (-DDM_TEST_SD_MAX=9): 1 fails.
+// A texture whose storage another live object holds too (plan item 219): written back though the index found it cleared before it is read
+// (why 7), its clear-only pass not hoisted. Shared storage not looked for, as before (-DDM_TEST_SHARED_NOT_SEEN): 3 fail.
 #include "../nvn/core/pass.h"
 #include "../nvn/core/state.h"
 #include "../nvn/core/store_index.h"
@@ -21,6 +23,8 @@
 #include <string.h>
 
 
+static uint64_t g_shared;   // the serial of a texture whose storage another live object holds too (0: none); plan item 219
+int nvn_be_tex_shared(const tex_t *t) { return g_shared && t->serial == g_shared; }
 // ---- command streams ----
 static uint8_t g_mem[4][1 << 14] __attribute__((aligned(8))); static size_t g_len[4];
 static const uint8_t *g_ops[512]; static int g_nops;   // the replay order of buffer 0 (for sdx_seq)
@@ -82,6 +86,8 @@ int main(void) {
     check("draws, new targets cleared in full, this pass's targets again: one group run early, its two ops skipped", 1, ng == 1 && G[0].rt_op == g0 && G[0].nops == 1 && G[0].ops[0] == g1 && G[0].clear_c[0] && g_hoist_n == 2);
     check("... not planned again while they are pending", 0, hoist_at(f, G)); g_hoist_n = 0;
     S.tex[1][0] = B.serial; check("the cleared texture on a slot: none [-DDM_TEST_HOIST_BOUND_OK]", 0, hoist_at(f, G)); S.tex[1][0] = 0; g_hoist_n = 0;
+    g_shared = B.serial; check("the cleared texture's storage another object's too: none [-DDM_TEST_SHARED_NOT_SEEN]", 0, hoist_at(f, G)); g_shared = 0; g_hoist_n = 0;
+    check("... and planned again without it", 1, hoist_at(f, G)); g_hoist_n = 0;
     reset(); f = draw(); set_rt(&B, NULL); scissor(32, 32); clear(0); set_rt(&A, NULL); draw(); end();
     check("a clear under a partial scissor: none", 0, hoist_at(f, G));
     reset(); f = draw(); copy(&D, &B); set_rt(&B, NULL); clear(0); set_rt(&A, NULL); end();
@@ -120,6 +126,11 @@ int main(void) {
     check("cleared in full before drawn again: colour and depth not stored, the stencil (loaded) stored", 1, !store[0] && !store[1] && store[2]);
     check("... why: the stencil drawn to before cleared (2)", 2, g_sd[2].why);
     check("... the ledger: 3 decided, 2 not stored, 3000 bytes off the stores", 1, g_sd_n_all == 3 && g_sd_n_dead == 2 && g_sd_dead_bytes == 3000 && g_bw_store == 3000);
+    {   // 219: A's storage held by another live object too: a read through that one is under another serial
+        att(0, &A, 0, 0, 1, 1); att(1, &D, 1, -1, 1, 1); g_nsd = 2; g_shared = A.serial; uint64_t sh0 = g_sd_n_shared; sd_decide(store); g_shared = 0;
+        check("A's storage another object's too: A written back (7), D's depth still not [-DDM_TEST_SHARED_NOT_SEEN]", 1, store[0] && g_sd[0].why == 7 && !store[1] && g_sd_n_shared == sh0 + 1);
+        check("... what the lookahead left unstored is marked lost, what it stored is not", 1, !g_sd[0].lost && g_sd[1].lost);
+    }
     att(0, &A, 0, 0, 1, 1); g_nsd = 1; g_tbdr_off = TBP_STORE;
     store[0] = 9; sd_decide(store); check("the store part off: stored", 1, store[0]);
     g_tbdr_off = -1; att(0, &A, 0, 0, 1, 1); g_exec_cur = NULL; sd_decide(store);

@@ -6,7 +6,8 @@ static void draw(const p_draw *dw, const p_draw_idx *di);
 static void sd_finish(void) {   // the store lookahead's decision (gfx/nvn/core/pass.c sd_decide) as each attachment's store action
     if (!g_nsd) return;
     uint8_t st[SD_MAX]; sd_decide(st);
-    for (int i = 0; i < g_nsd; i++) enc_r_store(g_enc, g_sd[i].depth, st[i] ? MTLStoreActionStore : MTLStoreActionDontCare, (NSUInteger)g_sd[i].idx);
+    for (int i = 0; i < g_nsd; i++) { enc_r_store(g_enc, g_sd[i].depth, st[i] ? MTLStoreActionStore : MTLStoreActionDontCare, (NSUInteger)g_sd[i].idx);
+        if (g_sd[i].lost || g_stor_lost_sub == g_sub_serial) stor_note_store(g_sd[i].depth ? R.rt.depth : g_sd[i].idx >= 0 && g_sd[i].idx < 8 ? R.rt.color[g_sd[i].idx] : NULL, g_sd[i].lost && !st[i]); }
     g_nsd = 0;
 }
 // Coverage proof (holds only if all are satisfied; anything unrecognized is treated as not holding):
@@ -14,7 +15,9 @@ static void sd_finish(void) {   // the store lookahead's decision (gfx/nvn/core/
 //   State: this attachment has no blending, a full write mask, no alpha-to-coverage, fill mode, no depth test (or ALWAYS), no stencil test, single sample, not 3D
 //   Vertices: non-indexed or 16 / 32-bit indexed draws, with indices and positions both read from CPU-visible pool memory; the scissor / viewport / geometry / winding / depth clipping decisions are in nvn_cover.h (pure functions, with unit tests)
 // Read out attribute a of all vertices of this draw (non-indexed or 16 / 32-bit indexed; vertex number = first + k or index value + base_vertex), with missing components filled with 0 / 1 per the fetch rules.
-// Returns 0 on success, a reason code on failure (6 vertex count / index type, 7 attribute index, 8 format / stream, 9 out of bounds, 10 address)
+// Returns 0 on success, a reason code on failure (6 vertex count / index type, 7 attribute index, 8 format / stream, 9 out of bounds, 10 address,
+// 12 the GPU writes the indices or the vertices earlier in this submission or one still running: memory holds the bytes from before, and the
+// proof would be about another triangle (plan item 219, a lead of 62j's from DavidZande/MacNativeGames 14142f8))
 static int attr_read(int a, const p_draw *dw, const p_draw_idx *di, float P[64][4]) {
     int n = dw ? dw->count : di->count;
     if (n < 1 || n > 64 || (dw && dw->first < 0) || (di && (di->itype < 1 || di->itype > 2))) return 6;
@@ -23,11 +26,17 @@ static int attr_read(int a, const p_draw *dw, const p_draw_idx *di, float P[64][
     MTLVertexFormat vf = vfmt(at.fmt); int nc = vf == MTLVertexFormatFloat2 ? 2 : vf == MTLVertexFormatFloat3 ? 3 : vf == MTLVertexFormatFloat4 ? 4 : 0;
     if (!nc || !sm.stride || sm.divisor || !vb.address) return 8;
     const uint8_t *ib = NULL; int isz = di ? (di->itype == 1 ? 2 : 4) : 0;
+#ifndef DM_TEST_ATTR_READ_NO_PEND   // negative control of t_pend only: read from memory whatever is pending, as before
+    if (di && pend_hits(di->ibuf, (uint64_t)n * isz)) return 12;
+#endif
     if (di) { void *m; uint64_t o; if (!mtl_addr(di->ibuf, (uint64_t)n * isz, &m, &o) || !(ib = [(__bridge id<MTLBuffer>)m contents])) return 10; ib += o; }
     for (int k = 0; k < n; k++) {
         int64_t vid = dw ? (int64_t)dw->first + k : (isz == 2 ? (int64_t)((const uint16_t *)ib)[k] : (int64_t)((const uint32_t *)ib)[k]) + di->base_vertex;
         uint64_t off = (uint64_t)vid * sm.stride + at.offset;
         if (vid < 0 || off + 4 * nc > vb.size) return 9;
+#ifndef DM_TEST_ATTR_READ_NO_PEND
+        if (pend_hits(vb.address + off, 4 * (uint64_t)nc)) return 12;
+#endif
         void *mb; uint64_t mo; const uint8_t *base;
         if (!mtl_addr(vb.address + off, 4 * nc, &mb, &mo) || !(base = [(__bridge id<MTLBuffer>)mb contents])) return 10;
         float v[4] = {0, 0, 0, 1}; memcpy(v, base + mo, 4 * nc); memcpy(P[k], v, sizeof v);
@@ -174,9 +183,15 @@ static int fz_load_covers(int i, id<MTLTexture> t, NSUInteger level) {
     return first_draw_covers(i, t, level);
 }
 
-// Probe wrap-up: for every attachment changed to clear to the sentinel color, read back that level / layer, compare pixel by pixel with a same-format 1x1 sentinel pixel, and count what remains (> 0 means the coverage proof is wrong, report a failure)
+// Probe wrap-up: for every attachment changed to clear to the sentinel color, read back that level / layer, compare pixel by pixel with a same-format 1x1 sentinel pixel, and count what remains (> 0 means the coverage proof is wrong, report a failure).
+// Encoded into the submission's own command buffer right after the probed pass, compared when it completes (plan item 219, a lead of 62j's): the
+// readback was a command buffer of its own on the other queue, committed here, before the pass's command buffer was: it ran first (and on Metal 4
+// the two queues have no order at all), read what the texture held before the pass and so could never find a sentinel
+static int lp_left(const uint8_t *p, const uint8_t *ref, size_t n, size_t bpp, size_t first[4]) {   // pixels of p equal to ref, the first four's indices
+    int left = 0; for (size_t k = 0; k < n; k++) if (!memcmp(p + k * bpp, ref, bpp)) { if (left < 4) first[left] = k; left++; }
+    return left;
+}
 static void lp_finish(void) {
-    id<MTLCommandBuffer> dcb = q_cb();
     NSArray *ps = g_lp; g_lp = nil;
     for (NSArray *e in ps) {
         id<MTLTexture> t = e[0]; NSUInteger lv = [e[1] unsignedIntegerValue], sl = [e[2] unsignedIntegerValue];
@@ -184,24 +199,38 @@ static void lp_finish(void) {
         MTLTextureDescriptor *rd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:t.pixelFormat width:1 height:1 mipmapped:NO];
         rd.usage = MTLTextureUsageRenderTarget; rd.storageMode = MTLStorageModePrivate;
         id<MTLTexture> ref = [g_dev newTextureWithDescriptor:rd];
-        MTLRenderPassDescriptor *pd = [MTLRenderPassDescriptor renderPassDescriptor];
+        id<MTLBuffer> bt = [g_dev newBufferWithLength:W * H * bpp options:MTLResourceStorageModeShared], br = [g_dev newBufferWithLength:bpp options:MTLResourceStorageModeShared];
+        if (!ref || !bt || !br) { RED_ONCE(125, "load-elision probe: no memory for the readback of a %lux%lu attachment", (unsigned long)W, (unsigned long)H); continue; }
+        res_add(ref); res_add(bt); res_add(br);
+        RPD *pd = [RPD new];
         pd.colorAttachments[0].texture = ref; pd.colorAttachments[0].loadAction = MTLLoadActionClear; pd.colorAttachments[0].storeAction = MTLStoreActionStore;
         pd.colorAttachments[0].clearColor = [e[6] intValue] == 3 ? MTLClearColorMake(NAN, NAN, NAN, NAN) : [e[6] intValue] == 2 ? MTLClearColorMake(0.777, 0.222, 0.555, 0.888) : MTLClearColorMake(0.123, 0.456, 0.789, 0.321);
-        [[dcb renderCommandEncoderWithDescriptor:pd] endEncoding];
-        id<MTLBuffer> bt = [g_dev newBufferWithLength:W * H * bpp options:MTLResourceStorageModeShared], br = [g_dev newBufferWithLength:bpp options:MTLResourceStorageModeShared];
-        id<MTLBlitCommandEncoder> b = [dcb blitCommandEncoder];
-        [b copyFromTexture:t sourceSlice:sl sourceLevel:lv sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(W, H, 1) toBuffer:bt destinationOffset:0 destinationBytesPerRow:W * bpp destinationBytesPerImage:W * H * bpp];
-        [b copyFromTexture:ref sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(1, 1, 1) toBuffer:br destinationOffset:0 destinationBytesPerRow:bpp destinationBytesPerImage:bpp];
-    enc_b_end(b);
         unsigned long long pass = [e[3] unsignedLongLongValue], ser = [e[5] unsignedLongLongValue]; int idx = [e[4] intValue];
-        [dcb addCompletedHandler:^(id<MTLCommandBuffer> c) { (void)c;
-            const uint8_t *p = bt.contents, *r = br.contents; uint64_t left = 0; char at[96] = ""; size_t ao = 0;
-            for (NSUInteger k = 0; k < W * H; k++) if (!memcmp(p + k * bpp, r, bpp)) { if (left++ < 4) ao += snprintf(at + ao, sizeof at - ao, " (%lu,%lu)", (unsigned long)(k % W), (unsigned long)(k / W)); }
-            if (left) MLOG("[red] load-elision probe: pass %llu c%d ser=%llu lv%lu sl%lu %lux%lu sentinel pixels left %llu, first positions%s", pass, idx, ser, (unsigned long)lv, (unsigned long)sl, (unsigned long)W, (unsigned long)H, (unsigned long long)left, at);
+        dispatch_block_t done = ^{
+            size_t first[4]; int left = lp_left(bt.contents, br.contents, W * H, bpp, first); char at[96] = ""; size_t ao = 0;
+            for (int k = 0; k < left && k < 4; k++) ao += (size_t)snprintf(at + ao, sizeof at - ao, " (%lu,%lu)", (unsigned long)(first[k] % W), (unsigned long)(first[k] / W));
+            atomic_fetch_add(left ? &g_lp_bad : &g_lp_ok, 1);
+            if (left) MLOG("[red] load-elision probe: pass %llu c%d ser=%llu lv%lu sl%lu %lux%lu sentinel pixels left %d, first positions%s", pass, idx, ser, (unsigned long)lv, (unsigned long)sl, (unsigned long)W, (unsigned long)H, left, at);
             else MLOG("load-elision probe: pass %llu c%d ser=%llu lv%lu sl%lu %lux%lu fully covered (0 sentinel left)", pass, idx, ser, (unsigned long)lv, (unsigned long)sl, (unsigned long)W, (unsigned long)H);
-        }];
+            res_remove(ref); res_remove(bt); res_remove(br);
+        };
+#ifndef DM_TEST_LP_OWN_CB
+        enc_r_end(enc_r_begin(pd));
+        id b = enc_b_begin(g_cb);
+        enc_b_copy_texture_buffer(b, t, sl, lv, MTLOriginMake(0, 0, 0), MTLSizeMake(W, H, 1), bt, 0, W * bpp, W * H * bpp);
+        enc_b_copy_texture_buffer(b, ref, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(1, 1, 1), br, 0, bpp, bpp);
+        enc_b_end(b);
+        [g_commit_blocks addObject:done];
+#else   // negative control of t_xv only: a command buffer of its own on the other queue, committed here, as before
+        id<MTLCommandBuffer> dcb = q_cb(); MTLRenderPassDescriptor *opd = [MTLRenderPassDescriptor renderPassDescriptor];
+        opd.colorAttachments[0].texture = ref; opd.colorAttachments[0].loadAction = MTLLoadActionClear; opd.colorAttachments[0].storeAction = MTLStoreActionStore; opd.colorAttachments[0].clearColor = pd.colorAttachments[0].clearColor;
+        [[dcb renderCommandEncoderWithDescriptor:opd] endEncoding];
+        id<MTLBlitCommandEncoder> ob = [dcb blitCommandEncoder];
+        [ob copyFromTexture:t sourceSlice:sl sourceLevel:lv sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(W, H, 1) toBuffer:bt destinationOffset:0 destinationBytesPerRow:W * bpp destinationBytesPerImage:W * H * bpp];
+        [ob copyFromTexture:ref sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(1, 1, 1) toBuffer:br destinationOffset:0 destinationBytesPerRow:bpp destinationBytesPerImage:bpp];
+        [ob endEncoding]; [dcb addCompletedHandler:^(id<MTLCommandBuffer> c_) { (void)c_; done(); }]; [dcb commit]; [dcb waitUntilCompleted];
+#endif
     }
-    [dcb commit];
 }
 static int draw_samples_rt(NvProg *pr) {   // Sampled attachments keep the original conservative ser-level guard, not split by level/layer
     uint64_t rs[9]; int nr = 0;

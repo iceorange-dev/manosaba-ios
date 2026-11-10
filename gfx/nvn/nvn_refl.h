@@ -23,6 +23,7 @@ typedef struct {
     uint8_t ncr;             // CBUF: the slot ranges its shader reads (cr), 0: not known (the whole block; plan item 320g)
     uint16_t cr[8][2];       // CBUF: [first, last] 16-byte slots read
     uint32_t crh;            // CBUF: a hash of cr (the widening's caches key on it)
+    uint32_t crn;            // CBUF: bytes of the block read from its start, through the last slot of cr and the 48 bytes after it (the widening's matrix window); 0: not known, all (plan item 271)
 } nvn_rbind;
 typedef struct {
     int nb, abi, nv;         // Binding count, argument buffer slot, vertex input count

@@ -103,6 +103,7 @@ void fuse_try(int enc_clear_only) {
     if (R.rt.depth && r2->depth && !rt_sub_eq(&R.rt, 8, r2, 8)) return;
     if (!R.rt.depth && r2->depth) { U.depth = r2->depth; U.dview = r2->dview; U.has_dview = r2->has_dview; depth_from_r2 = 1; }
     if ((cd_f || cs_f) && !depth_from_r2) return;   // The depth is already in use in the earlier pass: the depth clear at the start of the later pass has nowhere to go
+    if (rt_any_shared(&U)) return;   // the draws' samples are matched to the targets by serial: one on another object's storage would be missed (rt.h)
     // Four: draws of the earlier pass must not sample attachments brought in by the later pass; when the depth comes from the later pass, depth-stencil testing must not be enabled
     static uint64_t tex[6][128], img[6][32]; memcpy(tex, S.tex, sizeof tex); memcpy(img, S.img, sizeof img);
     const prog_t *pg = S.prog; ds_st ds = S.ds;

@@ -186,7 +186,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
                     FILE *f = fopen(p, "wb"); if (f) { fwrite((const void *)u->addr, 1, u->size, f); fclose(f); } else RED_ONCE(30, "CBDUMP cannot write %s", p);
                 }
             }
-            void *rb_ = NULL; uint64_t rg_ = upd_any() ? upd_shadow(u->addr, u->size, &rb_) : 0;   // logged updates over it: its private copy
+            void *rb_ = NULL; uint64_t rg_ = upd_any() ? upd_shadow(u->addr, u->size, &rb_, b->crn) : 0;   // logged updates over it: its private copy, of what the shader reads (the reflection's crn, plan item 271)
             const us_ent *sc = rg_ ? NULL : us_find(u->addr, u->size);   // contents as of the submit call
             if (rg_) { gpu = rg_; mb = rb_; } else if (sc) { gpu = sc->gpu + (u->addr - sc->lo); mb = sc->buf; }
             if (__builtin_expect(g_pass.kx != 1 || g_pass.ky != 1, 0) && nvn_stage != 5) {   // a widened target (320d): a rewritten copy when the block holds what changes
@@ -276,7 +276,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             const p_bind_buf *u = reg < 16 ? (b->kind == NVN_RB_UBOP ? &S.ubo[nvn_stage][reg] : &S.ssbo[nvn_stage][reg]) : NULL;
             void *mb; uint64_t mo, gpu;
             if (b->kind == NVN_RB_SBUFP && b->rw && u && u->addr) us_drop(u->addr, sbuf_extent(u->addr, u->size));   // the shader may write it
-            void *rb_ = NULL; uint64_t rg_ = b->kind == NVN_RB_UBOP && u && u->addr && upd_any() ? upd_shadow(u->addr, u->size, &rb_) : 0;   // with the submission's updates (see upd_any)
+            void *rb_ = NULL; uint64_t rg_ = b->kind == NVN_RB_UBOP && u && u->addr && upd_any() ? upd_shadow(u->addr, u->size, &rb_, 0) : 0;   // with the submission's updates (see upd_any)
             const us_ent *sc = !rg_ && b->kind == NVN_RB_UBOP && u ? us_find(u->addr, u->size) : NULL;   // compute uniforms as of the submit call
             if (rg_) { slots[aid] = rg_; USE((__bridge id<MTLBuffer>)rb_, MTLResourceUsageRead); }
             else if (sc) { slots[aid] = sc->gpu + (u->addr - sc->lo); USE((__bridge id<MTLBuffer>)sc->buf, MTLResourceUsageRead); }

@@ -172,7 +172,7 @@ static int ubo_at(uint64_t addr, uint64_t size, VkBuffer *b, VkDeviceSize *off, 
     if (!addr) return 0;
 #ifndef DM_TEST_VK_UB_NO_SHADOW   // negative control of t_vk_be only: no private copies (the snapshot or memory as before the updates)
     if (upd_any()) {
-        void *rb; uint64_t g = upd_shadow_at(addr, size ? size : 16, &rb, vk_cur_fence());
+        void *rb; uint64_t g = upd_shadow_at(addr, size ? size : 16, &rb, vk_cur_fence(), 0);
         if (g) { *b = (VkBuffer)(uintptr_t)rb; *off = g; uint64_t left = vk_arena_size() - g; *range = left < 65536 ? left : 65536; return 1; }
     }
 #endif

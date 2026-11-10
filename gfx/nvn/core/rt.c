@@ -17,6 +17,17 @@ int rt_same(const p_set_rt *a, const p_set_rt *b) {
     }
     return 1;
 }
+uint64_t g_rt_shared_n;
+int rt_any_shared(const p_set_rt *r) {
+    const tex_t *hit = NULL;
+    for (int k = 0; k < r->n && k < 8 && !hit; k++) if (tex_shared(r->color[k])) hit = r->color[k];
+    if (!hit && tex_shared(r->depth)) hit = r->depth;
+    if (!hit) return 0;
+    uint64_t n = ++g_rt_shared_n;
+    if (n <= 4 || !(n & (n - 1))) MLOG("a pass with a target whose storage another texture object holds too is not hoisted, deferred or merged (texture %llu, %ux%u; %llu so far)",
+                                       (unsigned long long)hit->serial, hit->d.width, hit->d.height, (unsigned long long)n);
+    return 1;
+}
 int rt_sub_eq(const p_set_rt *a, int ka, const p_set_rt *b, int kb) { uint64_t s1, s2; int l1, l2, x1, x2; rt_sub(a, ka, &s1, &l1, &x1); rt_sub(b, kb, &s2, &l2, &x2); return s1 && s1 == s2 && l1 == l2 && x1 == x2; }
 int rt_same_sub(const p_set_rt *r, int i, int j) {
     if (!r->color[i] || !r->color[j] || r->color[j]->serial != r->color[i]->serial) return 0;

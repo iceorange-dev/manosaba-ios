@@ -7,7 +7,7 @@ static void upd_log(uint64_t lo, uint64_t hi, const uint8_t *data) {
     upd_add(lo, hi, data); if (g_enc) g_ren.pass = g_pass.serial;
     upd_dirty_stages(lo, hi);
 }
-static uint64_t upd_shadow(uint64_t lo, uint64_t size, void **buf) { return upd_shadow_at(lo, size, buf, g_sub_serial); }
+static uint64_t upd_shadow(uint64_t lo, uint64_t size, void **buf, uint64_t need) { return upd_shadow_at(lo, size, buf, g_sub_serial, need); }
 static void upd_flush(void) {   // the updates not in memory yet into memory on the GPU timeline (merged; ends a render pass if one is open)
     if (!g_upd.n || g_upd_flushing) return;
     g_upd_flushing = 1;

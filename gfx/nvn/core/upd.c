@@ -91,17 +91,22 @@ void upd_apply(uint64_t lo, uint8_t *out, uint64_t n) { ul_apply(&g_uh, lo, out,
 // updates after it (plan item 225): Tears of the Kingdom updates a few ranges ~470 times a frame and makes ~360 copies, each of which applied ~90
 // updates from the snapshot (the previous copy is the snapshot with every update up to its own, and the snapshot and the log of the submission
 // only grow). An entry of an earlier submission is never the base: its snapshot is another
-typedef struct { uint64_t lo, size, seq, gpu, sub; void *buf; uint8_t *cpu; } ub_shadow;   // cpu: the copy's bytes when it was made over the snapshot, else NULL
+typedef struct { uint64_t lo, size, seq, gpu, sub; void *buf; uint8_t *cpu; uint64_t ext; } ub_shadow;   // cpu: the copy's bytes when it was made over the snapshot, else NULL; ext: how many of them were copied
 enum { UB_SHADOW_N = 1024 };
 static ub_shadow g_shadow[UB_SHADOW_N];
-uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub) {
+uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub, uint64_t need) {
     uint64_t seq = size ? ul_seq(&g_uh, lo, lo + size) : 0;
     if (!seq) return 0;
+#ifndef DM_TEST_UBSH_WHOLE   // negative control of t_core_upd only: the whole range copied whatever is read of it, as before
+    if (!need || need > size) need = size;
+#else
+    need = size;
+#endif
     const us_ent *sc = us_find(lo, size);
     int pending = ul_seq(&g_upd, lo, lo + size) != 0;
     if (!sc && !pending) return 0;   // no snapshot (a GPU write of this submission reached it) and its updates written: memory on the GPU timeline is right
     uint64_t hh = (lo >> 4) ^ (lo >> 19) ^ (size * 0x9E3779B97F4A7C15ull); ub_shadow *e = &g_shadow[(hh ^ (hh >> 32)) & (UB_SHADOW_N - 1)];
-    if (e->lo == lo && e->size == size && e->seq == seq && e->gpu) { *buf = e->buf; g_ren.reuse++; return e->gpu; }   // seq only grows: an entry of an earlier submission never matches
+    if (e->lo == lo && e->size == size && e->seq == seq && e->gpu && e->ext >= need) { *buf = e->buf; g_ren.reuse++; return e->gpu; }   // seq only grows: an entry of an earlier submission never matches
     uint64_t pad = lo & 255, incr0 = g_ren.incr; (void)incr0; uint8_t *cpu; uint64_t gpu; void *ab; nvn_be_arena((size_t)(size + pad), &cpu, &gpu, &ab); cpu += pad; gpu += pad;   // same offset modulo 256 as the original (as the snapshots)
     if (sc) {
 #ifndef DM_TEST_UBSH_ANY_SUB   // negative control of t_ubren only: a copy of an earlier submission taken as the base
@@ -109,18 +114,25 @@ uint64_t upd_shadow_at(uint64_t lo, uint64_t size, void **buf, uint64_t sub) {
 #else
         int same = 1;
 #endif
-        if (e->lo == lo && e->size == size && same && e->cpu && e->seq < seq) { memcpy(cpu, e->cpu, (size_t)size); ul_apply(&g_uh, lo, cpu, size, e->seq); g_ren.incr++; }
-        else { memcpy(cpu, sc->cpu + (lo - sc->lo), (size_t)size); upd_apply(lo, cpu, size); }
+        // From the range's previous copy of this submission as far as that one goes, with the updates after it; what the reader reads past it
+        // from the snapshot with all of them (a reader of little made the copy before: the vertex stage's 560 bytes, then the fragment stage's 2 KB)
+#ifndef DM_TEST_UBSH_BASE_FULL   // negative control of t_core_upd only: a copy of fewer bytes is no base at all (every such copy from the snapshot)
+        uint64_t have = e->lo == lo && e->size == size && same && e->cpu && e->seq <= seq ? (e->ext < need ? e->ext : need) : 0;
+#else
+        uint64_t have = e->lo == lo && e->size == size && same && e->cpu && e->seq < seq && e->ext >= need ? need : 0;
+#endif
+        if (have) { memcpy(cpu, e->cpu, (size_t)have); if (e->seq < seq) ul_apply(&g_uh, lo, cpu, have, e->seq); g_ren.incr++; }
+        if (have < need) { memcpy(cpu + have, sc->cpu + (lo - sc->lo) + have, (size_t)(need - have)); upd_apply(lo + have, cpu + have, need - have); }
     } else {   // no snapshot and updates not written (upd_guard_draw could not write them first): memory with the pending writes, the updates among them
         g_ren.noshot++;
-        if (!pend_read_x(lo, cpu, size, g_pend.n, 0)) { g_ren.unknown++; RED_ONCE(90, "renamed uniform update: range %#llx+%llu has no snapshot and a GPU write of unknown content (first case): its copy may be stale", (unsigned long long)lo, (unsigned long long)size); }
+        if (!pend_read_x(lo, cpu, need, g_pend.n, 0)) { g_ren.unknown++; RED_ONCE(90, "renamed uniform update: range %#llx+%llu has no snapshot and a GPU write of unknown content (first case): its copy may be stale", (unsigned long long)lo, (unsigned long long)size); }
     }
-    *e = (ub_shadow){lo, size, seq, gpu, sub, ab, sc ? cpu : NULL}; *buf = e->buf; g_ren.shadows++;
+    *e = (ub_shadow){lo, size, seq, gpu, sub, ab, sc ? cpu : NULL, need}; *buf = e->buf; g_ren.shadows++;
 #ifdef DM_TEST_UB_COPIED_FULL_ONLY   // negative control of t_ubren only: a copy from the range's previous copy not counted
     if (g_ren.incr == incr0)
 #endif
-    g_ren.copied += size;
-    if (size > g_ren.copy_max) g_ren.copy_max = size;
+    g_ren.copied += need;
+    if (need > g_ren.copy_max) g_ren.copy_max = need;
     return e->gpu;
 }
 void ren_report(uint64_t f) {

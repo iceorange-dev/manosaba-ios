@@ -24,6 +24,7 @@ W uint64_t nvn_be_done_fence(void) { return 0; }
 W int nvn_be_prog_refl(const prog_t *p, const nvn_refl *rf[6], int stage[6]) { (void)p; (void)rf; (void)stage; return 0; }
 W void nvn_be_bind_sers(const p_bind_handles *b, int n, uint64_t *ser) { for (int k = 0; k < n; k++) ser[k] = b->h[k]; }
 W uint64_t nvn_be_handle_ser(uint64_t h) { return h; }
+W int nvn_be_tex_shared(const tex_t *t) { (void)t; return 0; }
 W int nvn_be_handle_view(uint64_t h, uint64_t *ser, view_t *v, int *has_v) { (void)h; (void)ser; (void)v; (void)has_v; return 0; }
 W void nvn_be_fuse_cover(const p_set_rt *r2, const uint8_t *first, const int8_t *p2map, const uint8_t *clr, int n1, int n) { (void)r2; (void)first; (void)p2map; (void)clr; (void)n1; (void)n; }
 // the execution interface (gfx/nvn/nvn_backend.h)

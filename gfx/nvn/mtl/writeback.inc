@@ -438,3 +438,17 @@ static int stor_key_of(const tex_t *t, stor_key *k) {   // a GPU-only texture (n
     k->samples = t->d.samples; k->fmt = (uint32_t)t->d.format;
     return 1;
 }
+int nvn_be_tex_shared(const tex_t *t) {   // (gfx/nvn/core/rt.h) another live object holds the texture of this one's storage
+    stor_key k; if (!t || !stor_key_of(t, &k)) return 0;
+    pthread_mutex_lock(&g_smu); stor_ent *e = nvn_hm_get(&g_stor, &k); int n = 0;
+    for (int i = 0; e && i < e->nser; i++) n += e->ser[i] != t->serial;
+    pthread_mutex_unlock(&g_smu);
+    return n > 0;
+}
+// A pass ended leaving this attachment's contents unstored on the lookahead's or the ledger's word (lost 1), or stored them (0): an object that
+// joins its storage later in the same submission would read them (stor_add_holder_locked's red line)
+static void stor_note_store(const tex_t *t, int lost) {
+    stor_key k; if (!t || !stor_key_of(t, &k)) return;
+    pthread_mutex_lock(&g_smu); stor_ent *e = nvn_hm_get(&g_stor, &k); if (e) e->lost_sub = lost ? g_sub_serial : 0; pthread_mutex_unlock(&g_smu);
+    if (lost && e) g_stor_lost_sub = g_sub_serial;
+}
