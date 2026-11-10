@@ -259,33 +259,37 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   those draws again under a depth test changed from less to less-or-equal: coplanar fragments would then resolve to the last drawn instead
   of the first, and the gain is two of the frame's splits (about 18 MB loaded and 18 stored each at 1280x720, of 315 MB loaded and 304
   stored a frame). Not taken. What the dump did show is 325.
-- 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
-  less traffic, but 66.6 ms frames without the commits. What is left to merge on Great Sky Island with the rewrites off, after 325 and 326
-  (batch 186, a pass dump at 1280x720): the G-buffer is still drawn in 8 passes, about 158 of the frame's 251 MB loaded; three end at
-  dispatches (218's two, and the first of a run of eleven that read no attachment), three have a seventh attachment the others lack. The
-  rewrites there are do not merge those: on the Mac the same scene loads 251 MB and stores 241 MB a frame with them off, 230 and 231 with
-  the store decisions and the same-target continuation alone (228's set; the translation's instructions the same), 221 and 227 with all
-  of them (instructions +15 %). On the Air under the hold (2026-11-10, one run each, the second started warmer): the store decisions and the
-  continuation give 30.0 fps against 29.8, the resolution 81 % of the frames at the 0.9 tier against 41 %, and cost the translation 68.3 M
-  instructions and 13.0 ms a frame against 54.1 M and 11.0 ms. The leads 62j left in those rewrites (186), batch 187. Shared storage: the Metal
-  backend keeps one texture for every GPU-only object of the same storage, layout and format (on Great Sky Island an object joins another's texture
-  about 28 times a frame), while the store lookahead, the validity ledger, the clear-only hoist, the deferral and the merge follow a texture by its
-  serial, so a read or a clear through the other object was not seen. A target whose storage another live object holds is now left alone by all five
-  (`core/rt.h` tex_shared): on Great Sky Island with every rewrite on, more than 8,192 store decisions and more than 32,768 attempts at a hoist, a
-  deferral or a merge in 4,500 frames met one (the traffic the same, 221 MB loaded and 227 stored a frame; the shot looked at), and an object that
-  joins a texture left unstored earlier in its submission is a red line (none in these runs). The coverage proof and the tile read's proof read their
-  vertices from memory: not while a GPU write to them is pending (`attr_read`, reason 12). The load probe (`DM_NVN_LOADPROBE`) read its attachment in
-  a command buffer of its own, committed before the probed pass's was, so it read what the texture held before the pass and could not find a sentinel:
-  now in the pass's command buffer, after it. Tears of the Kingdom never elides a load by coverage on Great Sky Island (no attachment probed in 4,500
-  frames), nor does manosaba's new game in 75 s (it clears every target it draws to: 0.0 MB loaded a frame), so the probe is checked by its test
-  alone. Under Metal's API validation with the rewrites on, both runs: no failure, no new red line. What is left to merge of the G-buffer's 8 passes
-  was looked at again (batch 187, the pass dump before 325 with the passes the tile reads now join): the run of eleven dispatches that read no
-  attachment could wait for the pass's end if no draw between reads what they write, which joins two draws to the pass before them (one store and load
-  of five targets, about 18 MB each way of 251); the passes with the seventh target follow a pass that draws that target alone, so one pass for both
-  needs every pipeline of the 2,000 draws before it made again with that target's format and no write mask (a probe on the M5: a pipeline with no
-  format for an attached target fails Metal's validation, and without validation the target came back zeroed). Not taken: about 7 % of the traffic,
-  which by 325's measurement on the Air (61 % more traffic for 16 % more GPU time) is under 2 % of the GPU's time. Left: the store decisions and the
-  continuation on the Air in turn (one run each so far).
+- 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 % less
+  traffic, but 66.6 ms frames without the commits. What is left to merge on Great Sky Island with the rewrites off, after 325 and 326 (batch 186, a
+  pass dump at 1280x720): the G-buffer is still drawn in 8 passes, about 158 of the frame's 251 MB loaded; three end at dispatches (218's two, and the
+  first of a run of eleven that read no attachment), three have a seventh attachment the others lack. The rewrites there are do not merge those: on
+  the Mac the same scene loads 251 MB and stores 241 MB a frame with them off, 230 and 231 with the store decisions and the same-target continuation
+  alone (228's set; the translation's instructions the same), 221 and 227 with all of them (instructions +15 %). On the Air under the hold
+  (2026-11-10, one run each, the second started warmer): the store decisions and the continuation give 30.0 fps against 29.8, the resolution 81 % of
+  the frames at the 0.9 tier against 41 %, and cost the translation 68.3 M instructions and 13.0 ms a frame against 54.1 M and 11.0 ms. The leads 62j
+  left in those rewrites (186), batch 187. Shared storage: the Metal backend keeps one texture for every GPU-only object of the same storage, layout
+  and format (on Great Sky Island an object joins another's texture about 28 times a frame), while the store lookahead, the validity ledger, the
+  clear-only hoist, the deferral and the merge follow a texture by its serial, so a read or a clear through the other object was not seen. A target
+  whose storage another live object holds is now left alone by all five (`core/rt.h` tex_shared): on Great Sky Island with every rewrite on, more than
+  8,192 store decisions and more than 32,768 attempts at a hoist, a deferral or a merge in 4,500 frames met one (the traffic the same, 221 MB loaded
+  and 227 stored a frame; the shot looked at), and an object that joins a texture left unstored earlier in its submission is a red line (none in these
+  runs). The coverage proof and the tile read's proof read their vertices from memory: not while a GPU write to them is pending (`attr_read`, reason
+  12). The load probe (`DM_NVN_LOADPROBE`) read its attachment in a command buffer of its own, committed before the probed pass's was, so it read what
+  the texture held before the pass and could not find a sentinel: now in the pass's command buffer, after it. Tears of the Kingdom never elides a load
+  by coverage on Great Sky Island (no attachment probed in 4,500 frames), nor does manosaba's new game in 75 s (it clears every target it draws to:
+  0.0 MB loaded a frame), so the probe is checked by its test alone. Under Metal's API validation with the rewrites on, both runs: no failure, no new
+  red line. What is left to merge of the G-buffer's 8 passes was looked at again (batch 187, the pass dump before 325 with the passes the tile reads
+  now join): the run of eleven dispatches that read no attachment could wait for the pass's end if no draw between reads what they write, which joins
+  two draws to the pass before them (one store and load of five targets, about 18 MB each way of 251); the passes with the seventh target follow a
+  pass that draws that target alone, so one pass for both needs every pipeline of the 2,000 draws before it made again with that target's format and
+  no write mask (a probe on the M5: a pipeline with no format for an attached target fails Metal's validation, and without validation the target came
+  back zeroed). Not taken: about 7 % of the traffic, which by 325's measurement on the Air (61 % more traffic for 16 % more GPU time) is under 2 % of
+  the GPU's time. Left: the store decisions and the continuation on the Air in turn (one run each so far). For manosaba, where they are on (after
+  batch 193, the Mac, the first trial's opening into its debate, one run each): with all of them off (`DM_NVN_TBDR=0`) the render targets loaded and
+  stored a frame are the same in every 300-frame line (nothing loaded, 24.9-91.6 MB stored), the GPU's time too (p50 1.9-2.8 ms), the pictures the
+  same, and the translation takes 8-9 % fewer instructions (1.24 against 1.36 M a frame in the debate): the game clears every target at the start of
+  its pass, its depth targets have no memory now, and what is left is stored because it is read. Not changed on two scenes' evidence; left: the map
+  scene (`work/run/mano/save_ch1_map_20261027`) the same way, then whether manosaba runs without them as Tears of the Kingdom does.
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
   three runs without it, thermal state serious 46 s after start against 44-58 s, and 27.44 fps under the hold against 27.40-27.65.
