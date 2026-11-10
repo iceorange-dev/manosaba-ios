@@ -5,9 +5,11 @@
 // made with no bias and a shader stage that samples through it gets a variant whose sample calls carry it, as Vulkan's rule has the sampler's bias
 // added to every level of detail, an explicit one too (λ' = λbase + sampler.bias + shaderOp.bias, λbase = shaderOp.Lod when given; Metal applies a
 // sampler's lodBias to level() samples the same way, samp_probe's level(0) read): level(l) → level((l) + b), bias(x) → bias((x) + b), a gradient's
-// two derivatives × 2^b, none → bias(b) in a fragment shader and level(b) elsewhere. Only .sample calls are rewritten: gather has no level of detail,
-// sample_compare is left as it is (counted). The variant is built from the shader's MSL as border_variant's (the Mac's workspace has every .metal;
-// an iOS app only those it carries, another gets a red line and draws without the bias). Checked by gfx/tests/t_lodbias.m
+// two derivatives × 2^b, none → bias(b) in a fragment shader and level(b) elsewhere. .sample and .sample_compare calls are rewritten (the compare
+// value comes before the option; the Metal compiler's own headers give sample_compare the bias, level and gradient overloads from language
+// version 2.3 on macOS and every version on iOS: metal/__bits/metal_depth2d, metal_config); gather has no level of detail. The variant is built
+// from the shader's MSL as border_variant's (the Mac's workspace has every .metal; an iOS app only those it carries, `games/<id>/lodbias_msl.txt`,
+// another gets a red line and draws without the bias). Checked by gfx/tests/t_lodbias.m
 #include <ctype.h>
 typedef struct { char *p; size_t n, cap; } lb_buf;
 static void lb_put(lb_buf *b, const char *s, size_t n) {
@@ -46,8 +48,8 @@ static int lb_is_array(const char *s, const char *nm) {
     }
     return -1;
 }
-// The MSL with the .sample calls through each named sampler member carrying its bias b[i] (frag: a fragment shader); *count the calls rewritten,
-// *left those through such a sampler left as they were (sample_compare, an unknown shape)
+// The MSL with the .sample and .sample_compare calls through each named sampler member carrying its bias b[i] (frag: a fragment shader); *count
+// the calls rewritten, *left those through such a sampler left as they were (an unknown shape)
 static NSString *lb_src(NSString *src, NSArray<NSString *> *names, const float *bias, int frag, int *count, int *left) {
     const char *s = src.UTF8String; size_t len = strlen(s); lb_buf o = {0}; size_t at = 0; *count = *left = 0;
     const char *pre = "spvDescriptorSet0.";
@@ -60,7 +62,9 @@ static NSString *lb_src(NSString *src, NSArray<NSString *> *names, const float *
             for (NSUInteger k = 0; k < names.count; k++) { const char *nm = names[k].UTF8String; size_t l = strlen(nm);
                 if (e[0] - a[0] == strlen(pre) + l && !strncmp(s + a[0] + strlen(pre), nm, l)) { which = (int)k; break; } }
         if (which < 0) continue;
+#ifdef DM_TEST_LB_COMPARE_LEFT   // negative control of t_lodbias only: sample_compare left as it was, as before
         if (cmp) { (*left)++; continue; }
+#endif
         float b = bias[which]; char B[48], E[48]; snprintf(B, sizeof B, "float(%a)", (double)b); snprintf(E, sizeof E, "float(%a)", exp2((double)b));
         int lod = -1, mlc = -1;
         for (int k = 2; k < n; k++) {
@@ -68,13 +72,13 @@ static NSString *lb_src(NSString *src, NSArray<NSString *> *names, const float *
             else if (lb_starts(s, a[k], e[k], "min_lod_clamp")) mlc = k;
         }
         int ins = -1;
-        if (lod < 0) {   // no level of detail given: where it goes (after the coordinate and an array's layer, before min_lod_clamp and the offset)
+        if (lod < 0) {   // no level of detail given: where it goes (after the coordinate, an array's layer and a compare value, before min_lod_clamp and the offset)
             if (mlc >= 0) ins = frag ? mlc : -1;
             else {
                 size_t t = i; while (t > 0 && lb_ident(s[t - 1])) t--;
                 int arr = -1;
                 if (t >= strlen(pre) && !strncmp(s + t - strlen(pre), pre, strlen(pre))) { char nm[128]; size_t l = MIN(i - t, sizeof nm - 1); memcpy(nm, s + t, l); nm[l] = 0; arr = lb_is_array(s, nm); }
-                ins = arr < 0 ? -1 : 2 + arr;
+                ins = arr < 0 ? -1 : 2 + arr + cmp;
                 if (ins > n) ins = -1;
             }
             if (ins < 0) { (*left)++; continue; }
@@ -156,7 +160,7 @@ static NvShader *lb_variant(NvShader *sh, int st) {
         if (sh->alib) v->alib = lib;
         g_lb_variants++;
         MLOG("%s shader %s: sampler LOD bias %g%s carried by %d sample call%s%s (%s)", st == 1 ? "fragment" : st == 5 ? "compute" : "vertex", sh->key,
-             bias[0], n > 1 ? " and others" : "", cnt, cnt == 1 ? "" : "s", left ? ", some left as they were (sample_compare)" : "", g_lb_force == 1 ? "DM_SAMP_LB_EMU=1" : "this GPU ignores the sampler's");
+             bias[0], n > 1 ? " and others" : "", cnt, cnt == 1 ? "" : "s", left ? ", some left as they were (an unknown shape)" : "", g_lb_force == 1 ? "DM_SAMP_LB_EMU=1" : "this GPU ignores the sampler's");
     } else {
         g_lb_fallback++;
         RED_ONCE(124, "%s shader %s samples through a sampler with an LOD bias this GPU ignores, and %s: drawn without the bias", st == 1 ? "fragment" : st == 5 ? "compute" : "vertex", sh->key,

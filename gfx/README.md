@@ -131,7 +131,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/shaders.inc` | The shader mapping table, programs, pipeline lists |
 | `nvn/mtl/descriptors.inc` | Texture and sampler descriptor pools, argument arenas |
 | `nvn/mtl/pipeline.inc` | Draw state, vertex formats, blending, pipeline states, the pipeline prediction |
-| `nvn/mtl/lod_bias.inc` | Sampler LOD bias in the shader on a GPU that ignores the sampler's (plan item 318) |
+| `nvn/mtl/lod_bias.inc` | Sampler LOD bias in the shader on a GPU that ignores the sampler's (plan item 318): sample and sample_compare calls rewritten, the variant built from the shader's MSL (an iOS app carries those of `games/<id>/lodbias_msl.txt`) |
 | `nvn/mtl/border_warm.inc` | Sampler border colours in the shader (plan item 161), the pipeline warm-up, depth-stencil states |
 | `nvn/mtl/args.inc` | Argument buffers: dummy resources, bindings, the driver segment fill |
 | `nvn/mtl/uniform_rename.inc` | Inline uniform updates' backend side: the argument blocks they make stale, writing them to memory |
@@ -253,7 +253,7 @@ All are environment variables. The Mac host fills `DM_NVN_SHMAP` and `DM_MSL_DIR
 | `DM_TEST_NO_BC=1` | Take the "GPU without BC textures" decompression path on any machine |
 | `DM_UNCAPPED=0`, `DM_UNCAPPED_HZ=<30..120>` or `display` | For a game whose step follows the measured frame time (Tears of the Kingdom's rules product): by default the game does not wait for the display, our clock paces it at up to 120 fps and the display shows the newest finished frame; `=0` paces by the display at the game's interval as before |
 | `DM_TEST_WORK_MS=<ms>` | Each frame's first submission waits until that long after the previous present (a game whose work takes that long; pacing tests) |
-| `DM_FPS=30` | Present at 30 Hz (default 60) |
+| `DM_FPS=30` | Present at 30 fps (default 60): the display link ticks at 30 Hz while a frame is a whole number of its ticks and at the present rate while one is not (a game's interval 3 at 60 Hz, 20 fps: three 60 Hz ticks; plan item 324) |
 | `DM_PRESENT_HZ=0` | No frame limit (profiling only: some game logic counts frames) |
 | `DM_PRESENT_LATENCY=<n>` or `auto` | The display link's frame latency (`preferredFrameLatency`; default 1); `auto` takes 2 while the link ticks at 30 Hz (the power-saving mode) and 1 otherwise: steadier 30 fps for 33 ms more latency (lfkdsk's measurement; `nvn_pace.h` `nvn_frame_latency`) |
 

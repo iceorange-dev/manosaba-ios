@@ -518,16 +518,18 @@ double mtl_link_tick_age_ms(void);
 - (void)tick:(CADisplayLink *)l;
 @end
 // A game stepping by the measured time asks a ProMotion screen for 80-120 Hz and tells the graphics layer the rate it runs at (plan item 172,
-// nvn_display_rate_now); 60 or 30 otherwise
+// nvn_display_rate_now); 60 or 30 otherwise. Under the 30 fps target it tells it too (plan item 324): the graphics layer keeps its present rate
+// the same whether the target was 30 from the start or became 30 while the game ran
 void nvn_display_rate_now(int now_hz);
 int dm_game_realtime_step(void);
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
     static int last = -1; int f = mtl_fps_target();
-    int pro = f != 30 && g_view.window.windowScene.screen.maximumFramesPerSecond >= 120 && dm_game_realtime_step() && !getenv("DM_PRESENT_HZ") && !(getenv("DM_PROMOTION") && !strcmp(getenv("DM_PROMOTION"), "0"));
+    int scr = g_view.window.windowScene.screen.maximumFramesPerSecond >= 120 && dm_game_realtime_step() && !getenv("DM_PRESENT_HZ") && !(getenv("DM_PROMOTION") && !strcmp(getenv("DM_PROMOTION"), "0"));
+    int pro = f != 30 && scr;
     int want = pro ? 120 : f;
     if (want != last) { last = want; l.preferredFrameRateRange = want == 120 ? CAFrameRateRangeMake(80, 120, 120) : want == 30 ? CAFrameRateRangeMake(30, 30, 30) : CAFrameRateRangeMake(60, 60, 60); }
-    if (pro) { double d = l.targetTimestamp - l.timestamp; if (d > 0) nvn_display_rate_now((int)lround(1.0 / d)); }
+    if (scr) { double d = l.targetTimestamp - l.timestamp; if (d > 0) nvn_display_rate_now((int)lround(1.0 / d)); }
 }
 @end
 static CADisplayLink *g_rate_link;

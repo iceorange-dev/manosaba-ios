@@ -80,15 +80,17 @@ static void present_cfg(const win_t *o) {
       LOG("[nvn] the display link shows %s (%s)", fifo ? "every frame in order, each for its present period" : "the newest frame", c ? "DM_PRESENT_CONSUME" : "game.json present_consume"); }
 }
 // The rate the screen runs at now (the iOS front end's display link, every tick; plan item 172): a game stepping by the measured time follows it
-// between 60 and 120 on a ProMotion screen (nvn_promotion_hz). Any thread
+// between 60 and 120 on a ProMotion screen (nvn_promotion_hz), and presents at 120 while the player's target holds the rate below 60 (plan item
+// 324: the front end reports then too, the rate being the 30 we asked for). Any thread
 static _Atomic int g_pro_last;
 void nvn_display_rate_now(int now_hz) {
     static int disp = -1; if (disp < 0) disp = mtl_display_hz();
     if (g_hz < 0 || g_uncapped || fstep_on()) return;   // (before the first present the configuration is not made yet)
-    int hz = nvn_promotion_hz(dm_game_realtime_step(), getenv("DM_PRESENT_HZ"), getenv("DM_PROMOTION"), disp, now_hz);
+    int held = mtl_fps_target() < 60, hz = nvn_promotion_hz(dm_game_realtime_step(), getenv("DM_PRESENT_HZ"), getenv("DM_PROMOTION"), disp, now_hz, held);
     if (!hz || hz == atomic_load(&g_pro_last)) return;
     atomic_store(&g_pro_last, hz); g_hz = hz; void mtl_link_set_rate(int hz); mtl_link_set_rate(hz);
-    LOG("[nvn] ProMotion: the screen runs at %d Hz, presents at %d (DM_PROMOTION=0 keeps 60)", now_hz, hz);
+    if (held) LOG("[nvn] ProMotion: the frame rate held at %d fps, presents at %d (a frame takes the hold's interval; plan item 324)", mtl_fps_target(), hz);
+    else LOG("[nvn] ProMotion: the screen runs at %d Hz, presents at %d (DM_PROMOTION=0 keeps 60)", now_hz, hz);
 }
 static uint64_t present_period(const win_t *o) {
     present_cfg(o);

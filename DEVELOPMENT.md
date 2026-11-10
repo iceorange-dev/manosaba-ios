@@ -453,8 +453,11 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
 - 318 (the probe: batch 161; the bias in the shader: batch 181) sampler LOD bias and min / max reduction on GPUs before Apple10 (S2Arm's probes: reduction ignored as plain linear on an M4 Pro and an M3, LOD
   bias ignored on the M3; `descriptors.inc` sets both on any GPU from OS 26, Tears of the Kingdom biases 861 samplers; item 4 assumed the OS version
   enough): a probe at start (two mips, LOD bias 1), the GPU family and a red line; the bias carried by a shader variant where the probe finds it
-  ignored (`mtl/lod_bias.inc`). Left: a device before Apple10 to see it on (the user, 2026-11-10: none for now; checked on the Mac forced on),
-  the MSL an iOS app would carry for it (as `border_msl.txt`), sample_compare's bias; the reduction only when counted.
+  ignored (`mtl/lod_bias.inc`). Batch 184: sample_compare carries it too (the Metal compiler's headers give it the bias, level and gradient
+  overloads; 2,584 of the 31,415 shaders call it, the shadow map reads), and an iOS app carries the MSL of the shaders listed in
+  `games/totk/lodbias_msl.txt` (66 fragment shaders, 2.3 MB, from the Mac's forced runs: the prologue's 21 and a walk on Great Sky Island's
+  60, all with bias -1; manosaba's run made none; one not listed is named in red once and drawn without the bias). Left: a device before
+  Apple10 to see it on (the user, 2026-11-10: none for now; checked on the Mac forced on); the reduction only when counted.
 - 319 (batch 162) the install with the player's own free account (S2Arm's flow, `ios/run.sh` against it): the team and the one paired phone found without
   `local.env`, `-allowProvisioningDeviceRegistration -destination-timeout 120`, a weekly renewal by signing again instead of building (27 s, 7 s and
   3 s there), data pushed by content hash, readable errors for an unclicked keychain prompt and a missing iOS platform.
@@ -515,14 +518,23 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   frames where the HUD's hearts glow red too (three shots in a row at the tree, 2.5 s apart); the frame between the fall and those has the
   hearts unlit and Link in his own colours. (Those runs' one red line, a 3D 8x8x8 texture in a 2D slot of pixel shader 9808aabbd3219e97, is
   apart from it: the shader samples that slot only under a flag, alpha alone.)
-- 324 the iPhone Air started hot (batch 183's fourth run in a row, thermal state serious at launch, so 30 fps from the boot's settings): 15.0
-  fps for about 150 s, every frame 66.7 ms with the GPU at p50 29 / p95 34 ms, and 28 fps (35 ms a frame, the same GPU times) once the state
-  fell to fair and the hold ended; the run before it, started the same way, dipped to 19-22 fps. Where the state reaches serious while the
-  game runs the same hold gives 27.4 fps (late frames 44 ms, not 66.7). The logs' difference: both are present pacing mode 3 (the display
-  link asked for 30 Hz), but the link made in that mode at launch (0 → 3 at frame 1) ticks 30.0 times a second, so a 35 ms frame takes
-  every other tick, while the one switched to it (1 → 3) ticks 27.4 times a second with a present on each (two launches each way). To find:
-  why the link made at 30 Hz does not follow the frames as the switched one does (`present_thread.inc` link_main against link_sync: the
-  range and the frame latency it is made with), on a ProMotion screen; a fix would be checked on the phone started hot.
+- 324 (batch 184; left: its second change seen on a phone) the iPhone Air started hot (batch 183's fourth run in a row, thermal state serious at
+  launch, so 30 fps from the boot's settings): 15.0 fps for about 150 s, every frame 66.7 ms with the GPU at p50 29 / p95 34 ms, and 28 fps
+  once the state fell to fair and the hold ended; where the state reaches serious while the game runs the same hold gives 27.4 fps. What it
+  was, from that log: the game set its present interval 2 → 3 eight seconds before the 15.0 fps and kept 3 through it. With the target 30
+  from the start the front end's rate hint never reported the ProMotion screen's rate (it reported only while the target was 60), so the
+  present rate stayed 60 Hz, where the game's interval 3 is 20 fps and paces the frames; `nvn_link_step` rounded its 1.5 ticks of the 30 Hz
+  link up to 2. Where the hold begins while the game runs the present rate was left at 120: the game's 3 (40 fps) is under the hold's 4 and
+  frames of 35 ms show at their own rate. (Not the display link made at launch against the one switched to 30 Hz, as first read from the
+  tick counts: the game waited two ticks a frame.) Two changes. The 30 Hz link only while a frame is a whole number of its ticks
+  (`gfx/nvn/nvn_pace.h` nvn_link30_step, `present_thread.inc` link_sync): otherwise the link ticks at the present rate and the frame takes
+  its interval in ticks, and 30 Hz again once every frame has fitted for 3 s. This is the 30 fps product's case too, on any screen: a game
+  that steps once per frame ran at three quarters of its speed at its 20 fps under the 30 fps setting, Low Power Mode or the thermal hold.
+  And on a ProMotion screen a game stepping by the measured time presents at 120 while the target is below 60 as well (`nvn_promotion_hz`'s
+  held; the front end reports under the hold too), so the hold paces the same whenever it began. On the Mac in a window (a real display
+  link, `DM_FPS=30`, the report times stretched by `DM_NVN_TS_DVFS=10` so the game picks 3): 66.67 ms a frame before, 50.00 after, the link
+  at 60 Hz from the first interval 3 and at 30 Hz again 3 s after the last. Left: the second change on a phone (a launch with `DM_FPS=30`:
+  the log's "ProMotion: the frame rate held at 30 fps, presents at 120").
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -1988,3 +2000,24 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
   connected. Smoke: Tears of the Kingdom's two red lines as before, s1300 a later moment of the same walk and s1800 the same shot (looked
   at), instructions a draw as before (27,189-37,587); manosaba none, its frames the same.
+- [x] batch 184 · 324, the 15 fps of the iPhone started hot, and 318's two leftovers, in one batch.
+  324, from the phone's log: not the display link but the game's own interval. With the target 30 from the start the present rate stayed 60
+  Hz, where the game's interval 3 (20 fps) paces the frames and took 2 ticks of the 30 Hz link. `gfx/nvn/nvn_pace.h` nvn_link30_step: the
+  30 Hz link only while a frame is a whole number of its ticks, the present rate's link while one is not and for 3 s after (`present_thread.inc`
+  link_sync; the log names each change); nvn_promotion_hz's held: on a ProMotion screen a game stepping by the measured time presents at 120
+  under the target too (`hle/pacing.inc`, the front end's rate hint reports then as well, `ios/Sources/front_ios.m`). `gfx/tests/t_pace.c`
+  +34 (121; `-DDM_TEST_LINK30_ALWAYS` 13 fail, `-DDM_TEST_PROMOTION_HELD_BY_SCREEN` 2), `t_linkfifo.m` +7 (12: link_sync's mode and the
+  ticks a frame takes from it; `-DDM_TEST_LINK30_ALWAYS` 2 fail). On the Mac in a window (the user told first), Great Sky Island with
+  `DM_FPS=30 DM_NVN_TS_DVFS=10`: the host before, frame time p50 66.67 ms at the game's interval 3; this one 50.00 ms, the link at 60 Hz
+  from the first interval 3 (frame 72) and at 30 Hz again 3 s after the last, one frame of 66.6 ms at a change; both shots looked at. The
+  ProMotion half is not seen on a phone yet (the item).
+  318: `mtl/lod_bias.inc` lb_src rewrites sample_compare as sample, the option after the compare value (`t_lodbias.m` +3, 19: a depth
+  texture with mips 0.25 and 0.75 read through a less-or-equal sampler in a kernel and a fragment shader, the array forms compiled;
+  `-DDM_TEST_LB_COMPARE_LEFT` 3 fail). `games/totk/lodbias_msl.txt`, 66 fragment shaders seen in the Mac's forced runs (`DM_SAMP_LB_EMU=1`:
+  the prologue 21, a walk on Great Sky Island 60, its shots looked at; no call left unrewritten; manosaba none), carried into the app by
+  `ios/tools/border_msl.py` with a fourth argument (`ios/run.sh`; `tools/tests/t_border_msl.py` +1, 4: `DM_TEST_BORDER_MSL_NONE=1` 3 fail,
+  `_LISTED_ONLY=1` 2). The Tears of the Kingdom device build's step: 66 sources, 2.3 MB, beside the border variants' 313 (its xcodebuild
+  not run: the phone away).
+  gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not
+  connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots
+  (looked at), instructions a draw as before (27,211-39,283); manosaba none, its frames the same (s600 the title page fading in, looked at).

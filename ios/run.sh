@@ -104,6 +104,10 @@ if [ "$CMD" = build ] || [ "$CMD" = ipa ] || [ "$CMD" = sim-build ]; then
   if [ "$CMD" != sim-build ] && [ -f "../games/$GAME/border_msl.txt" ]; then
     python3 tools/border_msl.py "../games/$GAME/border_msl.txt" "$(ws msl_mac)/b-$V" "Gen/msl/b-$V" || { t "[red] the MSL of a border variant shader is missing (see above)"; exit 1; }
   fi
+  # ... and for sampler LOD bias variants (plan item 318: a GPU that ignores a sampler's LOD bias, or an OS before 26)
+  if [ "$CMD" != sim-build ] && [ -f "../games/$GAME/lodbias_msl.txt" ]; then
+    python3 tools/border_msl.py "../games/$GAME/lodbias_msl.txt" "$(ws msl_mac)/b-$V" "Gen/msl/b-$V" "LOD bias" || { t "[red] the MSL of an LOD bias variant shader is missing (see above)"; exit 1; }
+  fi
   # App icon: the game's icon from the workspace (1024x1024 opaque PNG; game art is never committed); without one the app has no icon
   mkdir -p Gen/AppAssets.xcassets/AppIcon.appiconset; echo '{"info":{"version":1,"author":"xcode"}}' > Gen/AppAssets.xcassets/Contents.json
   ICON=$(ws icon 2>/dev/null)

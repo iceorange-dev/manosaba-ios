@@ -75,17 +75,24 @@ int main(void) {
         printf("%-72s expected %3d → got %3d %s\n", u[i].why, u[i].want, got, ok ? "✓" : "✗"); fail += !ok;
     }
     // ProMotion (nvn_promotion_hz, plan item 172): 120 while a 120 Hz screen runs at 120, for a game stepping by the measured time only; a game
-    // stepping per frame (-DDM_TEST_PROMOTION_ANY_STEP) at 120 fails 1
-    struct { int rt; const char *phz, *pro; int disp, now, want; const char *why; } pm[] = {
-        {1, NULL, NULL, 120, 120, 120, "a real-time step on a 120 Hz screen running at 120: 120"},
-        {1, NULL, NULL, 120, 60, 60, "... the screen at 60 (Low Power Mode): 60"},
-        {0, NULL, NULL, 120, 120, 0, "a step per frame (manosaba): left at 60"},
-        {1, NULL, NULL, 60, 60, 0, "a 60 Hz screen: left alone"},
-        {1, "90", NULL, 120, 120, 0, "DM_PRESENT_HZ asked for: left alone"},
-        {1, NULL, "0", 120, 120, 0, "DM_PROMOTION=0: left alone"},
+    // stepping per frame (-DDM_TEST_PROMOTION_ANY_STEP) at 120 fails 2. While the player's target holds the rate below 60 (plan item 324) 120
+    // whatever the screen runs at; the screen's rate then too (-DDM_TEST_PROMOTION_HELD_BY_SCREEN) fails 2
+    struct { int rt; const char *phz, *pro; int disp, now, held, want; const char *why; } pm[] = {
+        {1, NULL, NULL, 120, 120, 0, 120, "a real-time step on a 120 Hz screen running at 120: 120"},
+        {1, NULL, NULL, 120, 60, 0, 60, "... the screen at 60 (iOS limits it): 60"},
+        {0, NULL, NULL, 120, 120, 0, 0, "a step per frame (manosaba): left at 60"},
+        {1, NULL, NULL, 60, 60, 0, 0, "a 60 Hz screen: left alone"},
+        {1, "90", NULL, 120, 120, 0, 0, "DM_PRESENT_HZ asked for: left alone"},
+        {1, NULL, "0", 120, 120, 0, 0, "DM_PROMOTION=0: left alone"},
+        {1, NULL, NULL, 120, 30, 1, 120, "the target 30, the screen at the 30 we asked for: 120 (324: as where the hold began later)"},
+        {1, NULL, NULL, 120, 60, 1, 120, "the target 30, the screen at 60: 120"},
+        {1, NULL, NULL, 120, 120, 1, 120, "the target 30, the screen still at 120: 120"},
+        {0, NULL, NULL, 120, 30, 1, 0, "the target 30, a step per frame: left at 60"},
+        {1, NULL, NULL, 60, 30, 1, 0, "the target 30, a 60 Hz screen: left alone"},
+        {1, NULL, "0", 120, 30, 1, 0, "the target 30, DM_PROMOTION=0: left alone"},
     };
     for (int i = 0; i < (int)(sizeof pm / sizeof *pm); i++) {
-        int got = nvn_promotion_hz(pm[i].rt, pm[i].phz, pm[i].pro, pm[i].disp, pm[i].now), ok = got == pm[i].want; n++;
+        int got = nvn_promotion_hz(pm[i].rt, pm[i].phz, pm[i].pro, pm[i].disp, pm[i].now, pm[i].held), ok = got == pm[i].want; n++;
         printf("%-72s expected %3d → got %3d %s\n", pm[i].why, pm[i].want, got, ok ? "✓" : "✗"); fail += !ok;
     }
     // Display-link frame latency (nvn_latency_setting / nvn_frame_latency, plan item 153): unset 1; a number wins at every rate; "auto" 2 at a
@@ -119,6 +126,35 @@ int main(void) {
     for (int i = 0; i < (int)(sizeof k / sizeof *k); i++) {
         unsigned got = nvn_link_step(k[i].itv, k[i].hz, k[i].lhz); int ok = got == k[i].want; n++;
         printf("%-72s expected %3u → got %3u %s\n", k[i].why, k[i].want, got, ok ? "✓" : "✗"); fail += !ok;
+    }
+    // The power-saving link (nvn_link30_step, plan item 324): 30 Hz while a frame is a whole number of its ticks, the present rate's link while one
+    // is not and for NVN_LINK30_BACK_NS after; with each the ticks a frame then takes and the rate that gives. 30 Hz whatever the interval
+    // (-DDM_TEST_LINK30_ALWAYS) fails 13: the six rows off 30 Hz, their ticks, and the frame rate of interval 3 (15 fps for the 20 asked)
+    {   nvn_link30 s = {0}; const uint64_t S = 1000000000ull;
+        struct { unsigned itv, hz; uint64_t at; int want; unsigned ticks; const char *why; } l[] = {
+            {2, 60, 1 * S, 1, 1, "interval 2 at 60 Hz: the 30 Hz link, 1 tick (30 fps)"},
+            {1, 60, 2 * S, 1, 1, "interval 1 (the hold not applied yet): its 2 under the target, the 30 Hz link"},
+            {3, 60, 3 * S, 0, 3, "interval 3 at 60 Hz (20 fps): 1.5 ticks of 30 Hz, the link at 60 Hz, 3 ticks"},
+            {2, 60, 3 * S + S / 10, 0, 2, "interval 2 again 0.1 s later: still at 60 Hz, 2 ticks (30 fps)"},
+            {3, 60, 4 * S, 0, 3, "interval 3 again: at 60 Hz"},
+            {2, 60, 4 * S + NVN_LINK30_BACK_NS - 1, 0, 2, "interval 2 until just under 3 s after the last interval 3: at 60 Hz"},
+            {2, 60, 4 * S + NVN_LINK30_BACK_NS, 1, 1, "3 s after it: the 30 Hz link again"},
+            {4, 60, 9 * S, 1, 2, "interval 4 at 60 Hz (15 fps asked): 2 ticks of 30 Hz, fits"},
+            {3, 120, 10 * S, 1, 1, "interval 3 at 120 Hz: the hold's 4 under the target, 1 tick of 30 Hz"},
+            {4, 120, 11 * S, 1, 1, "interval 4 at 120 Hz: 1 tick"},
+            {4, 90, 12 * S, 0, 4, "interval 4 at 90 Hz (22.5 fps): the link at 90 Hz, 4 ticks"},
+            {3, 90, 12 * S + 4 * S, 1, 1, "interval 3 at 90 Hz 4 s later: 1 tick of 30 Hz"},
+            {0, 100, 20 * S, 1, 1, "no frame waits for a tick (uncapped pacing) on a 100 Hz screen: the 30 Hz link"},
+            {5, 144, 21 * S, 0, 5, "interval 5 at 144 Hz (28.8 fps): the link at 144 Hz, 5 ticks"},
+        };
+        for (int i = 0; i < (int)(sizeof l / sizeof *l); i++) {
+            int got = nvn_link30_step(&s, l[i].itv, l[i].hz, l[i].at), ok = got == l[i].want; n++;
+            unsigned h = (l[i].hz + 29) / 30, itv = l[i].itv < h ? h : l[i].itv, t = nvn_link_step(itv, l[i].hz, got ? 30 : l[i].hz);
+            printf("%-72s expected %3d → got %3d %s\n", l[i].why, l[i].want, got, ok ? "✓" : "✗"); fail += !ok;
+            if (l[i].itv) { ok = t == l[i].ticks; n++; printf("%-72s expected %3u → got %3u %s\n", "... the ticks a frame takes", l[i].ticks, t, ok ? "✓" : "✗"); fail += !ok; }
+        }
+        nvn_link30 z = {0}; int on = nvn_link30_step(&z, 3, 60, 5 * S); double fps = (on ? 30.0 : 60.0) / nvn_link_step(3, 60, on ? 30 : 60); int ok = fps == 20.0; n++;
+        printf("%-72s expected %3d → got %3.0f %s\n", "interval 3 at 60 Hz under the target: the 20 fps the game asks", 20, fps, ok ? "✓" : "✗"); fail += !ok;
     }
     // The frame-rate hold (nvn_hold_interval, plan item 130: Tears of the Kingdom's pre-rendered movies at 30 fps); the game's interval whatever the
     // hold (-DDM_TEST_HOLD_IGNORED) fails 4

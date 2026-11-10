@@ -3,9 +3,12 @@
 // sampler registered with LOD bias 1 through the production path. The sampler is made without its bias (a plain level(0) read gives red); each
 // form rewritten reads the mip the bias selects: level(0) → green, with bias 2 → blue (a kernel); in a fragment shader drawing a 4x4 target at
 // level of detail 0, no option → bias(1), an offset kept after it, bias(0) → bias(0 + 1), gradient2d × 2: green; a 2D array sample gets bias after
-// its layer and compiles; sample_compare is left (counted). lb_variant builds the kernel's variant from its .metal and .json (t_lodbias.d) for the
+// its layer and compiles. sample_compare on a 4x4 depth texture with mips 0.25 and 0.75 through a less-or-equal sampler, compare value 0.5: plain
+// 0 (mip 0), level(0) → level(0 + 1) 1 in a kernel, no option → bias(1) 1 in a fragment shader, and the array form with its layer and level
+// compiles. lb_variant builds the kernel's variant from its .metal and .json (t_lodbias.d) for the
 // sampler bound to the stage, once (the second call returns it), and none for a sampler without a bias; lb_rebind marks the stage while one is
-// bound. With DM_SAMP_LB_EMU=0 the sampler keeps its bias and no shader carries it. No variant (-DDM_TEST_LB_VARIANT_OFF): 1 fails.
+// bound. With DM_SAMP_LB_EMU=0 the sampler keeps its bias and no shader carries it. No variant (-DDM_TEST_LB_VARIANT_OFF): 1 fails;
+// sample_compare left as it was (-DDM_TEST_LB_COMPARE_LEFT): 3 fail.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -83,10 +86,36 @@ int main(void) { @autoreleasepool {
         "fragment float4 f(constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], float4 p [[position]])\n{ return spvDescriptorSet0.arr.sample(spvDescriptorSet0.texSmplr, p.xy, uint(rint(p.z))); }\n";
     NSString *arw = rw(arr, 1.0f, 1, &cnt, &left); NSError *e = nil;
     CHECK(cnt == 1 && [arw containsString:@"uint(rint(p.z)), bias(float("] && [g_dev newLibraryWithSource:arw options:nil error:&e] != nil, "a 2D array sample: bias after its layer, compiles%s%s", e ? ": " : "", e ? e.localizedDescription.UTF8String : "");
-    NSString *cmp = @"#include <metal_stdlib>\nusing namespace metal;\nstruct spvDescriptorSetBuffer0 { depth2d<float> d [[id(0)]]; sampler texSmplr [[id(1)]]; };\n"
-        "fragment float4 f(constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], float4 p [[position]])\n{ return float4(spvDescriptorSet0.d.sample_compare(spvDescriptorSet0.texSmplr, p.xy, 0.5)); }\n";
-    NSString *crw = rw(cmp, 1.0f, 1, &cnt, &left);
-    CHECK(cnt == 0 && left == 1 && [crw isEqualToString:cmp], "sample_compare left as it is, counted (%d left)", left);
+    {   // sample_compare: a depth texture whose mip 0 holds 0.25 and mip 1 0.75, compare value 0.5 through a less-or-equal sampler (0.5 <= texel)
+#define DHDR "#include <metal_stdlib>\nusing namespace metal;\nstruct spvDescriptorSetBuffer0 { depth2d<float> tex [[id(0)]]; sampler texSmplr [[id(1)]]; };\n"
+#define DKERNEL(opt) DHDR "kernel void k(constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], device float4 *out [[buffer(1)]])\n" \
+    "{ out[0] = float4(spvDescriptorSet0.tex.sample_compare(spvDescriptorSet0.texSmplr, float2(0.5), 0.5" opt ")); }\n"
+#define DFRAG DHDR "vertex float4 vtx(uint i [[vertex_id]]) { float2 p = float2((i << 1) & 2, i & 2); return float4(p * 2.0 - 1.0, 0, 1); }\n" \
+    "fragment float4 f(constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], float4 p [[position]])\n" \
+    "{ float2 uv = p.xy / 4.0; return float4(spvDescriptorSet0.tex.sample_compare(spvDescriptorSet0.texSmplr, uv, 0.5)); }\n"
+        MTLTextureDescriptor *dd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float width:4 height:4 mipmapped:YES];
+        dd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead; dd.storageMode = MTLStorageModePrivate; id<MTLTexture> dt = [g_dev newTextureWithDescriptor:dd];
+        id<MTLCommandBuffer> cb = [g_q3 commandBuffer];
+        for (int l = 0; l < 3; l++) { MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor]; rp.depthAttachment.texture = dt; rp.depthAttachment.level = (NSUInteger)l;
+            rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.storeAction = MTLStoreActionStore; rp.depthAttachment.clearDepth = l ? 0.75 : 0.25;
+            [[cb renderCommandEncoderWithDescriptor:rp] endEncoding]; }
+        [cb commit]; [cb waitUntilCompleted];
+        MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterNearest; sd.mipFilter = MTLSamplerMipFilterNearest;
+        sd.compareFunction = MTLCompareFunctionLessEqual; sd.supportArgumentBuffers = YES; id<MTLSamplerState> cs = [g_dev newSamplerStateWithDescriptor:sd];
+        id<MTLTexture> was = g_t; g_t = dt;
+        CHECK(runk(@DKERNEL(", level(0.0)"), cs, o) && o[0] == 0.f, "sample_compare, plain level(0): mip 0's 0.25 fails the compare (%g)", o[0]);
+        NSString *ck = rw(@DKERNEL(", level(0.0)"), 1.0f, 0, &cnt, &left);
+        CHECK(cnt == 1 && !left && runk(ck, cs, o) && o[0] == 1.f, "... level(0) → level((0) + 1): mip 1's 0.75 passes (%g, %d call) [-DDM_TEST_LB_COMPARE_LEFT: left]", o[0], cnt);
+        NSString *cf = rw(@DFRAG, 1.0f, 1, &cnt, &left);
+        CHECK(cnt == 1 && [cf containsString:@"uv, 0.5, bias(float("] && runf(cf, cs, o) && o[0] == 1.f, "... a fragment shader's, no option → bias(1) after the compare value: passes (%g)", o[0]);
+        g_t = was;
+        NSString *ca = @"#include <metal_stdlib>\nusing namespace metal;\nstruct spvDescriptorSetBuffer0 { depth2d_array<float> d [[id(0)]]; sampler texSmplr [[id(1)]]; };\n"
+            "fragment float4 f(constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], float4 p [[position]])\n"
+            "{ return float4(spvDescriptorSet0.d.sample_compare(spvDescriptorSet0.texSmplr, p.xy, uint(rint(p.z)), 0.5) + spvDescriptorSet0.d.sample_compare(spvDescriptorSet0.texSmplr, p.xy, uint(rint(p.z)), 0.5, level(p.w))); }\n";
+        NSString *caw = rw(ca, 1.0f, 1, &cnt, &left); NSError *ce = nil;
+        CHECK(cnt == 2 && !left && [caw containsString:@"uint(rint(p.z)), 0.5, bias(float("] && [caw containsString:@"0.5, level((p.w) + float("] && [g_dev newLibraryWithSource:caw options:nil error:&ce] != nil,
+              "the array forms (Tears of the Kingdom's shadow reads): bias after the compare value, level(l) → level((l) + 1), compiles%s%s", ce ? ": " : "", ce ? ce.localizedDescription.UTF8String : "");
+    }
     // lb_variant end to end: the kernel's .metal and .json beside each other (as in the shader cache), the sampler bound to the compute stage
     char cwd[1024]; if (!getcwd(cwd, sizeof cwd)) return 2;
     NSString *dir = [@(cwd) stringByAppendingPathComponent:@"t_lodbias.d"]; [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];

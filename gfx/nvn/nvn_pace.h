@@ -20,7 +20,8 @@ static inline uint64_t nvn_pace(nvn_pacer *p, uint64_t now, uint64_t period) {
 // Display-link ticks one frame takes (plan item 123): the game's present interval counts refreshes of the present rate hz, the link ticks at link_hz
 // (30 in the power-saving mode, 120 in pacing mode 2), so a frame takes interval x link_hz / hz ticks, rounded up, at least one. The step used to
 // be the interval (x 2 in mode 2) whatever the link's rate: Tears of the Kingdom at interval 2 with the 30 fps setting got two 30 Hz ticks a frame,
-// 15 fps. Rounded up, interval 3 at 30 Hz gives 2 ticks (15 fps for the 20 the game asks; never faster than asked). Unit test tests/t_pace.c
+// 15 fps. Rounded up, interval 3 at 30 Hz gives 2 ticks (15 fps for the 20 the game asks; never faster than asked): the link does not tick at 30
+// Hz for such a frame (nvn_link30_step below, plan item 324). Unit test tests/t_pace.c
 static inline unsigned nvn_link_step(unsigned itv, unsigned hz, unsigned link_hz) {
     if (!itv) itv = 1;
     if (!hz) hz = 60;
@@ -30,6 +31,28 @@ static inline unsigned nvn_link_step(unsigned itv, unsigned hz, unsigned link_hz
 #else
     return itv * (link_hz >= 120 && hz < 120 ? 2 : 1);
 #endif
+}
+
+// The power-saving link (plan item 324): with the frame rate target at 30 the display link ticks at 30 Hz only while a frame is a whole number of
+// its ticks. One that is not (Tears of the Kingdom's interval 3 at a present rate of 60 Hz, 20 fps) took 2 ticks by nvn_link_step's rounding: an
+// iPhone Air started hot showed 15.0 fps for 150 s, and a game that steps once per frame ran at three quarters of its speed. The link then ticks at
+// the present rate and the frame takes its interval in ticks, until every frame has fitted for NVN_LINK30_BACK_NS (the game's controller tries
+// interval 2 for a few frames and goes back to 3: the link's rate does not follow those). itv as the pacing set it, the hold applied here (a frame
+// under the target is never shorter than the hold's interval); 0: no frame waits for a tick (uncapped pacing, our own clock), 30 Hz whatever the
+// rates. 1: the link at 30 Hz. Unit test tests/t_pace.c
+typedef struct { uint64_t off_until; } nvn_link30;
+#define NVN_LINK30_BACK_NS 3000000000ull
+static inline int nvn_link30_step(nvn_link30 *s, unsigned itv, unsigned hz, uint64_t now) {
+    if (!itv) return 1;
+    if (!hz) hz = 60;
+    unsigned h = (hz + 29) / 30; if (itv < h) itv = h;   // (nvn_hold_interval at 30 fps, defined below)
+#ifndef DM_TEST_LINK30_ALWAYS   // negative control of t_pace and t_linkfifo only: 30 Hz whatever the interval, as before
+    if (itv * 30 % hz) { s->off_until = now + NVN_LINK30_BACK_NS; return 0; }
+    if (now < s->off_until) return 0;
+#else
+    (void)s; (void)now;
+#endif
+    return 1;
 }
 
 // Dropped and slow frames judged against each frame's own hold (plan item 156, after nxnative e7a84c7, MIT, written anew): a frame is meant to stay
@@ -107,11 +130,21 @@ static inline int nvn_fps_policy(int user_fps, int low_power, int thermal, int h
 // ProMotion (plan item 172, after Touchable's SS_DISPLAY_HZ=120, MIT): on a screen of 120 Hz or more a game whose step follows the measured frame time
 // presents at 120 while the screen runs at 120 (the front end asks it for 80-120 Hz and reports the rate it runs at: iOS lowers it in Low Power Mode),
 // at 60 otherwise; a game that steps per frame (manosaba) stays at 60, as it would run twice as fast. DM_PROMOTION=0 or DM_PRESENT_HZ (a fixed rate)
-// leave the rate alone. Returns the present rate for the screen's current rate now_hz, 0 to leave it as it is
-static inline int nvn_promotion_hz(int realtime_step, const char *present_hz, const char *promotion, int display_hz, int now_hz) {
+// leave the rate alone. Returns the present rate for the screen's current rate now_hz, 0 to leave it as it is.
+// held (plan item 324): the player's frame rate target is below 60 (DM_FPS=30, the iOS setting, Low Power Mode or 135's thermal hold). The screen
+// then runs at 30 by our own request, which says nothing of the rate it could run at, and the front end used to report nothing: the present rate
+// stayed what it was, 120 where the hold began while the game ran and 60 where the game started under it. At 60 the game's own interval 3 is 20
+// fps and paces the frames (15 fps on the 30 Hz link); at 120 it is 40 fps, under the hold's 4, and frames of 35 ms show at 27 fps. 120 while
+// held, as where the hold begins later: a frame takes the hold's interval either way
+static inline int nvn_promotion_hz(int realtime_step, const char *present_hz, const char *promotion, int display_hz, int now_hz, int held) {
     if (present_hz || (promotion && !strcmp(promotion, "0")) || display_hz < 120) return 0;
 #ifndef DM_TEST_PROMOTION_ANY_STEP   // negative control of t_pace only: a game stepping per frame at 120 too
     if (!realtime_step) return 0;
+#endif
+#ifndef DM_TEST_PROMOTION_HELD_BY_SCREEN   // negative control of t_pace only: the screen's rate while held too
+    if (held) return 120;
+#else
+    (void)held;
 #endif
     return now_hz >= 110 ? 120 : 60;
 }

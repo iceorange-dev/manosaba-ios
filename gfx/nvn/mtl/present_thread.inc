@@ -91,6 +91,8 @@ static CAFrameRateRange link_range(int mode) {
     return mode == 3 ? CAFrameRateRangeMake(30, 30, 30) : mode == 2 ? CAFrameRateRangeMake(60, 120, 120) : CAFrameRateRangeMake(hz, hz, hz);
 }
 static int g_link_mode = 1;   // Current mode of the display link object: 1 / 2 same as g_dm_present_link, 3 = power-saving mode 30 Hz
+static _Atomic int g_link_itv;   // the present interval a frame waiting for ticks is paced with (mtl_link_set_interval; game interval mode: Tears of the Kingdom 2 or 3; display mode: 1); 0: none has waited (uncapped pacing)
+static nvn_link30 g_link30;   // the power-saving link only while a frame is a whole number of its ticks (nvn_pace.h nvn_link30_step, plan item 324)
 static int link_hz_of(int mode) { return mode == 3 ? 30 : mode == 2 ? 120 : atomic_load(&g_link_hz); }
 static int g_link_latency;   // the link's preferredFrameLatency: set where it is made, and on the present thread with its rate (link_latency_sync)
 static void link_latency_sync(CAMetalDisplayLink *link, int mode) {
@@ -122,8 +124,14 @@ static void link_sync(void) {   // Called every frame by the game's present thre
         MLOG("display link: rescue period over, back to pacing mode %d (frame %llu)", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
     int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
-    if (want && mtl_fps_target() == 30) want = 3;   // Power-saving mode: display link at 30 Hz
     int hz = atomic_load(&g_link_hz);
+    if (want && mtl_fps_target() == 30) {   // Power-saving mode: display link at 30 Hz, while a frame is a whole number of its ticks (plan item 324)
+        static int fits = 1; int itv = atomic_load(&g_link_itv), f = nvn_link30_step(&g_link30, (unsigned)itv, (unsigned)hz, now_ns());
+        if (f != fits) { fits = f;
+            if (f) MLOG("display link: every frame a whole number of 30 Hz ticks for %.0f s, the power-saving link again (frame %llu)", NVN_LINK30_BACK_NS / 1e9, (unsigned long long)atomic_load(&g_cur_frame));
+            else MLOG("display link: a frame of interval %d at %d Hz is not a whole number of 30 Hz ticks, the link at %d Hz while it is (frame %llu)", itv, hz, link_hz_of(want), (unsigned long long)atomic_load(&g_cur_frame)); }
+        if (f) want = 3;
+    }
     if (want == applied && (want != 1 || hz == applied_hz || !g_link)) return;
     if (want == applied) { g_link.preferredFrameRateRange = link_range(want); link_latency_sync(g_link, want); MLOG("display link rate %d → %d Hz (frame %llu)", applied_hz, hz, (unsigned long long)atomic_load(&g_cur_frame)); applied_hz = hz; return; }
     applied_hz = hz;
@@ -254,8 +262,7 @@ uint64_t mtl_udc_saved_bytes(void) { return g_udc_saved_bytes; }
 int mtl_has_window(void) { return front_metal_layer() != NULL; }
 int mtl_link_active(void) { return link_on(); }
 void mtl_link_pause(int on) { CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }   // For testing (DM_TEST_BG): imitates the system stopping the display-link callback in the background
-// Display-link ticks one frame takes at the game's present interval (game interval mode: Tears of the Kingdom presents at 2 or 3; display mode: 1)
-static _Atomic int g_link_itv = 1;
+// Display-link ticks one frame takes at the game's present interval (g_link_itv, above)
 void mtl_link_set_interval(int n) { atomic_store(&g_link_itv, n < 1 ? 1 : n > 4 ? 4 : n); }
 int mtl_link_wait_tick(uint64_t timeout_ns) { @autoreleasepool {
     if (!mtl_link_active()) return 0;
