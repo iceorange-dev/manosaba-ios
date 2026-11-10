@@ -337,15 +337,29 @@ From the ninth review (2026-10-27, [docs/sources.md](docs/sources.md)); the test
   (about 1 % fewer) and 5.28-5.36 against 5.14-5.32 ms of CPU, which overlap: the copies were under 0.2 ms of it on the M5. (The first version made a
   copy of fewer bytes no base for a reader of more: the title screen's copies then applied 31 log entries each instead of 5, 13 % more instructions a
   draw there.)
-- 280 manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start on the Mac (Metal: 105
-  colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's own memory
-  1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save: `work/run/mano/save_before_trial1`,
-  Load Game → the Auto page → A1 of 2026-10-27 22:12, then R, fast-forward; `work/scripts/mano_trial_dev.sh` runs it on the phone (the Air,
-  1920x1080: RSS 3240 MB and GPU 2949 MB at the peak). Left: the characters' pixels per unit lowered in the RomFS's `resources.assets` (PR #2's
-  `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250 at 75 instead of 100, the Switch's file has the same 50 entries; a 2930-row
-  target is drawn at most 1260 rows high on a phone), an asset change for the user to decide; the depth / stencil targets made memoryless, which
-  needs each pass's store decided at its begin (now at its end), as 264's Vulkan backend needs too. Heaps buy little: in the census the targets'
-  pools overlap in two pairs (9 MB).
+- 280 (the depth targets: batch 188) manosaba's trial peak, after batch 114 (below): about 3.3 GB of footprint for some 6 s at the first trial's start
+  on the Mac (Metal: 105 colour render targets 795 MB, 44 depth / stencil ones 574 MB, mostly 1372x2930 Depth32Float_Stencil8, 20 MB each; the guest's
+  own memory 1.3 GB), past an 8 GB iPad's 3071 MB without the increased memory limit (the signer: ios/README.md). The save:
+  `work/run/mano/save_before_trial1`, Load Game → the Auto page → A1 of 2026-10-27 22:12, then R, fast-forward; `work/scripts/mano_trial_dev.sh` runs
+  it on the phone (the Air, 1920x1080: RSS 3240 MB and GPU 2949 MB at the peak). Batch 188, the depth and stencil targets without memory. The census
+  (`DM_NVN_RT_CENSUS=1`, which now says what became of each: attached to a pass at all, loaded by one, bound as a texture) on the Mac from that save
+  through the trial's opening into the debate: every one of them, 21 targets of 281 MB at the sampled peak, is cleared at the start of every pass that
+  attaches it and none is ever bound as a texture, so what they held between passes was never read. They are now memoryless textures
+  (`DM_NVN_DS_MEMORYLESS=1`, the game's default in `games/manosaba/defaults.c`; `gfx/nvn/mtl/rtheap.inc` dsml_*): made so when a pass that clears one
+  is what first asks for it, never stored (`core/pass.h` nomem), kept out of the residency set (it refuses them) and of the write-back's records. One
+  a pass then attaches without clearing, or that anything but a pass asks for, is made again with memory, as is every other object of its storage at
+  its next pass, with a red line (its contents are undefined that once); after eight the rest of the run makes none. A look ahead (the pipeline
+  prediction, the empty-scissor precheck) only describes a depth target. (The first version made every depth-format target so whatever asked first:
+  the game's 1x1 depth texture, which it only binds, was given memory at its first binding with a red line.) The trial's opening on the Mac, three
+  runs each in turn: RSS at its sampled peak 2,458-2,656 MB with memory and 2,120-2,199 without, Metal's allocated bytes 1,892-2,450 and 1,632-1,743
+  MB; in the debate after it RSS 1,831-1,901 and 1,758-1,837 MB; the shots the same (0.00-0.03 % of pixels past 8, 0.00-0.06 % between two runs with
+  memory; looked at), no target given memory, and under Metal's API validation (the opening, and a new game for 75 s) no failure. The ledger's seven
+  red lines at the opening (`xv ... submit lookahead read/need`: a target left unstored after its trial of frames is read again when the scene
+  changes, one line a key, the key then off) are as before this batch (batch 186's host gives the same seven); shots every four frames across them are
+  the camera's motion apart from a run with the ledger off (looked at). Left: the peak on the phone (`work/scripts/mano_trial_dev.sh`); the
+  characters' pixels per unit lowered in the RomFS's `resources.assets` (PR #2's `patch_character_ppu.py` for the Steam build: 1500x3000 → 1125x2250
+  at 75 instead of 100, the Switch's file has the same 50 entries; a 2930-row target is drawn at most 1260 rows high on a phone), an asset change for
+  the user to decide. Heaps buy little: in the census the targets' pools overlap in two pairs (9 MB).
 - 281 native resolution: done for manosaba in batch 109 and for Tears of the Kingdom up to 1920x1080 in batch 121 (below). Left: Tears of the
   Kingdom above 1080 (the heap overlay of `games/totk/heapdef.py`, which on iOS also needs a larger application pool than `ios_pool_add_mb` 0 and a
   heap region above `guest_heap_mb` 2176 inside the 6144 MB reservation: none of it tried on a device), and for other games the backend route:
@@ -2141,3 +2155,13 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two
   shots (looked at), 0.2-0.8 tile reads and no copy a frame, instructions a draw 26,166-36,582 (27,291-39,276 in batch 186); manosaba none,
   its frames the same.
+- [x] batch 188 · 280, depth and stencil targets without memory for manosaba. `gfx/nvn/mtl/rtheap.inc`: dsml_wanted / dsml_drop, `tex_mtl_x` (what
+  asks: a pass that clears, a pass that loads, anything else) with `tex_mtl` as before for every other caller, `tex_peek`; `mtl/renderpass.inc`
+  dsml_attach before a depth target is attached, nomem on its store records; `core/pass.c` sd_decide never stores one; `mtl/writeback.inc` keeps them
+  out of the write-back's records; `mtl/lookahead.inc` and rt_dims describe a depth target instead of making it; `games/manosaba/defaults.c`. The
+  census's depth lines (`mtl/rtheap.inc` rtc_flags). Tests: `t_dsml` (new, 48, also under Metal's validation; `-DDM_TEST_DSML_NO_PROMOTE` 5 fail,
+  `-DDM_TEST_DSML_ANY_FIRST_USE` 2, `-DDM_TEST_DSML_PEEK_MAKES` 2), `t_core_pass` +2 (34; `-DDM_TEST_NOMEM_STORED` 2), `host/tests` `t_mano_defaults`
+  (new, 2; `-DDM_TEST_MANO_DS_MEMORY` 1). gfx 203 / 203 on Metal 4 and Metal 3, host 219 / 219, sanitizer, texture, audit and tool tests, both IPAs;
+  Android: built, the phone not connected. Smoke: Tears of the Kingdom (the switch unset there: as before) its two red lines, s800 the same, s1300 and
+  s1800 other moments of the same two shots (looked at), 0.2-0.9 tile reads and no copy a frame, instructions a draw 26,238-35,832; manosaba none, its
+  frames the same.

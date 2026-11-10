@@ -205,6 +205,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
         } else if (b->kind == NVN_RB_TEX) {
             int tid = reg < 128 ? h_tid(S.tex[nvn_stage][reg]) : 0;
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
+            if (__builtin_expect(g_rtc_on > 0, 0) && t && pf_is_depth_stencil(t.pixelFormat)) rtc_flags(g_treg[tid].t.serial, RTC_TEX);   // (census, plan item 280)
             if (__builtin_expect(widen_get()->k != 1 || widen_get()->ky != 1, 0) && t && tid > 0 && tid < g_ntreg) {   // the widening (320d-320g)
                 // This texture's storage ratio at its view's level, kept with the registration while this texture is bound and no storage changed
                 // (320g: no Metal call a binding); widened when over 1; its flags and its scale come from it
@@ -259,6 +260,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             int tid = reg < 32 ? h_tid(S.img[nvn_stage][reg]) : 0;
             if (b->rw && tid && tid < g_ntreg) tex_gpu_write(&g_treg[tid].t);   // an image store writes the texture
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
+            if (__builtin_expect(g_rtc_on > 0, 0) && t && pf_is_depth_stencil(t.pixelFormat)) rtc_flags(g_treg[tid].t.serial, RTC_TEX);   // (census, plan item 280)
             if (passdump()) PD("W %llu st%d reg%d tid=%d %s ser=%llu", g_stat_pass, nvn_stage, reg, tid, t ? "real" : "dummy", t && tid < g_ntreg ? g_treg[tid].t.serial : 0ull);
             if (t && !(t.usage & MTLTextureUsageShaderWrite)) { RED_ONCE(32, "texture bound to an image slot lacks the shader-write usage (texture ID %d)", tid); t = nil; }
             if (!t) { t = dummy_img(b->dtt, b->dpf); trid = g_dummy_img_rid[b->dtt & 7][b->dpf & 3]; }   // Unbound: D3D semantics discard the write - write into a dedicated dummy texture so the set that reads 0 is not polluted
@@ -267,6 +269,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
         } else if (b->kind == NVN_RB_TBUF) {   // Typed buffer: the buffer texture (target BUFFER) in texture slot r
             int tid = reg < 128 ? h_tid(S.tex[nvn_stage][reg]) : 0;
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
+            if (__builtin_expect(g_rtc_on > 0, 0) && t && pf_is_depth_stencil(t.pixelFormat)) rtc_flags(g_treg[tid].t.serial, RTC_TEX);   // (census, plan item 280)
             if (t && t.textureType != MTLTextureTypeTextureBuffer) { RED_ONCE(51, "texture bound to a typed buffer slot is not a buffer texture (texture ID %d type %lu)", tid, (unsigned long)t.textureType); t = nil; }
             if (bl) PD("B %llu st%d tbuf reg%d tid=%d %s ser=%llu", g_stat_pass, nvn_stage, reg, tid, t ? "real" : "dummy", t && tid < g_ntreg ? g_treg[tid].t.serial : 0ull);
             if (!t) { t = dummy_tbuf(b->dpf); trid = g_dummy_tbuf_rid[b->dpf & 3]; }

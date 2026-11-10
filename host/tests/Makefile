@@ -93,6 +93,8 @@ run: \
 	$(B)/t_totk_defaults \
 	$(B)/t_totk_defaults_noxlat \
 	$(B)/t_totk_defaults_tbdr \
+	$(B)/t_mano_defaults \
+	$(B)/t_mano_defaults_mem \
 	$(B)/t_hid_applet_silent \
 	$(B)/t_hid_script \
 	$(B)/t_hid_script_nocircle \
@@ -456,6 +458,11 @@ run: \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_totk_defaults_tbdr.log)" -ne 1 ]; then \
 	   cat $(B)/t_totk_defaults_tbdr.log; echo "t_totk_defaults_tbdr: unexpected negative-control result ($$status)"; exit 1; \
 	 fi; echo "t_totk_defaults_tbdr: the TBDR rewrites left on, as expected"
+	env -u DM_NVN_DS_MEMORYLESS $(B)/t_mano_defaults
+	@status=0; env -u DM_NVN_DS_MEMORYLESS $(B)/t_mano_defaults_mem > $(B)/t_mano_defaults_mem.log 2>/dev/null || status=$$?; \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c '✗' $(B)/t_mano_defaults_mem.log)" -ne 1 ]; then \
+	   cat $(B)/t_mano_defaults_mem.log; echo "t_mano_defaults_mem: unexpected negative-control result ($$status)"; exit 1; \
+	 fi; echo "t_mano_defaults_mem: depth targets with memory by default, as expected"
 	$(B)/t_hid_script 2>/dev/null
 	@status=0; $(B)/t_hid_script_nocircle > $(B)/t_hid_script_nocircle.log 2>/dev/null || status=$$?; \
 	 if [ "$$status" -ne 1 ] || ! grep -q "FAIL LSL and LSU overlap" $(B)/t_hid_script_nocircle.log; then \
@@ -1108,6 +1115,10 @@ $(B)/t_totk_defaults_noxlat: t_totk_defaults.c ../../games/totk/defaults.c ../ga
 	clang -O1 -Wall -DDM_TEST_TOTK_NO_XLAT -I.. -o $@ t_totk_defaults.c
 $(B)/t_totk_defaults_tbdr: t_totk_defaults.c ../../games/totk/defaults.c ../game.h | $(B)
 	clang -O1 -Wall -DDM_TEST_TOTK_TBDR_ON -I.. -o $@ t_totk_defaults.c
+$(B)/t_mano_defaults: t_mano_defaults.c ../../games/manosaba/defaults.c | $(B)
+	clang -O1 -Wall -I.. -o $@ t_mano_defaults.c
+$(B)/t_mano_defaults_mem: t_mano_defaults.c ../../games/manosaba/defaults.c | $(B)
+	clang -O1 -Wall -DDM_TEST_MANO_DS_MEMORY -I.. -o $@ t_mano_defaults.c
 $(B)/t_haptics: t_haptics.c ../haptics_map.h | $(B)
 	clang -O1 -Wall -I.. -o $@ t_haptics.c
 $(B)/t_haptics_nogap: t_haptics.c ../haptics_map.h | $(B)

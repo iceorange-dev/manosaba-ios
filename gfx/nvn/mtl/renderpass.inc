@@ -164,9 +164,17 @@ static id<MTLTexture> blk_aux(const tex_t *t, const view_t *v, int has_v, blk_wb
 static void blk_decode(const blk_wb *w);
 static void blk_writeback(void) { int n = g_nblk_wb; g_nblk_wb = 0; for (int i = 0; i < n; i++) { if (g_blk_wb[i].dec) blk_decode(&g_blk_wb[i]); else blk_copy(g_blk_wb[i].aux, 1, g_blk_wb[i].dst, &g_blk_wb[i]); } }
 static void blk_drop(uint64_t serial) { if (!g_blkaux) return; NSNumber *k = @(serial); id<MTLTexture> a = g_blkaux[k]; if (a) { defer_obj_release(a); [g_blkaux removeObjectForKey:k]; } }
+// Before a pass attaches a depth target (plan item 280): one made without memory that the pass would load, a plane it has not being cleared at
+// the pass's start, is made again with memory first (tex_mtl_x, att 2)
+static void dsml_attach(const tex_t *t, int dplane, int splane) {
+    if (!nvn_fmt_ds(t->d.format)) return;
+    int has_s = t->d.format == NVN_FORMAT_STENCIL8 || t->d.format == NVN_FORMAT_DEPTH24_STENCIL8 || t->d.format == NVN_FORMAT_DEPTH32F_STENCIL8, has_d = t->d.format != NVN_FORMAT_STENCIL8;
+    if ((dplane && has_d && !R.clear_d) || (splane && has_s && !R.clear_s)) tex_mtl_x(t, 2);
+}
 static void attach(MTLRenderPassAttachmentDescriptor *a, const tex_t *t, const view_t *v, int has_v, int color) {
+    if (!color && dsml_on()) tex_mtl_x(t, 1);   // a depth target first asked for here, by a pass that clears it (rp_begin_ex asked dsml_attach first), may be made without memory: before tex_gpu_write, which would make it for the write-back's record
     tex_gpu_write(t);
-    id<MTLTexture> base = tex_mtl(t); a.texture = base;
+    id<MTLTexture> base = color ? tex_mtl(t) : tex_mtl_x(t, 1); a.texture = base;
     if (color && base && mtl_fmt_block(base.pixelFormat)) { if (blk_view_fmt(base, v, has_v) == MTLPixelFormatInvalid) rt_color_fmt(t, base, v, has_v, 1); a.texture = nil; return; }   // see mtl_fmt_block: rp_begin attaches the auxiliary texture
     if (has_v && v->set_levels) a.level = v->base_level;
     if (has_v && v->set_layers) { if (t->d.target == 2) a.depthPlane = v->min_layer; else a.slice = v->min_layer; }
@@ -237,13 +245,16 @@ static RENC rp_begin_ex(int clear_only) {
     }
     // clear_only: 0 attach all 1 only for clears 2 neither depth nor stencil attached 3 stencil only 4 depth only (3 / 4: the pass_ds_need lookahead proves the whole pass uses only that one)
     if (R.rt.depth && clear_only == 3) {   // Stencil only: the depth plane of the combined format does not enter the tile and is neither read nor written (Metal allows an empty depth attachment with the combined texture on the stencil attachment)
+        if (__builtin_expect(dsml_on(), 0)) dsml_attach(R.rt.depth, 0, 1);
         attach(pd.stencilAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
         MTLPixelFormat pf = pd.stencilAttachment.texture.pixelFormat;
         if (pf == MTLPixelFormatDepth32Float_Stencil8 || pf == MTLPixelFormatStencil8) {
             any = 1; pd.stencilAttachment.loadAction = R.clear_s ? MTLLoadActionClear : MTLLoadActionLoad;
             pd.stencilAttachment.clearStencil = R.cs; pd.stencilAttachment.storeAction = MTLStoreActionStore;
+            if (__builtin_expect(rtc_on(), 0)) rtc_flags(R.rt.depth->serial, RTC_ATT | (R.clear_s ? 0 : RTC_LOAD));   // (census, plan item 280)
         } else pd.stencilAttachment.texture = nil;   // No stencil plane: the stencil test always passes, attach nothing
     } else if (R.rt.depth && clear_only != 2 && !(clear_only == 1 && !R.clear_d && !R.clear_s)) {
+        if (__builtin_expect(dsml_on(), 0)) dsml_attach(R.rt.depth, 1, clear_only != 4);
         attach(pd.depthAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
 #ifndef DM_TEST_DEPTH_ANY_FORMAT   // negative control of t_mtlguard only: any format attached as depth, as before (Metal aborts)
         // A depth target whose format is not depth-renderable (super-mario-odyssey-ios 693bc6b, MIT: an R11G11B10F texture bound as the depth
@@ -256,6 +267,8 @@ static RENC rp_begin_ex(int clear_only) {
 #endif
         if (pd.depthAttachment.texture) {
             any = 1;
+            if (__builtin_expect(rtc_on(), 0)) { MTLPixelFormat f_ = pd.depthAttachment.texture.pixelFormat; int st_ = clear_only != 4 && (f_ == MTLPixelFormatDepth32Float_Stencil8 || f_ == MTLPixelFormatStencil8);
+                rtc_flags(R.rt.depth->serial, RTC_ATT | (!R.clear_d || (st_ && !R.clear_s) ? RTC_LOAD : 0)); }   // (census, plan item 280)
             pd.depthAttachment.loadAction = R.clear_d ? MTLLoadActionClear : MTLLoadActionLoad;
             MTLPixelFormat pf = pd.depthAttachment.texture.pixelFormat;
             pd.depthAttachment.clearDepth = pf == MTLPixelFormatDepth16Unorm ? nvn_depth16_clear_value(R.cd) : R.cd; pd.depthAttachment.storeAction = MTLStoreActionStore;
@@ -335,6 +348,7 @@ static RENC rp_begin_ex(int clear_only) {
                   pd.depthAttachment.storeAction = MTLStoreActionUnknown; }
         if (stt) { g_sd[g_nsd] = (sd_att){0}; g_sd[g_nsd].ser = R.rt.depth->serial; g_sd[g_nsd].bytes = sb; g_sd[g_nsd].lv = (uint32_t)pd.stencilAttachment.level; g_sd[g_nsd].sl = (uint32_t)pd.stencilAttachment.slice; g_sd[g_nsd].idx = -1; g_sd[g_nsd].depth = 2; g_sd[g_nsd].load = pd.stencilAttachment.loadAction == MTLLoadActionLoad; g_sd[g_nsd].wrote = R.clear_s != 0; g_nsd++;
                    pd.stencilAttachment.storeAction = MTLStoreActionUnknown; }
+        if (__builtin_expect(g_dsml_made != 0, 0) && (dt ? dt : stt).storageMode == MTLStorageModeMemoryless) for (int i = 0; i < g_nsd; i++) if (g_sd[i].depth) g_sd[i].nomem = 1;   // never stored (plan item 280)
     }
     for (int i = 0; i < g_nsd; i++) g_sd[i].pw = g_sd[i].wrote;   // a clear at load: newest in tile memory
     memset(R.clear_c, 0, sizeof R.clear_c); R.clear_d = R.clear_s = 0;
@@ -395,7 +409,10 @@ static void rt_dims(NSUInteger *tw, NSUInteger *th) {
     for (int i = 0; i < R.rt.n && i < 8 && !t0; i++) if (R.rt.color[i]) {
         t0 = tex_mtl(R.rt.color[i]); level = R.rt.has_cview[i] && R.rt.cview[i].set_levels ? R.rt.cview[i].base_level : 0;
     }
-    if (!t0 && R.rt.depth) { t0 = tex_mtl(R.rt.depth); level = R.rt.has_dview && R.rt.dview.set_levels ? R.rt.dview.base_level : 0; }
+    if (!t0 && R.rt.depth) { level = R.rt.has_dview && R.rt.dview.set_levels ? R.rt.dview.base_level : 0;
+        MTLPixelFormat pf_; NSUInteger sc_, w_ = 0, h_ = 0;   // (plan item 280: a depth target is only described here, its pass makes it)
+        if (dsml_on() && nvn_fmt_ds(R.rt.depth->d.format) && tex_peek(R.rt.depth, &pf_, &sc_, &w_, &h_)) { *tw = mip_extent(w_, level); *th = mip_extent(h_, level); return; }
+        t0 = tex_mtl(R.rt.depth); }
     *tw = t0 ? mip_extent(t0.width, level) : 1; *th = t0 ? mip_extent(t0.height, level) : 1;
 }
 // There are pending clears but no draw in the pass: open a pass once to land the clears (counted with the bytes they store: plan item 187)

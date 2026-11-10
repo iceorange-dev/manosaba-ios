@@ -7,6 +7,7 @@ static void sd_finish(void) {   // the store lookahead's decision (gfx/nvn/core/
     if (!g_nsd) return;
     uint8_t st[SD_MAX]; sd_decide(st);
     for (int i = 0; i < g_nsd; i++) { enc_r_store(g_enc, g_sd[i].depth, st[i] ? MTLStoreActionStore : MTLStoreActionDontCare, (NSUInteger)g_sd[i].idx);
+        if (__builtin_expect(g_rtc_on > 0, 0) && g_sd[i].depth && st[i]) rtc_flags(g_sd[i].ser, RTC_STORE);   // (census, plan item 280)
         if (g_sd[i].lost || g_stor_lost_sub == g_sub_serial) stor_note_store(g_sd[i].depth ? R.rt.depth : g_sd[i].idx >= 0 && g_sd[i].idx < 8 ? R.rt.color[g_sd[i].idx] : NULL, g_sd[i].lost && !st[i]); }
     g_nsd = 0;
 }
@@ -113,11 +114,14 @@ static void pso_predict_rest(void) {
         if (hq.op == OP_SET_RT) {
             const p_set_rt *r = aq; memset(cf, 0, sizeof cf); dfull = sfull = 0; samples = 1;
             for (int i = 0; i < r->n && i < 8; i++) { id<MTLTexture> t = r->color[i] && !rt_dup_slot(r, i) ? tex_mtl(r->color[i]) : nil; if (t) { cf[i] = (uint32_t)rt_color_fmt(r->color[i], t, &r->cview[i], r->has_cview[i], 0); samples = (uint32_t)t.sampleCount; } }
-            id<MTLTexture> dt = r->depth ? tex_mtl(r->depth) : nil;
+            // (with depth targets made without memory, plan item 280, only described: made here, ahead of its pass, it would be made for a use that is no pass's)
+            MTLPixelFormat dpf = MTLPixelFormatInvalid; NSUInteger dsc = 1, dw_ = 0, dh_ = 0; int dt = 0;
+            if (r->depth) { if (dsml_on() && nvn_fmt_ds(r->depth->d.format)) dt = tex_peek(r->depth, &dpf, &dsc, &dw_, &dh_);
+                            else { id<MTLTexture> dm = tex_mtl(r->depth); if (dm) { dpf = dm.pixelFormat; dsc = dm.sampleCount; dt = 1; } } }
 #ifndef DM_TEST_PREDICT_ANY_DEPTH   // negative control of t_mtlguard only: any format predicted as depth, as before (Metal aborts in the background compile)
-            if (dt && !pf_is_depth_stencil(dt.pixelFormat)) dt = nil;   // not attached at the replay either (rp_begin_ex, 64m)
+            if (dt && !pf_is_depth_stencil(dpf)) dt = 0;   // not attached at the replay either (rp_begin_ex, 64m)
 #endif
-            if (dt) { MTLPixelFormat f = dt.pixelFormat; samples = (uint32_t)dt.sampleCount;
+            if (dt) { MTLPixelFormat f = dpf; samples = (uint32_t)dsc;
                 dfull = f != MTLPixelFormatStencil8 ? (uint32_t)f : 0; sfull = (f == MTLPixelFormatStencil8 || f == MTLPixelFormatDepth32Float_Stencil8) ? (uint32_t)f : 0; }
             df = dfull; sf = sfull; continue;
         }

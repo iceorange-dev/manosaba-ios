@@ -150,6 +150,9 @@ void sd_decide(uint8_t store[SD_MAX]) {
 #else
             int dead = 0;
 #endif
+#ifndef DM_TEST_NOMEM_STORED   // negative control of t_core_pass only: a target without memory decided like any other
+            if (t->nomem) dead = 1;
+#endif
             store[i] = !dead; g_sd_n_all++;
             if (dead) { g_sd_n_dead++; g_sd_dead_bytes += t->bytes; g_bw_store -= t->bytes; g_udc_saved_bytes += t->bytes; }
         }
@@ -176,6 +179,9 @@ void sd_decide(uint8_t store[SD_MAX]) {
         if (xvcand && !xvdead) xv_set(t->ser, t->lv, t->sl, XV_PROBE, xtag);   // Trial period: write back as usual, only track the next touch
         int dead = t->state == 2 || udc_dead || xvdead;
         t->lost = (uint8_t)(t->state == 2 || xvdead);
+#ifndef DM_TEST_NOMEM_STORED
+        if (t->nomem) dead = 1;   // (plan item 280)
+#endif
         if (xvdead) { xv_set(t->ser, t->lv, t->sl, XV_INVALID, xtag); g_xv.dc++; }
         store[i] = !dead;
         g_sd_n_all++; if (dead) { g_sd_n_dead++; g_sd_dead_bytes += t->bytes; g_bw_store -= t->bytes; if (udc_dead) g_udc_saved_bytes += t->bytes; }

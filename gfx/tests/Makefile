@@ -149,6 +149,8 @@ t_zskip: t_zskip.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_zskip.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_xv: t_xv.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_xv.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_dsml: t_dsml.m $(CRASH) $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_dsml.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ub: t_ub.m $(CRASH) $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ub.m $(CRASH) $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_drvseg: t_drvseg.m $(CRASH) $(GFX) $(GFX_H)
@@ -513,6 +515,7 @@ run: \
 	t_writetexels \
 	t_flushtexels \
 	t_xv \
+	t_dsml \
 	t_zskip
 	./t_nvn
 	./t_dirty_slots
@@ -590,6 +593,8 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_defer_chain
 	./t_zskip
 	./t_xv
+	./t_dsml
+	MTL_DEBUG_LAYER=1 ./t_dsml
 	./t_ub
 	MTL_DEBUG_LAYER=1 ./t_usnap
 	./t_ussort

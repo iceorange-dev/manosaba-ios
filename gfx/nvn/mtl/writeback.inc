@@ -101,7 +101,9 @@ static void wb_snap(wb_ent *e) {   // g_wb_mu held
 }
 static void wb_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_unref((__bridge id)e->obj); CFRelease(e->obj); } if (e->stage) defer_obj_release(CFBridgingRelease(e->stage));
     if (e->snap) { pthread_mutex_lock(&g_wb_mu); g_wb_snap_total -= e->snap_n; pthread_mutex_unlock(&g_wb_mu); free(e->snap); } free(e); }
-static id<MTLTexture> tex_mtl(const tex_t *ct);
+static id<MTLTexture> tex_mtl(const tex_t *ct); static id<MTLTexture> tex_mtl_x(const tex_t *ct, int att);
+static uint64_t g_dsml_made;   // depth targets made without memory so far (mtl/rtheap.inc, plan item 280)
+static inline int nvn_fmt_ds(uint32_t f) { return f >= NVN_FORMAT_STENCIL8 && f <= NVN_FORMAT_DEPTH32F_STENCIL8; }   // a depth and / or stencil format
 // Plan item 286: 278's write-back after a fence wait waited for a copy on the GPU on the game's thread (0.6-1 ms each). The submission that renders such
 // a target now copies it to a buffer of its own at its end (wb_stage_encode, from mtl_sub_commit), so the write-back after the wait only puts those
 // bytes into the storage, when the copy is of the target's newest rendering; otherwise it copies on the GPU as before
@@ -112,6 +114,8 @@ static unsigned wb_layers(const tex_t *t); static void wb_level_size(const tex_t
 static void wb_note(const tex_t *t) {   // submit thread: the GPU writes t in this submission (every caller makes its MTLTexture right after)
     if (!t->mem || !t->size) return;
     id o = serial_get(t->serial); if (!o) { tex_mtl(t); o = serial_get(t->serial); } if (!o) return;
+    // a depth target made without memory holds nothing between passes: nothing to write back, and no copy may read it (plan item 280)
+    if (__builtin_expect(g_dsml_made != 0, 0) && nvn_fmt_ds(t->d.format) && ![o isKindOfClass:[NvPkg class]] && ((id<MTLTexture>)o).storageMode == MTLStorageModeMemoryless) return;
     uint64_t stamp = nvn_dirty_protect_stamp(t->mem, t->size), k = t->serial;   // CPU writes after this rendering show in nvn_dirty_since
     pthread_mutex_lock(&g_wb_mu);
     wb_ent *e = nvn_hm_get(&g_wb, &k);

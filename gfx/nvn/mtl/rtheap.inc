@@ -65,6 +65,21 @@ static id<MTLTexture> rt_heap_texture(const tex_t *t, MTLTextureDescriptor *d) {
     g_rth_placed++; g_rth_placed_b += need.size;
     return mt;
 }
+// DM_NVN_RT_CENSUS: what became of each depth / stencil target (plan item 280), by texture serial: attached to a pass at all, loaded by one
+// (attached with a plane not cleared at the pass's start), written back by one, bound as a texture by a draw or a dispatch. A table that only
+// fills (a diagnostic: 8192 serials, later ones not noted)
+enum { RTC_ATT = 1, RTC_LOAD = 2, RTC_STORE = 4, RTC_TEX = 8, RTC_N = 8192 };
+static int g_rtc_on = -1; static struct { uint64_t ser; uint8_t fl; } g_rtc_d[RTC_N]; static pthread_mutex_t g_rtc_mu = PTHREAD_MUTEX_INITIALIZER;
+static int rtc_on(void) { if (g_rtc_on < 0) g_rtc_on = getenv("DM_NVN_RT_CENSUS") && strcmp(getenv("DM_NVN_RT_CENSUS"), "0"); return g_rtc_on; }
+static int rtc_flags(uint64_t ser, int add) {   // the flags of ser, with add set first (0: only read)
+    int fl = 0; if (!ser) return 0;
+    pthread_mutex_lock(&g_rtc_mu);
+    for (uint32_t i = (uint32_t)(ser * 0x9E3779B97F4A7C15ull >> 51), n = 0; n < RTC_N; i = (i + 1) & (RTC_N - 1), n++) {
+        if (g_rtc_d[i].ser == ser) { fl = g_rtc_d[i].fl |= (uint8_t)add; break; }
+        if (!g_rtc_d[i].ser) { if (add) { g_rtc_d[i].ser = ser; fl = g_rtc_d[i].fl = (uint8_t)add; } break; } }
+    pthread_mutex_unlock(&g_rtc_mu);
+    return fl;
+}
 static void rt_census_note(id<MTLTexture> mt, int placed) {
     g_rtv_made++;
     if (placed) return;
@@ -81,7 +96,51 @@ static void rt_census_line(char *out, size_t n) {   // for the memory line: empt
     if (nh && o < n) snprintf(out + o, n - o, ", %d heap%s of %llu MB (placed %llu, %llu MB; not fitting %llu, %llu MB)", nh, nh == 1 ? "" : "s", heaps >> 20,
                               (unsigned long long)g_rth_placed, (unsigned long long)(g_rth_placed_b >> 20), (unsigned long long)g_rth_out, (unsigned long long)(g_rth_out_b >> 20));
 }
-static id<MTLTexture> tex_mtl(const tex_t *ct) {
+// ---------- Depth and stencil targets without memory (plan item 280) ----------
+// manosaba (Unity) clears every depth / stencil target at the start of each pass that attaches it and never binds one as a texture: in its first
+// trial's opening all 21 to 44 of them, 281-574 MB, held contents nothing read (the census, DM_NVN_RT_CENSUS). With DM_NVN_DS_MEMORYLESS=1 (the
+// game's default, games/manosaba/defaults.c) such a target's MTLTexture is made memoryless: tile memory for the pass, none outside it, never stored
+// (core/pass.h nomem). Only a target first asked for by a pass that clears it is made so. The moment that turns out wrong for one - a pass attaches it without clearing a plane it has, or anything but a pass
+// asks for it (a texture binding, a copy, a clear, a read: every tex_mtl call) - it is made again with memory, as is every other object of its
+// storage at its next use; its contents are undefined that once, a red line says so, and after DSML_MAX of them the rest of the run makes none.
+enum { DSML_MAX = 8 };
+static int g_dsml = -1; static uint64_t g_dsml_made, g_dsml_promoted; static uint64_t g_dsml_real[64]; static int g_dsml_nreal;
+static int pf_is_depth_stencil(MTLPixelFormat f);
+static int dsml_on(void) { if (g_dsml < 0) { const char *e = getenv("DM_NVN_DS_MEMORYLESS"); g_dsml = e && strcmp(e, "0"); } return g_dsml; }
+static uint64_t dsml_id(const tex_t *t) { return t->mem ? (uint64_t)(uintptr_t)t->mem : t->serial | 1ull << 63; }   // its storage, so that the other objects of it follow
+static int dsml_real(const tex_t *t) { uint64_t id = dsml_id(t); for (int i = 0; i < g_dsml_nreal; i++) if (g_dsml_real[i] == id) return 1; return 0; }
+static int dsml_wanted(const tex_t *t, MTLTextureDescriptor *d) {
+#if TARGET_OS_SIMULATOR
+    (void)t; (void)d; return 0;
+#else
+    return dsml_on() && nvn_fmt_ds(t->d.format) && pf_is_depth_stencil(d.pixelFormat) && (d.usage & MTLTextureUsageRenderTarget) && !(t->d.flags & NVN_TEXTURE_FLAGS_DISPLAY)
+        && d.textureType != MTLTextureType3D && !dsml_real(t);
+#endif
+}
+// have, the texture of t, when it has no memory and this use needs some (att 0: any use but a pass's; 2: a pass that loads it; 1: a pass that
+// clears it, which needs none unless another object of its storage has been given memory): dropped, 1, and the caller makes it again
+static int dsml_drop(const tex_t *t, id have, int att) {
+    if ([have isKindOfClass:[NvPkg class]]) return 0;
+    id<MTLTexture> m = have; if (m.storageMode != MTLStorageModeMemoryless) return 0;
+    int real = dsml_real(t);
+    if (att == 1 && !real) return 0;
+#ifdef DM_TEST_DSML_NO_PROMOTE   // negative control of t_dsml only: kept without memory whatever asks for it
+    return 0;
+#endif
+    if (!real) {
+        if (g_dsml_nreal < 64) g_dsml_real[g_dsml_nreal++] = dsml_id(t);
+        uint64_t n = ++g_dsml_promoted;
+        MLOG("[red] depth target %llu (%ux%u format %#x) was made without memory and is now %s: made again with memory, its contents undefined this once (%llu so far; plan item 280)",
+             (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, att == 2 ? "loaded by a pass" : "bound as a texture, copied, cleared or read", (unsigned long long)n);
+        if (n >= DSML_MAX && g_dsml > 0) { g_dsml = 0; MLOG("[red] %d depth targets needed memory after all: the rest of this run makes them with memory (DM_NVN_DS_MEMORYLESS)", DSML_MAX); }
+    }
+    serial_del(t->serial);
+    return 1;
+}
+void mtl_dsml_stats(uint64_t out[2]) { out[0] = g_dsml_made; out[1] = g_dsml_promoted; }
+static id<MTLTexture> tex_mtl_x(const tex_t *ct, int att);
+static id<MTLTexture> tex_mtl(const tex_t *ct) { return tex_mtl_x(ct, 0); }   // any use but a pass's attachment
+static id<MTLTexture> tex_mtl_x(const tex_t *ct, int att) {   // att: see dsml_drop
     tex_t *t = (tex_t *)ct;
     if (!t || !t->serial) return nil;
     int packaged = t->has_layout && t->mem;
@@ -138,7 +197,10 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
         serial_put(t->serial, pk);
         return pk->tex;
     }
-    if (have) return have;
+    if (have) {
+        if (__builtin_expect(g_dsml_made != 0, 0) && (att != 1 || g_dsml_nreal) && nvn_fmt_ds(t->d.format) && dsml_drop(t, have, att)) have = nil;   // made again with memory, below
+        else return have;
+    }
     if (t->d.target == 10) {   // Buffer texture (TARGET_BUFFER): create the texture-buffer view directly on the memory pool buffer (zero copy; the GPU reads the pool's current content at execution time, same as NVN semantics)
         uint32_t pf = 0; uint8_t swz[4]; int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
         void *mb; uint64_t mo;
@@ -164,7 +226,16 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
       if (cls) { size_t nw = t->mem ? MIN((size_t)t->size, (size_t)64 << 20) / 8 : 0, nz = 0; const uint64_t *w = (const uint64_t *)(const void *)t->mem; for (size_t i = 0; i < nw; i++) nz += w[i] != 0;
           MLOG("[texclass] ser=%llu %ux%ux%u lv%u fmt=%#x tgt=%d tflags=%#x pflags=%#x storage %#x non-zero %.4f", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.levels,
                t->d.format, t->d.target, t->d.flags, t->pool ? t->pool->flags : 0u, t->size, nw ? (double)nz / nw : 0.0); } }
-    stor_key sk; int share = stor_key_of(t, &sk);
+    // A depth / stencil target made without memory (plan item 280, dsml_*) when a pass that clears it is what first asks for it (att 1): never
+    // shared by storage (each object's costs nothing) nor resident. Asked for first by anything else (a 1x1 depth texture the game only binds), with
+    // memory as before
+#ifndef DM_TEST_DSML_ANY_FIRST_USE   // negative control of t_dsml only: without memory whatever asks first (the first version: manosaba's 1x1 default depth texture, then given memory with a red line)
+    int scratch = att == 1 && dsml_wanted(t, d);
+#else
+    int scratch = dsml_wanted(t, d);
+#endif
+    if (scratch) { d.storageMode = MTLStorageModeMemoryless; d.usage = MTLTextureUsageRenderTarget; }
+    stor_key sk; int share = !scratch && stor_key_of(t, &sk);
     if (share) {   // another live (or lately left) object of this storage, layout and format: its texture
         pthread_mutex_lock(&g_smu); stor_ent *e = nvn_hm_get(&g_stor, &sk); id<MTLTexture> st = e ? (__bridge id<MTLTexture>)e->tex : nil; pthread_mutex_unlock(&g_smu);
         if (st && (st.usage & d.usage) == d.usage) {
@@ -176,7 +247,8 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
     id<MTLTexture> mt = rtv && rt_heap_on() ? rt_heap_texture(t, d) : nil; int placed = mt != nil;
     if (!mt) mt = [g_dev newTextureWithDescriptor:d];
     if (!mt) { RED_ONCE(2, "failed to create MTLTexture %ux%u format %#x target %d", t->d.width, t->d.height, t->d.format, t->d.target); return nil; }
-    if (!placed) res_add(mt);   // a placed texture is resident with its heap
+    if (!placed && !scratch) res_add(mt);   // a placed texture is resident with its heap; one without memory has none to be resident (a residency set refuses it)
+    if (scratch) { uint64_t n = ++g_dsml_made; if (n == 1) MLOG("depth and stencil targets are made without memory until a pass loads one or it is bound, copied or read (DM_NVN_DS_MEMORYLESS, plan item 280; the first: texture %llu, %ux%u format %#x)", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format); }
     if (rtv) rt_census_note(mt, placed);
     if (share) {
         pthread_mutex_lock(&g_smu);
@@ -188,6 +260,19 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
     }
     serial_put(t->serial, mt);
     return mt;
+}
+// The format, sample count and size t's texture has, or would be made with, without making it (plan item 280: a look ahead of the pass that will
+// first ask for a depth target must not decide how it is made); 0 when it cannot be described
+static int tex_peek(const tex_t *t, MTLPixelFormat *pf, NSUInteger *samples, NSUInteger *w, NSUInteger *h) {
+    if (!t || !t->serial) return 0;
+#ifdef DM_TEST_DSML_PEEK_MAKES   // negative control of t_dsml only: the look ahead makes the texture, as tex_mtl did there
+    tex_mtl(t);
+#endif
+    id o = serial_get(t->serial); id<MTLTexture> m = [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->tex : o;
+    if (m) { *pf = m.pixelFormat; *samples = m.sampleCount; *w = m.width; *h = m.height; return 1; }
+    MTLTextureDescriptor *d = tex_desc((tex_t *)t, 0); if (!d) return 0;
+    tex_widen((tex_t *)t, d);
+    *pf = d.pixelFormat; *samples = d.sampleCount; *w = d.width; *h = d.height; return 1;
 }
 // Memory readout line (always on, low frequency, capped): resident memory, GPU allocated, deferred release queue, residency set object count, registered memory pool count / peak / tracking table capacity, cumulative texture re-uploads, game heap total / free / largest allocatable block (host dm_guest_heap_stat), and how far from the system memory limit (iOS only).
 // Purpose: to pin down "crashes with no log" -- the system gives no notice before killing a process for memory, and only readouts left beforehand can show which number kept climbing.
@@ -208,7 +293,7 @@ static void res_census(unsigned long long frame, unsigned long long rss_mb) {
 // DM_NVN_RT_CENSUS=1 (plan item 280): at the memory line, the render targets of recorded commands (the snapshots, core/live.c) by pool: how many,
 // their Metal bytes (each MTLTexture once: storage-shared ones are one), the union of their guest ranges against the sum, and how many overlap
 // another one; the eight pools with the most Metal bytes
-typedef struct { const pool_t *pool; int64_t off; uint32_t size; int depth; __unsafe_unretained id<MTLTexture> m; } rtc_ent;
+typedef struct { const pool_t *pool; int64_t off; uint32_t size; int depth; __unsafe_unretained id<MTLTexture> m; uint64_t ser; } rtc_ent;
 static int rtc_by_pool(const void *x, const void *y) { const rtc_ent *a = x, *b = y; return a->pool != b->pool ? (a->pool < b->pool ? -1 : 1) : (a->off > b->off) - (a->off < b->off); }
 static int rtc_by_obj(const void *x, const void *y) { const rtc_ent *a = x, *b = y; return ((uintptr_t)(__bridge void *)a->m > (uintptr_t)(__bridge void *)b->m) - ((uintptr_t)(__bridge void *)a->m < (uintptr_t)(__bridge void *)b->m); }
 static void rt_census(unsigned long long frame) { @autoreleasepool {
@@ -218,10 +303,11 @@ static void rt_census(unsigned long long frame) { @autoreleasepool {
     for (int i = 0; i < nt; i++) { const tex_t *t = &ts[i]; if (!t->pool || t->off < 0 || !t->size) continue;
         __unsafe_unretained id o = serial_get(t->serial); if (!o || ![o conformsToProtocol:@protocol(MTLTexture)]) continue;
         id<MTLTexture> m = o; if (!(m.usage & MTLTextureUsageRenderTarget)) continue;
-        e[n++] = (rtc_ent){t->pool, t->off, t->size, pf_is_depth_stencil(m.pixelFormat), m}; }
+        e[n++] = (rtc_ent){t->pool, t->off, t->size, pf_is_depth_stencil(m.pixelFormat), m, t->serial}; }
     qsort(e, (size_t)n, sizeof *e, rtc_by_pool);
     typedef struct { const pool_t *pool; int n, over, nd; uint64_t mtl, md, guest, uni; } rtc_pool;
     rtc_pool *pp = calloc((size_t)n + 1, sizeof *pp); int np = 0; uint64_t all = 0, alld = 0; int uniq = 0;
+    int dk[5] = {0}; uint64_t db[5] = {0};   // depth / stencil textures: never attached; attached, never loaded, not bound; loaded; bound as a texture; all
     for (int i = 0; i < n;) {
         int j = i; while (j < n && e[j].pool == e[i].pool) j++;
         rtc_pool *q = &pp[np++]; q->pool = e[i].pool;
@@ -232,10 +318,15 @@ static void rt_census(unsigned long long frame) { @autoreleasepool {
             else { q->uni += (uint64_t)(b - a); lo = a; hi = b; } }
         (void)lo;
         qsort(e + i, (size_t)(j - i), sizeof *e, rtc_by_obj);
-        for (int k = i; k < j; k++) if (k == i || e[k].m != e[k - 1].m) { uint64_t b = (uint64_t)e[k].m.allocatedSize; q->mtl += b; uniq++; if (e[k].depth) { q->md += b; q->nd++; } }
+        for (int k = i; k < j; k++) if (k == i || e[k].m != e[k - 1].m) { uint64_t b = (uint64_t)e[k].m.allocatedSize; q->mtl += b; uniq++; if (e[k].depth) { q->md += b; q->nd++;
+            int fl = 0; for (int x = k; x < j && e[x].m == e[k].m; x++) fl |= rtc_flags(e[x].ser, 0);   // every object on this texture
+            int c = !(fl & RTC_ATT) ? 0 : (fl & RTC_LOAD) ? 2 : (fl & RTC_TEX) ? 3 : 1;
+            dk[c]++; db[c] += b; dk[4]++; db[4] += b; } }
         all += q->mtl; alld += q->md; i = j;
     }
     MLOG("render-target census at frame %llu: %d targets of recorded commands, %d Metal textures %.0f MB (depth / stencil %.0f MB), in %d pools", frame, n, uniq, all / 1048576.0, alld / 1048576.0, np);
+    if (dk[4]) MLOG("  depth / stencil textures at frame %llu: %d of %.0f MB: %d never attached to a pass (%.0f MB); %d attached, cleared at every pass's start and never bound as a texture (%.0f MB); "
+                    "%d loaded by a pass (%.0f MB); %d never loaded but bound as a texture (%.0f MB)", frame, dk[4], db[4] / 1048576.0, dk[0], db[0] / 1048576.0, dk[1], db[1] / 1048576.0, dk[2], db[2] / 1048576.0, dk[3], db[3] / 1048576.0);
     for (int r = 0; r < 8 && r < np; r++) { int best = r; for (int k = r + 1; k < np; k++) if (pp[k].mtl > pp[best].mtl) best = k; rtc_pool t = pp[r]; pp[r] = pp[best]; pp[best] = t;
         const rtc_pool *q = &pp[r];
         MLOG("  pool %p flags %#x %.1f MB: %d targets (%d depth / stencil), Metal %.1f MB (depth / stencil %.1f), guest %.1f MB, their union %.1f MB, %d overlap one before",

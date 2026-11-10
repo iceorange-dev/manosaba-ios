@@ -121,7 +121,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/textures.inc` | Textures as Metal textures, and GPU textures sharing one storage |
 | `nvn/mtl/upload.inc` | Texture uploads: batches, staging blocks, BC on GPUs without it, texture descriptors |
 | `nvn/mtl/writeback.inc` | CPU-filled textures, and GPU results written back when the CPU invalidates a pool |
-| `nvn/mtl/rtheap.inc` | Render targets of virtual pools in a heap, the memory census, the finalize queue |
+| `nvn/mtl/rtheap.inc` | Render targets of virtual pools in a heap, the memory census, the finalize queue; depth and stencil targets made without memory until one is loaded or used outside a pass (`dsml_*`, `tex_mtl_x`) |
 | `nvn/mtl/live.inc` | Texture releases |
 | `nvn/mtl/passes.inc` | Render pass bookkeeping: zero-source skip, the pass dump (PD), attachment use |
 | `nvn/mtl/tbdr_xv.inc` | Load elision, same-target continuation, layered passes (their state and declarations) |
@@ -195,7 +195,7 @@ make -C gfx/tex/tests run
 
 The tests compile the production sources in directly and read no game data. `t_nvn` drives the interface layer the way a game does, from
 `nvnBootstrapLoader` to presentation; the `.m` tests compile the replay layer and check its pass optimizations (`t_reorder_chain`, `t_defer_chain`,
-`t_fuse_check`, `t_zskip`, `t_xv`, `t_view_levels`, …), presentation cropping, mip extents, sRGB views and GPU deswizzling. The `t_core_*.c`
+`t_fuse_check`, `t_zskip`, `t_xv`, `t_dsml`, `t_view_levels`, …), presentation cropping, mip extents, sRGB views and GPU deswizzling. The `t_core_*.c`
 tests check `nvn/core/` without a GPU: each links all its modules, the backend's hooks as weak defaults it overrides where it needs to
 (`tests/core_fakes.c`) and the shared checks (`tests/core_test.h`); `t_null_be.c` checks the null backend on its own.
 
@@ -250,6 +250,8 @@ All are environment variables. The Mac host fills `DM_NVN_SHMAP` and `DM_MSL_DIR
 | `DM_NVN_OCC_FORCE=<n>` | Every samples-passed (occlusion) result reported as n (does a missing object come back with n large?; a diagnostic) |
 | `DM_NVN_RTCLEAR=<serial>` | Passes on that colour texture start cleared to magenta (does the attachment reach the texture?) |
 | `DM_NVN_UNWRITTEN_DC=0` | Store attachments even when the pass did not write them |
+| `DM_NVN_DS_MEMORYLESS=1` | Depth and stencil targets as memoryless textures: tile memory during a pass, none outside it, never stored. One that a pass attaches without clearing, or that anything but a pass asks for (a texture binding, a copy, a read), is made again with memory, with a red line (its contents are undefined that once); after eight of them the rest of the run makes none. manosaba's default (`games/manosaba/defaults.c`: it clears every such target at each pass's start and binds none); `0` turns it off |
+| `DM_NVN_RT_CENSUS=1` | At each memory line: the render targets of recorded commands by pool (count, Metal bytes, guest ranges), and what became of the depth and stencil ones (never attached; attached and always cleared first; loaded by a pass; bound as a texture) |
 | `DM_NVN_FUSE_CHECK=1` | Same-frame check of pass merging |
 | `DM_TEST_NO_BC=1` | Take the "GPU without BC textures" decompression path on any machine |
 | `DM_UNCAPPED=0`, `DM_UNCAPPED_HZ=<30..120>` or `display` | For a game whose step follows the measured frame time (Tears of the Kingdom's rules product): by default the game does not wait for the display, our clock paces it at up to 120 fps and the display shows the newest finished frame; `=0` paces by the display at the game's interval as before |

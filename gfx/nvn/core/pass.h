@@ -96,8 +96,9 @@ extern uint64_t g_stat_s_only, g_stat_d_only;    // Of those, the number of pass
 // redundant; idx: color attachment index, -1 for depth; why: 1 a draw reads it as a texture 2 as an attachment, drawn before cleared 3 copy 4
 // texture clear 5 scanned to the end undecided 6 no start point / index unavailable 7 its storage is another live texture object's too (rt.h
 // tex_shared); pw: cleared, or written by a draw that samples none of the pass's attachments (fbx_prepare's split, plan item 165); lost (set by
-// sd_decide): not stored on the lookahead's or the ledger's word, its contents gone (one loaded and not written keeps them)
-typedef struct { uint64_t ser, bytes; uint32_t lv, sl; int idx; uint8_t depth, state, ridx, drawn, why, load, wrote, wwhy, pw, lost; const char *wkey; int wslot; } sd_att;
+// sd_decide): not stored on the lookahead's or the ledger's word, its contents gone (one loaded and not written keeps them); nomem: its
+// texture has no memory (a depth target made so, plan item 280): never stored, whatever the lookahead finds
+typedef struct { uint64_t ser, bytes; uint32_t lv, sl; int idx; uint8_t depth, state, ridx, drawn, why, load, wrote, wwhy, pw, lost, nomem; const char *wkey; int wslot; } sd_att;
 // A pass has at most 8 colour attachments, the depth and the stencil: 10 records (9 overflowed on 8 colours with a combined depth-stencil target;
 // seedds/nxnative 9508b93, MacNativeGames 6f4cbe3, MIT)
 #ifndef DM_TEST_SD_MAX

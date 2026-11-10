@@ -12,6 +12,8 @@
 // the same (-DDM_TEST_HOIST_BOUND_OK, the other): 1 fails. Store records for 9 attachments, the old size (-DDM_TEST_SD_MAX=9): 1 fails.
 // A texture whose storage another live object holds too (plan item 219): written back though the index found it cleared before it is read
 // (why 7), its clear-only pass not hoisted. Shared storage not looked for, as before (-DDM_TEST_SHARED_NOT_SEEN): 3 fail.
+// An attachment whose texture has no memory (plan item 280): never stored, with the rewrites on or off, whatever the lookahead finds; decided
+// like any other (-DDM_TEST_NOMEM_STORED): 2 fail.
 #include "../nvn/core/pass.h"
 #include "../nvn/core/state.h"
 #include "../nvn/core/store_index.h"
@@ -130,6 +132,12 @@ int main(void) {
         att(0, &A, 0, 0, 1, 1); att(1, &D, 1, -1, 1, 1); g_nsd = 2; g_shared = A.serial; uint64_t sh0 = g_sd_n_shared; sd_decide(store); g_shared = 0;
         check("A's storage another object's too: A written back (7), D's depth still not [-DDM_TEST_SHARED_NOT_SEEN]", 1, store[0] && g_sd[0].why == 7 && !store[1] && g_sd_n_shared == sh0 + 1);
         check("... what the lookahead left unstored is marked lost, what it stored is not", 1, !g_sd[0].lost && g_sd[1].lost);
+    }
+    {   // 280: D's texture has no memory (a depth target made so): its planes are not stored though a later draw loads the stencil
+        att(0, &A, 0, 0, 1, 1); att(1, &D, 1, -1, 0, 1); att(2, &D, 2, -1, 0, 1); g_sd[1].nomem = g_sd[2].nomem = 1; g_nsd = 3; uint64_t b0 = (g_bw_store = 6000); sd_decide(store);
+        check("a target without memory: its depth and stencil not stored, off the stores' bytes [-DDM_TEST_NOMEM_STORED]", 1, !store[1] && !store[2] && g_bw_store == b0 - 6000);
+        int t0 = g_tbdr; g_tbdr = 0; att(0, &A, 0, 0, 0, 1); att(1, &D, 1, -1, 0, 1); g_sd[1].nomem = 1; g_nsd = 2; uint8_t s2[SD_MAX] = {9, 9}; sd_decide(s2); g_tbdr = t0;
+        check("... with the rewrites off too, the colour stored as before [-DDM_TEST_NOMEM_STORED]", 1, s2[0] == 1 && s2[1] == 0);
     }
     att(0, &A, 0, 0, 1, 1); g_nsd = 1; g_tbdr_off = TBP_STORE;
     store[0] = 9; sd_decide(store); check("the store part off: stored", 1, store[0]);
