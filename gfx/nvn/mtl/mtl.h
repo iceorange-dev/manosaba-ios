@@ -164,3 +164,4 @@ void present_pipeline(MTLPixelFormat format); id<MTLTexture> present_src(id<MTLT
 int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]);
 void mtl_present_stretch(int on);                    // the wide picture (plan item 154)
 #include "enc.h"
+#include "reg.h"

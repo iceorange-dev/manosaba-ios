@@ -542,4 +542,4 @@ static void clear_ds_quad(const p_clear_ds *c) {
 
 
 // ================= Shaders / descriptor pool / pipelines / draws =================
-static pthread_mutex_t g_rmu = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_rmu = PTHREAD_MUTEX_INITIALIZER;

@@ -236,8 +236,11 @@ decide):
   uniform_rename 12, shaders 18, metalfx_scene 19, chunks 20, shot 20, pipeline 22, writeback 25, pools 28, u8_layers 28, upload 29, descriptors 32,
   present_thread 33, encoders 40, exec 43, present 43, commit 50, tile_merge 55, copies 57, rtheap 65, border_warm 70, encode_args 70, renderpass 81,
   lookahead 95, draw 147; the first ten are mostly state the draw's path reads (the texture registry, the pass's state), which is what their headers
-  have to carry. The Vulkan backend later (the user, 2026-10-24: no Android for now, a clean base first); from 2026-10-30 the Android version of
-  manosaba is under way (the user), item 301.
+  have to carry. The registries' header, `mtl/reg.h` (what texture and sampler IDs name, the shader and program records, the flags the units share),
+  and the sampler LOD bias in the shader a unit of its own, `mtl/lod_bias.m` (batch 192). With it the next ones still need: occlusion 1 name
+  (`g_fence`), store_index 2, live 10, metalfx_scene 10 (the compute wrappers, the retire queue's calls, `tex_by_id`, `tex_mtl`), shot 14 (the tables
+  its object census counts: that census belongs with them), uniform_rename 10, chunks 17, u8_layers 19. The Vulkan backend later (the user,
+  2026-10-24: no Android for now, a clean base first); from 2026-10-30 the Android version of manosaba is under way (the user), item 301.
 
 The iPhone's frame rate (the current focus; the power split above decides what helps):
 - 190 (batch 183: `DM_SCENE_AUTO=1`, off by default) a scene size driven by dropped frames, now that the scene size can change while the game
@@ -2211,3 +2214,13 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   connected. Smoke: Tears of the Kingdom's two red lines as before, its three frames the same (0.02-0.34 % of pixels past 8), 0.0-0.6 tile reads and
   no copy a frame, instructions a draw 26,351-38,034; manosaba none, its frames the same. Great Sky Island standing with this host: no copy and 304
   tile reads a frame, render targets 251 MB loaded and 241 stored, as in batch 186.
+- [x] batch 192 · 264, the registries' header and one more translation unit of the backend. `gfx/nvn/mtl/reg.h` (included by `mtl/mtl.h`): the texture
+  ID record and tables (`treg_t`, `g_treg`, `g_ntreg`), the sampler tables (`g_sreg`, `g_sreg_ok`, `g_sview`, `g_srid`, `g_nsreg`, `g_sreg_lb`),
+  `g_rmu`, the pool bases with `h_tid` / `h_sid`, the NvShader and NvProg records, `g_shmap_path`, `g_msl_dir`, `alpha_plain`, the pipeline-dirty
+  flags; none of them static any more where they are defined (`mtl/descriptors.inc`, `mtl/shaders.inc`, `mtl/pipeline.inc`, `mtl/renderpass.inc`,
+  `mtl/passes.inc`). `gfx/nvn/mtl/lod_bias.m` from `mtl/lod_bias.inc`: `lb_src`, `lb_rebind`, `lb_variant` declared in the header. By a script tried
+  on a copy first: the main unit's warnings as before (41 on Metal 4, 6 on Metal 3), the units' own none. No new test: `t_lodbias` (19), `t_border`,
+  `t_samp` as before. gfx 203 / 203 on Metal 4 and Metal 3, host 219 / 219, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the
+  phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots
+  (looked at), 0.1-0.6 tile reads and no copy a frame, instructions a draw 26,313-38,280 (26,351-38,034 in batch 191); manosaba none, its frames the
+  same.

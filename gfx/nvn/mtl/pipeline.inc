@@ -136,7 +136,7 @@ static id<MTLFunction> alpha_spec(id<MTLLibrary> lib, NSString *entry, uint32_t 
     [cv setConstantValue:&func type:MTLDataTypeUInt atIndex:160]; [cv setConstantValue:&ref type:MTLDataTypeFloat atIndex:161];
     return [lib newFunctionWithName:entry constantValues:cv error:e];
 }
-static id<MTLFunction> alpha_plain(id<MTLLibrary> lib, NSString *entry) {   // shader_load: the function as drawn without an alpha test
+id<MTLFunction> alpha_plain(id<MTLLibrary> lib, NSString *entry) {   // shader_load: the function as drawn without an alpha test
     NSError *e = nil; id<MTLFunction> fn = alpha_spec(lib, entry, NVN_ALPHA_FUNC_ALWAYS, 0, &e);
     if (!fn) MLOG("[red] fragment function %s: specialization without an alpha test failed: %s", entry.UTF8String, e.localizedDescription.UTF8String);
     return fn;

@@ -1,7 +1,7 @@
 // gfx/nvn/mtl/shaders.inc, part of nvn_mtl.m (included there in order, one translation unit): The shader mapping table, programs, pipeline lists
 // ---------- Shader mapping table: Switch shader key (control section + code area, hle_nvn.c shader_key) → PC metallib ----------
 static NSMutableDictionary<NSString *, NSString *> *g_shmap;
-static NSString *g_shmap_path, *g_msl_dir;
+NSString *g_shmap_path, *g_msl_dir;
 static NSMutableDictionary<NSString *, NSString *> *g_fmap;   // functional key → the first key of the map with it (the map's third column, plan item 169)
 // Libraries an app packs once (gfx/tools/shader_pack.py, plan item 311b): <library>\t<the library of the same bytes packed in its place>, the
 // directory's twins.tsv (none on the Mac, whose build directory has every file). A library is opened by msl_lib_path
@@ -54,22 +54,11 @@ static void shmap_load(void) {
     warm_start();
 }
 
-@interface NvShader : NSObject { @public id<MTLFunction> fn; nvn_refl rf; id<MTLArgumentEncoder> ae; NSUInteger arg_len; int stage; char key[24]; id<MTLBuffer> c1buf; uint64_t c1_gpu; size_t c1off;
-    id<MTLLibrary> vi_lib; NSString *vi_entry; uint32_t vi_mask; NSMutableDictionary<NSNumber *, id<MTLFunction>> *vi_fns;   // integer vertex input variant (dmsh_build.py vi_variant): locations that can be specialized
-    // The argument buffer encoded last time
-    id<MTLBuffer> ab_buf; uint64_t ab_gpu; size_t ab_off; uint64_t ab_pass; int ab_wfl;   // ab_wfl: what its uniform blocks held for the widening (320d), kept with the reused block;   // ab_pass: serial of the render pass that encoded this argument block - reused only within the same pass (the arena holding a block from another pass / another submission may already have been reclaimed and rewritten)
-    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn;   // bflib: readable-tile version <key>_bf (merge B step 2)
-    id<MTLLibrary> alib; NSMutableDictionary<NSNumber *, id<MTLFunction>> *afn;
-    NSMutableDictionary<NSString *, NvShader *> *bdv;
-    NSMutableDictionary<NSString *, NvShader *> *lbv; NSString *msl;   // lbv: variants carrying the bound samplers' LOD biases (lb_variant, plan item 318); msl: a variant's source
-    id<MTLFunction> ifn; int ifn_tried;
-    int kw; } @end   // kw: DM_NVN_KEY_WATCH (plan item 322): 0 not looked at yet, 1 watched and its first use logged, 2 not watched   // ifn: the integer-output variant <key>_i_b (fout_fn, plan item 162)   // bdv: variants that return a sampler's border colour Metal lacks (border_variant, plan item 161)   // alib: a fragment shader with the alpha test epilogue (dmsh_build.py alpha_test); afn: its specializations
 @implementation NvShader @end
 #include "../nvn_pso_skey.h"
 #include "../nvn_warm_list.h"
 #include "../nvn_aniso.h"
 #include "../nvn_retry.h"
-@interface NvProg : NSObject { @public NvShader *sh[6]; int sum_ok, sum_img, sum_imgw; uint32_t sum_cmask; } @end   // sum_*: udc_note_draw's per-program summary
 @implementation NvProg @end
 // What udc_note_draw needs of a program, worked out once (upstream d2r-mobile 44a6770 caches it per program): any image binding, any writable one,
 // the pixel shader's colour outputs. Its shaders are fixed once the program is built, so the summary never goes stale
@@ -131,7 +120,6 @@ static _Atomic int g_warm_running;   // Background warm-up has not finished yet 
 static uint64_t g_warm_shaders, g_warm_rps, g_warm_cps, g_warm_skip_fz, g_warm_old_rows, g_warm_folded;
 static uint64_t g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps;
 static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const uint8_t *lmap);
-static id<MTLFunction> alpha_plain(id<MTLLibrary> lib, NSString *entry);
 static FILE *g_pso_record; static int g_pso_record_checked;
 static FILE *pso_record_file(void) {
     if (g_pso_record_checked) return g_pso_record;

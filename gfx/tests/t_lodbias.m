@@ -1,4 +1,4 @@
-// Sampler LOD bias carried by the shader (gfx/nvn/mtl/lod_bias.inc lb_src / lb_variant / lb_rebind, descriptors.inc lb_emu; plan item 318) on the
+// Sampler LOD bias carried by the shader (gfx/nvn/mtl/lod_bias.m lb_src / lb_variant / lb_rebind, descriptors.inc lb_emu; plan item 318) on the
 // GPU, with DM_SAMP_LB_EMU=1 (as on a GPU that ignores the sampler's): a 4x4 texture with mips red 4x4, green 2x2, blue 1x1 and a nearest
 // sampler registered with LOD bias 1 through the production path. The sampler is made without its bias (a plain level(0) read gives red); each
 // form rewritten reads the mip the bias selects: level(0) → green, with bias 2 → blue (a kernel); in a fragment shader drawing a 4x4 target at

@@ -116,6 +116,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/usnap.inc` | Uniform snapshots' backend side: the pools, arena, worker threads and fences they use; dropping copies a GPU write reaches; what a range reads as at this point of the replay |
 | `nvn/mtl/encoders.inc` | The encoder layer: Metal 4 / Metal 3 encoder wrappers, blits, inline updates, events, counters, timestamps |
 | `nvn/mtl/enc.h` | What the backend's translation units share of it (included by `mtl/mtl.h`): the submission's command buffer and copy encoder (`g_cb`, `g_blit`, `blit`), command buffers outside the replay (`q_cb`), the render pass's end (`rp_end`), the copy calls |
+| `nvn/mtl/reg.h` | The registries for the backend's translation units (included by `mtl/mtl.h`): what texture and sampler IDs name (`treg_t`, `g_treg`, `g_sreg`, `h_tid`, `h_sid`, under `g_rmu`), the shader and program records (`NvShader`, `NvProg`), the pipeline-dirty flags, the LOD bias variant's calls |
 | `nvn/mtl/frame_timing.m` | The frame number, GPU time tags of command buffers, DM_NVN_GPUWATCH: a translation unit of its own |
 | `nvn/mtl/keepalive.m` | GPU keep-alive (MacNativeGames' TOTK_GPU_KEEPALIVE): a translation unit of its own |
 | `nvn/mtl/commit.inc` | The GPU memory budget, submission commits, fences, waits and drains |
@@ -132,7 +133,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/shaders.inc` | The shader mapping table, programs, pipeline lists |
 | `nvn/mtl/descriptors.inc` | Texture and sampler descriptor pools, argument arenas |
 | `nvn/mtl/pipeline.inc` | Draw state, vertex formats, blending, pipeline states, the pipeline prediction |
-| `nvn/mtl/lod_bias.inc` | Sampler LOD bias in the shader on a GPU that ignores the sampler's (plan item 318): sample and sample_compare calls rewritten, the variant built from the shader's MSL (an iOS app carries those of `games/<id>/lodbias_msl.txt`) |
+| `nvn/mtl/lod_bias.m` | Sampler LOD bias in the shader on a GPU that ignores the sampler's (plan item 318): sample and sample_compare calls rewritten, the variant built from the shader's MSL (an iOS app carries those of `games/<id>/lodbias_msl.txt`); a translation unit of its own |
 | `nvn/mtl/border_warm.inc` | Sampler border colours in the shader (plan item 161), the pipeline warm-up, depth-stencil states |
 | `nvn/mtl/args.inc` | Argument buffers: dummy resources, bindings, the driver segment fill |
 | `nvn/mtl/uniform_rename.inc` | Inline uniform updates' backend side: the argument blocks they make stale, writing them to memory |

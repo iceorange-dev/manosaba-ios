@@ -1,4 +1,4 @@
-# Shaders whose MSL source the iOS app carries for their sampler LOD bias variants (plan item 318; gfx/nvn/mtl/lod_bias.inc lb_variant): an iOS
+# Shaders whose MSL source the iOS app carries for their sampler LOD bias variants (plan item 318; gfx/nvn/mtl/lod_bias.m lb_variant): an iOS
 # app carries only the libraries, and where the GPU ignores a sampler's LOD bias (or the OS is before 26, which has none) these fragment shaders
 # sample through one of Tears of the Kingdom's biased samplers (-1: sharper textures) and get a variant whose sample calls carry it. Seen in the
 # Mac's runs with DM_SAMP_LB_EMU=1 (2026-11-10: the prologue and a walk on Great Sky Island); one not listed here is named in red once on such

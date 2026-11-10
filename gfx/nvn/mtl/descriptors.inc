@@ -2,15 +2,12 @@
 // ---------- Descriptor pool: texture ID / sampler ID → object ----------
 // At registration the whole texture object is snapshotted (NVN semantics: the descriptor has been written into the pool); view: the MTLTexture for that ID (a view or the base texture, held via CFBridgingRetain) and the serial-table / guest-write generations at the time it was obtained
 // fin: the texture this entry names was released after nvnTextureFinalize (fin_drain) while the ID stayed registered, at submission fin_sub
-typedef struct { tex_t t; int ok, fin; view_t v; int has_v; void *view; uint64_t view_id, view_rid, view_ser, view_dirty, fin_sub, live_gen; int view_kind;
-                 void *alt, *alt_of; uint64_t alt_rid; uint8_t alt_type;
-                 float wr_x, wr_y; uint64_t wr_rid, wr_gen; } treg_t;   // wr_*: the bound texture's storage ratio (the widening, plan item 320g), for the texture wr_rid while g_ser_gen is wr_gen   // alt: a view of another texture type for shaders that declare one (tex_fit), built from the view alt_of
 static void treg_alt_drop(treg_t *r) { if (r->alt) { defer_obj_unref((__bridge id)r->alt); CFRelease(r->alt); r->alt = r->alt_of = NULL; r->alt_rid = 0; } }
-static treg_t *g_treg; static int g_ntreg; static uint64_t g_treg_same;   // g_treg_same: identical registrations skipped
+treg_t *g_treg; int g_ntreg; static uint64_t g_treg_same;   // g_treg_same: identical registrations skipped
 // Lock-free copy of texture ID → serial (the replay hot path only needs the serial: store lookahead index, binding set of the clear-only hoist): texture IDs are 20 bits, fixed 1M entries (BSS, only touched pages are used),
 // release write at registration, relaxed atomic read on the reader side, without entering g_rmu (the former h_ser locked and unlocked on every lookup, thousands of times per frame in the camp)
 static _Atomic uint64_t g_tser[1 << 20];
-static samp_par *g_sreg; static uint8_t *g_sreg_ok; static void **g_sview; static uint64_t *g_srid; static int g_nsreg;   // g_sview: sampler ID → MTLSamplerState (retained)
+samp_par *g_sreg; uint8_t *g_sreg_ok; void **g_sview; uint64_t *g_srid; int g_nsreg;   // g_sview: sampler ID → MTLSamplerState (retained)
 void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) { @autoreleasepool {
     int id_ = tid; if (id_ < 0) return;
     pthread_mutex_lock(&g_rmu);
@@ -59,9 +56,9 @@ static int samp_border_custom(const samp_par *p) {
     return !((c[0] == 0 && c[1] == 0 && c[2] == 0 && (c[3] == 0 || c[3] == 1)) || (c[0] == 1 && c[1] == 1 && c[2] == 1 && c[3] == 1));
 }
 static int g_border_any;              // such a sampler has been registered (until then nothing below is checked)
-static uint8_t *g_sreg_lb;            // the sampler's LOD bias is carried by the shaders, not the sampler (lb_emu, lod_bias.inc; plan item 318)
-static int g_lb_any;                  // such a sampler has been registered
-static int g_lb_force = -2, g_lb_probe;   // DM_SAMP_LB_EMU (1 on, 0 off, -1 not set); the probe found the sampler's bias ignored (samp_caps_note)
+uint8_t *g_sreg_lb;            // the sampler's LOD bias is carried by the shaders, not the sampler (lb_emu, lod_bias.m; plan item 318)
+int g_lb_any;                  // such a sampler has been registered
+int g_lb_force = -2; static int g_lb_probe;   // DM_SAMP_LB_EMU (1 on, 0 off, -1 not set); the probe found the sampler's bias ignored (samp_caps_note)
 static int lb_emu(void);
 void mtl_reg_samp(int sid, const samp_par *sp) { @autoreleasepool {
     int id_ = sid; if (id_ < 0) return;
@@ -106,9 +103,7 @@ static int g_tpool_n; static uint64_t g_stat_tex_oob;
 void mtl_set_tex_pool_n(int n) { g_tpool_n = n; }
 // The texture / sampler pool a command buffer set last (plan item 64e): handle IDs resolve at its base in the tables (hle_nvn.c pool_ns; 0 for the
 // first pool, so one pool's IDs are the table's)
-static int g_tex_ns, g_samp_ns;
-static inline int h_tid(uint64_t h) { int t = (int)(h & 0xfffff); return t ? t + g_tex_ns : 0; }
-static inline int h_sid(uint64_t h) { int s = (int)(h >> 20); return s ? s + g_samp_ns : 0; }
+int g_tex_ns, g_samp_ns;
 // What a texture ID's cached view was checked against: kind 1 = its MTLTexture follows guest memory (packaged, or CPU-filled: tex_mtl checks it once per
 // submission), so the view holds within the submission; kind 0 = it does not (GPU-only, buffer and linear textures), so guest writes never touch it.
 // The view used to be dropped at every guest write anywhere (MacNativeGames treg_stamp, MIT; written anew here)
@@ -326,7 +321,7 @@ static void samp_caps_note(int bias, int red) {
     if (bias && !cap[0] && !lb_emu()) RED_ONCE(121, "samplers with an LOD bias: this GPU ignores it (sampler probe), they draw without it (DM_SAMP_LB_EMU=0)");
     if (red && !(cap[1] && cap[2])) RED_ONCE(122, "samplers with a min / max reduction: this GPU ignores it (sampler probe), they filter as plain linear");
 }
-// Whether samplers' LOD biases are carried by the shaders (plan item 318, lod_bias.inc): DM_SAMP_LB_EMU=1 forces it (the unit test; a GPU that applies
+// Whether samplers' LOD biases are carried by the shaders (plan item 318, lod_bias.m): DM_SAMP_LB_EMU=1 forces it (the unit test; a GPU that applies
 // them), 0 turns it off; otherwise where samp_probe found this GPU ignores them, or before OS 26 (no lodBias). Caller holds g_rmu
 static int lb_emu(void) {
     if (g_lb_force == -2) { const char *e = getenv("DM_SAMP_LB_EMU"); g_lb_force = e && *e ? atoi(e) != 0 : -1; }

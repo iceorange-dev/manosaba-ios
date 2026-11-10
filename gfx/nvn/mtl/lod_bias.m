@@ -1,4 +1,6 @@
-// gfx/nvn/mtl/lod_bias.inc, part of nvn_mtl.m (included there in order, one translation unit): sampler LOD bias in the shader (plan item 318)
+// gfx/nvn/mtl/lod_bias.m: sampler LOD bias in the shader (plan item 318), a translation unit of the Metal backend of its own (plan item 264; what
+// the others use of it and it of them: mtl/reg.h)
+#include "mtl.h"
 // ---------- Sampler LOD bias in the shader, on a GPU that ignores the sampler's (plan item 318; S2Arm's finding and rule, Apache-2.0, written anew) ----------
 // MTLSamplerDescriptor.lodBias came with macOS / iOS 26 and S2Arm read it ignored on an M3 (samp_probe.h); Tears of the Kingdom biases 861 samplers.
 // Where the probe found it ignored (or the OS has none; DM_SAMP_LB_EMU=1 forces it, 0 turns it off: lb_emu in descriptors.inc) such a sampler is
@@ -50,7 +52,7 @@ static int lb_is_array(const char *s, const char *nm) {
 }
 // The MSL with the .sample and .sample_compare calls through each named sampler member carrying its bias b[i] (frag: a fragment shader); *count
 // the calls rewritten, *left those through such a sampler left as they were (an unknown shape)
-static NSString *lb_src(NSString *src, NSArray<NSString *> *names, const float *bias, int frag, int *count, int *left) {
+NSString *lb_src(NSString *src, NSArray<NSString *> *names, const float *bias, int frag, int *count, int *left) {
     const char *s = src.UTF8String; size_t len = strlen(s); lb_buf o = {0}; size_t at = 0; *count = *left = 0;
     const char *pre = "spvDescriptorSet0.";
     for (size_t i = 0; i + 8 < len; i++) {
@@ -110,7 +112,7 @@ static NSString *lb_src(NSString *src, NSArray<NSString *> *names, const float *
 }
 // Texture / sampler handles h[0..n) were just bound to stage st (0 vertex, 1 fragment, 5 compute; g_lb_any set): has the stage a sampler bound
 // whose bias the shader carries (border_rebind's way: the new handles, and the whole stage only while one was bound)
-static void lb_rebind(int st, const uint64_t *h, int n) {
+void lb_rebind(int st, const uint64_t *h, int n) {
     int has = 0;
     pthread_mutex_lock(&g_rmu);
     for (int k = 0; k < n && !has; k++) { int sid = h_sid(h[k]); has = sid > 0 && sid < g_nsreg && g_sreg_lb[sid]; }
@@ -124,7 +126,7 @@ static void lb_rebind(int st, const uint64_t *h, int n) {
 }
 static uint64_t g_lb_variants, g_lb_fallback;
 // The shader of stage st (0 vertex, 1 fragment, 5 compute) for the samplers bound now: sh itself, or its variant carrying their LOD biases
-static NvShader *lb_variant(NvShader *sh, int st) {
+NvShader *lb_variant(NvShader *sh, int st) {
     float bias[16]; int aid[16], n = 0;
     pthread_mutex_lock(&g_rmu);
     for (int i = 0; i < sh->rf.nb && n < 16; i++) {
@@ -170,3 +172,4 @@ static NvShader *lb_variant(NvShader *sh, int st) {
     return v;
 }
 void mtl_lb_stats(uint64_t *variants, uint64_t *fallback) { *variants = g_lb_variants; *fallback = g_lb_fallback; }
+#pragma clang attribute pop
