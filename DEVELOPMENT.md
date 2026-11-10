@@ -252,8 +252,11 @@ The iPhone's frame rate (the current focus; the power split above decides what h
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
   less traffic, but 66.6 ms frames without the commits. What is left to merge on Great Sky Island with the rewrites off, after 325 and 326
   (batch 186, a pass dump at 1280x720): the G-buffer is still drawn in 8 passes, about 158 of the frame's 251 MB loaded; three end at
-  dispatches (218's two, and the first of a run of eleven that read no attachment), three have a seventh attachment the others lack. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read`
-  without `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
+  dispatches (218's two, and the first of a run of eleven that read no attachment), three have a seventh attachment the others lack. The
+  rewrites there are do not merge those: on the Mac the same scene loads 251 MB and stores 241 MB a frame with them off, 230 and 231 with
+  the store decisions and the same-target continuation alone (228's set; the translation's instructions the same), 221 and 227 with all
+  of them (instructions +15 %). 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read` without
+  `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
   three runs without it, thermal state serious 46 s after start against 44-58 s, and 27.44 fps under the hold against 27.40-27.65.
