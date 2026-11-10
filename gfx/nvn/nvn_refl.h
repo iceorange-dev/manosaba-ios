@@ -39,7 +39,7 @@ typedef struct {
     int8_t pos_attr; uint8_t pos_w1, may_discard, writes_smask, color_mask, color_known;   // color_known: the reflection lists the colors (color_mask can be trusted)
     // Merge B step 2 (readable-tile version <key>_bf, dmsh_fetch.py): fragment - nfc redirectable samples (the i-th: texture slot fc_reg, interpolated output fc_locn),
     // bitmap fc_mixed of texture slots with mixed use (these slots must not be redirected to read the tile), nfo outputs (each with color number fo_color); vertex - .xy of interpolated output locn is taken as-is from attribute uv_attr[locn] (-1 = no)
-    uint8_t nfc, fc_reg[32], fc_locn[32], nfo, fo_color[4]; uint64_t fc_mixed[2]; int8_t uv_attr[32];
+    uint8_t nfc, fc_reg[32], fc_locn[32], nfo, fo_color[8]; uint64_t fc_mixed[2]; int8_t uv_attr[32];   // (up to 8 outputs: plan item 326)
     // Vertex - .x / .y of interpolated output locn = fma(.x / .y of attribute uv_aff_attr[locn], scale, offset), where scale / offset reference a uniform: (slot << 8) | (vector << 2) | component
     int8_t uv_aff_attr[32]; uint16_t uv_aff[32][4];   // [sx, ox, sy, oy]
     // Fragment - bit i: fetch call i samples at in.m.xy * (1 / in.m.w) of its input ("proj"); vertex - bit L: output locn L is ((w + x) / 2, (w - y) / 2, -, w) of

@@ -10,7 +10,11 @@
   proven (plan item 325: it was not from chain 28614768c859 to ba6c7622e044, and every decal of Tears of the Kingdom was copied for). A tail
   that is not exactly the push is not seen through: another bound, the other field, a field at another offset, a position's w written after
   the push read it, a second change of x after the push; the fields' offsets are the Metal host's (gfx/nvn/mtl/args.inc).
-DM_TEST_FETCH_NO_PROJ=1 (projected samples left alone, as before 2026-10-22) fails 2; DM_TEST_FETCH_NO_TAIL=1 (the push not seen through) 3."""
+- a fragment shader's outputs (plan item 326): up to eight colours, and a depth output beside them, which the readable-tile version keeps
+  as it is (every colour gets its eight places, the depth member and its write untouched); nine colours, a sample mask output or a depth
+  output declared another way are refused.
+DM_TEST_FETCH_NO_PROJ=1 (projected samples left alone, as before 2026-10-22) fails 5 (the three outputs checks use one); DM_TEST_FETCH_NO_TAIL=1 (the push not seen through) 3;
+DM_TEST_FETCH_FOUR_OUTPUTS=1 (four colours at most and no depth output, as before) 3."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'gfx', 'tools'))
 import dmsh_fetch as f
@@ -185,4 +189,24 @@ args = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..',
 import re
 hx, hy = re.search(r'#define SUPPORT_WIDEN_PUSH (\d+)', args), re.search(r'#define SUPPORT_WIDEN_PUSH_Y (\d+)', args)
 check('the fields\' offsets are the Metal host\'s (SUPPORT_WIDEN_PUSH, SUPPORT_WIDEN_PUSH_Y)', hx and hy and f.WIDEN_PUSH == {'x': int(hx.group(1)), 'y': int(hy.group(1))} and f._support_offsets(VSP).get('_m9') == f.WIDEN_PUSH['x'] and f._support_offsets(VSP).get('_m10') == f.WIDEN_PUSH['y'])
+
+# The outputs (plan item 326): Tears of the Kingdom's c345c12c5f1a4f06 writes colours 0, 1, 3, 5 and 7, its ecbe4aa4417b3f80 three colours and a depth
+def outs_fs(members, writes=''):
+    src = FS.replace('    float4 m_62 [[color(1)]];\n', members).replace('BODY', PROJ).replace('    out.m_62 = _273;\n', writes)
+    return f.variant(src, BIND)
+five = ''.join(f'    float4 m_{60 + 2 * i} [[color({c})]];\n' for i, c in enumerate((0, 1, 3, 5, 7)))
+v, m = outs_fs(five, ''.join(f'    out.m_{60 + 2 * i} = _273;\n' for i in range(5)))
+check('five colour outputs (0, 1, 3, 5, 7): a readable-tile version, each output with its eight places [DM_TEST_FETCH_FOUR_OUTPUTS=1: none]',
+      bool(v) and [o['color'] for o in m['outputs']] == [0, 1, 3, 5, 7] and all(f'm_{60 + 2 * i}_at{k} [[color({k}), function_constant(OM_{i}_{k})]]' in v for i in range(5) for k in range(8))
+      and 'constant bool OM_4_7 [[function_constant(103)]]' in v)
+eight = ''.join(f'    float4 m_{60 + 2 * i} [[color({i})]];\n' for i in range(8))
+v, m = outs_fs(eight)
+check('eight colour outputs: made (the last output\'s last place is function constant 127)', bool(v) and len(m['outputs']) == 8 and 'constant bool OM_7_7 [[function_constant(127)]]' in v)
+dep = '    float4 m_62 [[color(1)]];\n    float4 m_64 [[color(3)]];\n    float gl_FragDepth [[depth(any)]];\n'
+v, m = outs_fs(dep, '    out.m_62 = _273;\n    out.m_64 = _273;\n    out.gl_FragDepth = _115;\n')
+check('two colours and a depth output: made, the depth member and its write as they were',
+      bool(v) and [o['color'] for o in m['outputs']] == [1, 3] and '    float gl_FragDepth [[depth(any)]];\n' in v and '    out.gl_FragDepth = _115;\n' in v and 'spv_o_m_62 = _273' in v)
+check('nine colour outputs: refused', outs_fs(eight + '    float4 m_90 [[color(8)]];\n')[0] is None)
+check('a sample mask output: refused', outs_fs('    float4 m_62 [[color(1)]];\n    uint gl_SampleMask [[sample_mask]];\n')[0] is None)
+check('a depth output declared another way (depth(less)): refused', outs_fs('    float4 m_62 [[color(1)]];\n    float gl_FragDepth [[depth(less)]];\n')[0] is None)
 print(f'== {total} checks, {fails} failed =='); sys.exit(fails != 0)

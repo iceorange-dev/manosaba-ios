@@ -1,6 +1,7 @@
 // Reflection json → nvn_refl (nvn_refl.m): the binding kinds dmsh_build.py writes. sbuf_ubo = a storage buffer whose address the shader reads from a
 // uniform buffer (uniform slot reg, byte off): kind, slot, offset and the no-reuse flag; a missing, odd or out-of-range offset and a missing slot are refused.
 // The projected fetch proof's two halves: a fetch call's "proj" and a vertex shader's "screen_locn" (-DDM_TEST_REFL_NO_SCREEN, leaving both unread, fails 2).
+// The readable-tile version's outputs: up to eight colours (plan item 326; -DDM_TEST_REFL_FOUR_OUTPUTS, four as before, fails 2).
 #import <Foundation/Foundation.h>
 #include <stdio.h>
 #include "../nvn/nvn_refl.h"
@@ -44,6 +45,17 @@ int main(void) { @autoreleasepool {
         EXPECT("screen_locn parses", 0, r);
         EXPECT("scr_locn: outputs 1 and 6", (1 << 1) | (1 << 6), o.scr_locn);
         EXPECT("no screen_locn: nothing proven", 0, (parse(@[], &o, err), o.scr_locn));
+        // the readable-tile version's outputs (plan item 326): up to eight, in order; nine refused [-DDM_TEST_REFL_FOUR_OUTPUTS: five refused]
+        NSMutableArray *outs = [NSMutableArray array];
+        for (NSNumber *c in @[@0, @1, @3, @5, @7]) [outs addObject:@{@"color": c, @"type": @"float4"}];
+        NSMutableDictionary *oj = [fj mutableCopy]; NSMutableDictionary *fe = [fj[@"fetch"] mutableCopy]; fe[@"outputs"] = outs; oj[@"fetch"] = fe;
+        r = nvn_refl_from_json(oj, &o, err, 256);
+        EXPECT("five fetch outputs parse: colours 0, 1, 3, 5 and 7", 1, !r && o.nfo == 5 && o.fo_color[0] == 0 && o.fo_color[1] == 1 && o.fo_color[2] == 3 && o.fo_color[3] == 5 && o.fo_color[4] == 7);
+        for (NSNumber *c in @[@2, @4, @6]) [outs addObject:@{@"color": c, @"type": @"float4"}];
+        r = nvn_refl_from_json(oj, &o, err, 256);
+        EXPECT("eight fetch outputs parse", 1, !r && o.nfo == 8 && o.fo_color[7] == 6);
+        [outs addObject:@{@"color": @0, @"type": @"float4"}];
+        EXPECT("nine fetch outputs are refused", 1, nvn_refl_from_json(oj, &o, err, 256) != 0);
     }
     printf("== %d checks, %d failed ==\n", g_n, g_fail);
     return g_fail != 0;

@@ -250,7 +250,9 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   of the first, and the gain is two of the frame's splits (about 18 MB loaded and 18 stored each at 1280x720, of 315 MB loaded and 304
   stored a frame). Not taken. What the dump did show is 325.
 - 219 the TBDR rewrites that merge or defer passes, with mid-submission commits (228 did the others): on the phone GPU 24.3 → 22.8 ms and 15 %
-  less traffic, but 66.6 ms frames without the commits. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read`
+  less traffic, but 66.6 ms frames without the commits. What is left to merge on Great Sky Island with the rewrites off, after 325 and 326
+  (batch 186, a pass dump at 1280x720): the G-buffer is still drawn in 8 passes, about 158 of the frame's 251 MB loaded; three end at
+  dispatches (218's two, and the first of a run of eleven that read no attachment), three have a seventh attachment the others lack. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read`
   without `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
@@ -557,14 +559,19 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   never pushes a draw that reads the tile (`mtl/draw.inc` wd_push_ok), and a vertex shader's screen_locn is made in the build's second stage
   (`dmsh_build.py` fetch_finish: taken from the shader cache it was the tool before's, so the first rebuild still had none). Chain
   fd1036a8b871: 2,388 vertex shaders with a screen position again. On the Mac (Great Sky Island standing, 1280x720, the chain before
-  against this one): 0 → 274 tile reads and 31 → 6 copies a frame, render targets loaded 508 → 315 MB and stored 480 → 304 MB a frame, GPU
-  p50 8.5 → 5.9 ms and p95 14.1 → 11.3; the two shots differ by where the clouds are (looked at). Left: the Air again (Great Sky Island
-  under the hold; 190 and 285 were judged with the regression).
-- 326 the three draws a frame on Great Sky Island that still get copies and a split (fragment shaders ecbe4aa4417b3f80, c345c12c5f1a4f06,
-  5f9b0657c39ac2cb; e3a11670702f91c2 and c2093bd96a8bb59c elsewhere): they sample colour targets of their pass at the projected screen
-  position as the decals do, but `dmsh_fetch.py` variant makes no readable-tile version of a fragment shader with more than four colour
-  outputs (theirs: colours 0, 1, 3, 5 and 7) or a depth output (ecbe4aa4: three colours and gl_FragDepth). Each costs a split of five or
-  six 1280x720 attachments and its copies.
+  against this one): 0 → 274 tile reads and 31 → 6 copies a frame, render targets loaded 508 → 315 MB and stored 480 → 304 MB a frame; the
+  two shots differ by where the clouds are (looked at). The GPU's time does not show it on the Mac: three runs each (batch 186) give p50
+  7.0-7.9 ms before and 6.7-7.4 after, within the spread from run to run (the first single runs' 8.5 → 5.9 was that spread). Left: the
+  Air again (Great Sky Island under the hold; 190 and 285 were judged with the regression).
+- 326 (batch 186; left: the phone) the three draws a frame on Great Sky Island that still got copies and a split (fragment shaders
+  ecbe4aa4417b3f80, c345c12c5f1a4f06, 5f9b0657c39ac2cb; e3a11670702f91c2 and c2093bd96a8bb59c elsewhere): they sample colour targets of
+  their pass at the projected screen position as the decals do, but `dmsh_fetch.py` variant made no readable-tile version of a fragment
+  shader with more than four colour outputs (theirs: colours 0, 1, 3, 5 and 7) or a depth output (ecbe4aa4: three colours and
+  gl_FragDepth): 356 fragment shaders in all. Now up to eight colours, and a depth output kept beside them (`gfx/nvn/nvn_refl.h` fo_color
+  8). Chain 5a7de6a8fef9 (the second stage only: 354 versions compiled, 10,057 fetch tables). On the Mac, Great Sky Island standing:
+  every such draw reads the tile (about 300 a frame, no copy), render targets loaded 315 → 251 MB and stored 304 → 241 MB a frame (508 and
+  480 with 325's regression); GPU p50 6.2-8.2 ms over three runs against 6.7-7.4, the same within the spread; the shots' ground, Link and
+  pillars differ as two runs of the same build do (0.2 % of pixels past 8 against 0.2-0.3 %). Left: what it gives the phone's GPU.
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
@@ -2070,3 +2077,18 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built (the new
   bundle), the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of
   the same two shots (looked at), instructions a draw as before (26,995-39,560); manosaba none, its frames the same.
+- [x] batch 186 · 326, readable-tile versions for fragment shaders with five to eight colour outputs or a depth output, and batch 185's
+  GPU time on the Mac measured properly. `gfx/tools/dmsh_fetch.py` variant: up to eight colour outputs (function constants to 127), a
+  `gl_FragDepth [[depth(any)]]` member kept after the colours with its write (the first version dropped the member: the new test caught
+  it); a sample mask output, nine colours or another depth declaration still refused. `gfx/nvn/nvn_refl.h` fo_color 8, `nvn_refl.m`.
+  `tools/tests/t_dmsh_fetch.py` +6 (30; `DM_TEST_FETCH_FOUR_OUTPUTS=1` 3 fail), `gfx/tests/t_refl.m` +3 (20;
+  `-DDM_TEST_REFL_FOUR_OUTPUTS` 2 fail), `t_scale_msl.py` +1 (8: 10,057 fetch tables, 344 with five or more outputs, the five shaders'
+  with their libraries; chain fd1036a8b871 fails 1). Chain 5a7de6a8fef9: 354 versions compiled, nothing translated again.
+  On the Mac, Great Sky Island standing, the commit before against this one, three runs each in turn: 6 → 0 copies a frame, render targets
+  loaded 315 → 251 MB and stored 304 → 241 MB a frame, GPU p50 6.7-7.4 against 6.2-8.2 ms (no difference to be seen in that spread);
+  three runs of batch 184's host the same way: 7.0-7.9 ms, so batch 185's "8.5 → 5.9" from one run each was the spread, corrected in
+  325. The pictures: the ground, Link and the pillars' bases differ between the two as between two runs of one build (looked at).
+  gfx 201 / 201 on Metal 4 and Metal 3, host 217 / 217, sanitizer, texture, audit and tool tests, both IPAs; Android: built (the new
+  bundle), the phone not connected. Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments
+  of the same two shots (looked at), 0.1-0.6 tile reads and no copy a frame as in batch 185, instructions a draw as before
+  (27,291-39,276); manosaba none, its frames the same.

@@ -20,6 +20,7 @@ import os, re
 
 NFB = 8
 _NO_PROJ = bool(os.environ.get('DM_TEST_FETCH_NO_PROJ'))   # negative control of tools/tests/t_dmsh_fetch.py only: projected samples left alone (before 2026-10-22)
+_FOUR_OUT = bool(os.environ.get('DM_TEST_FETCH_FOUR_OUTPUTS'))   # negative control of tools/tests/t_dmsh_fetch.py only: at most four colour outputs and no depth output, as before plan item 326
 _NO_TAIL = bool(os.environ.get('DM_TEST_FETCH_NO_TAIL'))   # negative control of tools/tests/t_dmsh_fetch.py and gfx/tests/t_fetch_cache.py only: the edge push not seen through (chains 28614768c859 to ba6c7622e044)
 WIDEN_PUSH = {'x': 2560, 'y': 2576}   # support_buffer.widen_push / widen_push_y (gfx/nvn/mtl/args.inc SUPPORT_WIDEN_PUSH, SUPPORT_WIDEN_PUSH_Y; t_dmsh_fetch.py compares)
 _SIZE = {'uint': (4, 4), 'int': (4, 4), 'float': (4, 4), 'uint4': (16, 16), 'int4': (16, 16), 'float4': (16, 16), 'char': (1, 1)}
@@ -177,9 +178,15 @@ def variant(msl, bindings, om_only_ok=False):
     om = re.search(r'struct main0_out\s*\{(.*?)\};', body, re.S)
     if not om: return None, 'no output struct'
     outs = [(t, n, int(c)) for t, n, c in re.findall(r'(\w+) (m_\d+) \[\[color\((\d+)\)\]\];', om.group(1))]
-    if not outs or len(outs) > 4 or re.sub(r'\w+ m_\d+ \[\[color\(\d+\)\]\];', '', om.group(1)).strip(): return None, 'the output struct is not plain color outputs (or more than 4)'
+    # Up to NFB colour outputs, and a depth output beside them, which stays as it is (plan item 326: at most four and colours only before; Tears
+    # of the Kingdom's G-buffer draws that read their own pixel write five to eight colours, some a depth: 356 of its fragment shaders, each
+    # draw copied for and its pass split)
+    rest = re.sub(r'\w+ m_\d+ \[\[color\(\d+\)\]\];', '', om.group(1))
+    if not _FOUR_OUT: rest = re.sub(r'float gl_FragDepth \[\[depth\(any\)\]\];', '', rest, count=1)
+    if not outs or len(outs) > (4 if _FOUR_OUT else NFB) or rest.strip(): return None, 'the output struct is not colour outputs with at most a depth output (or more than %d colours)' % (4 if _FOUR_OUT else NFB)
     members = ''.join(f'    {t} {n}_at{k} [[color({k}), function_constant(OM_{j}_{k})]];\n' for j, (t, n, c) in enumerate(outs) for k in range(NFB))
-    body = body[:om.start(1)] + '\n' + members + body[om.end(1):]
+    keep = ''.join(l + '\n' for l in om.group(1).split('\n') if 'gl_FragDepth' in l)   # (the depth output's member, after the colours)
+    body = body[:om.start(1)] + '\n' + members + keep + body[om.end(1):]
     consts = ''.join(f'constant int FX_{c["fc"]} [[function_constant({c["fc"]})]];\n' for c in calls) + \
              ''.join(f'constant bool FB_{k} [[function_constant({32 + k})]];\n' for k in range(NFB)) + \
              ''.join(f'constant bool OM_{j}_{k} [[function_constant({64 + 8 * j + k})]];\n' for j in range(len(outs)) for k in range(NFB))

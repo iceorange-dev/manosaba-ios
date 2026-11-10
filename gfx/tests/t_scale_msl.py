@@ -9,8 +9,11 @@ frag_coord; widen_push after render_scale_y at the offset the Metal host writes 
 edge push in x and in y (EmitterContext.EmitWidenPushAxis: the three values of widen_push and of widen_push_y read, the 0.994009 bound); the
 reflections give uniform bindings the slots their shader reads (the upscale's: 0, 1 and 4); and the edge push does not hide the game's
 position from the fetch proof (plan item 325, gfx/tools/dmsh_fetch.py screen_locn): the reflections of 2,388 vertex shaders carry a screen
-position, among them the four that draw Great Sky Island's decals. The chains before: b-ce89a37d8939 6 fail,
-b-8f8b45e7aaca 2, b-28614768c859 2, b-36a510fd7866 (no push in y) 1, b-ba6c7622e044 (no screen position behind the push) 1.
+position, among them the four that draw Great Sky Island's decals; and fragment shaders with five to eight colour outputs or a depth
+output have their readable-tile version (plan item 326: 10,057 fetch tables, 344 of them with five or more outputs, the five shaders of
+Great Sky Island's last copied draws theirs, each with its library). The chains before: b-ce89a37d8939 6 fail,
+b-8f8b45e7aaca 2, b-28614768c859 2, b-36a510fd7866 (no push in y) 1, b-ba6c7622e044 (no screen position behind the push) 2,
+b-fd1036a8b871 (four colour outputs at most) 1.
 Usage: t_scale_msl.py [<shader cache>/b-<chain version>]   (default: $DM_ROOT/build/cache/metal_shader_cache/b-<this chain>)"""
 import glob, json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.join(HERE, '..', '..')
@@ -79,5 +82,16 @@ check('widen_push and widen_push_y where the host writes them, and every vertex 
 decal = {'1986375bdaab24ad': [5], '20b374d4f2774345': [5], '6286c2c1758f4729': [1], 'aabb7cc61dc43bb1': [5]}
 print(f'vertex shaders whose reflection carries a screen position: {len(scr)}; Great Sky Island\'s decals {[(k, scr.get(k)) for k in decal]}')
 check('the edge push does not hide the position from the fetch proof: 2,388 vertex shaders with a screen position, the four decal ones theirs', len(scr) == 2388 and all(scr.get(k) == v for k, v in decal.items()))
+ft = {}; big = 0
+for f in files:
+    jf = f[:-6] + '.json'
+    if not os.path.exists(jf): continue
+    jr = json.load(open(jf))
+    if jr.get('stage') == 'ps' and jr.get('fetch'):
+        o = [x['color'] for x in jr['fetch'].get('outputs', [])]; ft[os.path.basename(f)[:16]] = o; big += len(o) >= 5
+last = {'ecbe4aa4417b3f80': [1, 3, 7], 'c345c12c5f1a4f06': [0, 1, 3, 5, 7], '5f9b0657c39ac2cb': [0, 1, 3, 5, 7], 'e3a11670702f91c2': [0, 1, 3, 5, 7], 'c2093bd96a8bb59c': [0, 1, 3, 5, 7]}
+libs = all(os.path.exists(os.path.join(d, k + '_bf.metallib')) for k in last)
+print(f'fragment shaders with a fetch table: {len(ft)}, with five or more outputs {big}; the last copied draws\' {[(k, ft.get(k)) for k in last]}, their libraries {libs}')
+check('readable-tile versions for five to eight colour outputs and a depth output: 10,057 fetch tables, 344 with five or more outputs, the five shaders theirs', len(ft) == 10057 and big == 344 and libs and all(ft.get(k) == v for k, v in last.items()))
 print(f'== {n} checks, {fail} failed ==')
 sys.exit(fail != 0)
