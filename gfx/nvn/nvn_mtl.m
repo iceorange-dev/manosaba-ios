@@ -102,7 +102,7 @@ static uint64_t g_res_noop;   // res_add / res_remove calls that changed nothing
 #else
 #define RES_POOL
 #endif
-static void res_add(id<MTLResource> r) { RES_POOL {
+void res_add(id<MTLResource> r) { RES_POOL {
     if (!r) return;
     pthread_mutex_lock(&g_res_mu);
     if ([g_res_objects containsObject:r]) { g_res_noop++; pthread_mutex_unlock(&g_res_mu); return; }   // a re-upload adds its texture again (nxnative e06a8ec)
@@ -117,7 +117,7 @@ static void res_add(id<MTLResource> r) { RES_POOL {
     g_res_dirty = 1;
     pthread_mutex_unlock(&g_res_mu);
 } }
-static void res_remove(id<MTLResource> r) { RES_POOL {
+void res_remove(id<MTLResource> r) { RES_POOL {
     if (!r) return;
     pthread_mutex_lock(&g_res_mu);
     if (![g_res_objects containsObject:r]) { g_res_noop++; pthread_mutex_unlock(&g_res_mu); return; }
@@ -250,6 +250,5 @@ static const char *cctx_snap(void);   // What is in this submission (printed int
 #include "mtl/copies.inc"
 #include "mtl/exec.inc"
 #include "mtl/shot.inc"
-#include "mtl/texdump.inc"
 #include "mtl/present.inc"
 #include "mtl/present_thread.inc"

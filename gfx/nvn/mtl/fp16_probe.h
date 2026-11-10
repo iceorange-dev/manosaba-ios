@@ -6,7 +6,7 @@
 // Plan item 315d: a second target gets 1.0007, -1.0007 and 1 + 2^-11 (half way between 1 and the next half, 1.000977): rounded to nearest even
 // they store 0x3c01, 0xbc01, 0x3c00, toward zero 0x3c00, 0xbc00, 0x3c00; out[8..11] the target's, out[12..15] half()'s.
 // f16_edge_count: how many halves of a target sit at ±65504 (where the M5 puts what overflowed), ±inf (where the A19 Pro does), or are NaN
-// (texdump.inc counts them in every half-float colour target it dumps)
+// (texdump.m counts them in every half-float colour target it dumps)
 #pragma once
 #import <Metal/Metal.h>
 #include <stdint.h>

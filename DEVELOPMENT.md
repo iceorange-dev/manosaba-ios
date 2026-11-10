@@ -216,21 +216,28 @@ The open plan items, shortened (their history: the archive under the same number
 
 The codebase (2026-10-24, the user: the Metal backend in one 10,000-line file is the first thing to fix, before Android; what stays is mine to
 decide):
-- 264 the replay core and the Metal backend apart: what the replay decides (command walk, state, uniform snapshots, CPU-filled textures,
-  counters, pass planning) in C behind an interface, the Metal calls behind it, so an Android Vulkan backend takes the same fixes. In steps,
-  each into `gfx/nvn/core/` with its header and a test that needs no GPU. The parts that use little Metal are done (batches 88-94: the store
-  index, uniform snapshots, the TBDR switches and validity ledger with the pass dump, pending writes and frame measurements, the live
-  texture, the submit call's capture, inline uniform updates). Next the mixed parts (the replay loop, lookahead, tile merge, draw) split into
-  what is decided and what is executed: the replay state (`S`, `R`) and the commands that only set it (batch 96), pass planning's own
-  decisions (batch 97: where the replay is, the ops run early, depth / stencil need, store decisions, target comparisons), the clear-only
-  hoist's plan and the deferral's decisions (batch 98), the tile merge's plan (batch 99), the execution interface (`nvn_backend.h`) with the
-  replay loop in `core/exec.c` (batch 100), SetRenderTargets, the clears and conditional rendering (batch 101), `mtl/draw.inc` split (batch
-  102), the backend's private header with the first part a translation unit of its own (batch 103), three more (batch 104); next the other
-  parts outside the draw's path as translation units of their own (the draw's path stays one for inlining): the rest use the encoder layer,
-  the texture registry or the draw's state, which want headers of their own first (next, the user 2026-10-24: worth it, an Android version of
-  manosaba is planned; design them with a Vulkan backend in mind). `hle_nvn.c` in parts by its sections (batch 105), `host/` in directories
-  (batch 106), the core tests' shared fakes (batch 107). The Vulkan backend later (the user, 2026-10-24: no Android for now, a clean base
-  first); from 2026-10-30 the Android version of manosaba is under way (the user), item 301.
+- 264 the replay core and the Metal backend apart: what the replay decides (command walk, state, uniform snapshots, CPU-filled textures, counters,
+  pass planning) in C behind an interface, the Metal calls behind it, so an Android Vulkan backend takes the same fixes. In steps, each into
+  `gfx/nvn/core/` with its header and a test that needs no GPU. The parts that use little Metal are done (batches 88-94: the store index, uniform
+  snapshots, the TBDR switches and validity ledger with the pass dump, pending writes and frame measurements, the live texture, the submit call's
+  capture, inline uniform updates). Next the mixed parts (the replay loop, lookahead, tile merge, draw) split into what is decided and what is
+  executed: the replay state (`S`, `R`) and the commands that only set it (batch 96), pass planning's own decisions (batch 97: where the replay is,
+  the ops run early, depth / stencil need, store decisions, target comparisons), the clear-only hoist's plan and the deferral's decisions (batch 98),
+  the tile merge's plan (batch 99), the execution interface (`nvn_backend.h`) with the replay loop in `core/exec.c` (batch 100), SetRenderTargets, the
+  clears and conditional rendering (batch 101), `mtl/draw.inc` split (batch 102), the backend's private header with the first part a translation unit
+  of its own (batch 103), three more (batch 104); next the other parts outside the draw's path as translation units of their own (the draw's path
+  stays one for inlining): the rest use the encoder layer, the texture registry or the draw's state, which want headers of their own first (next, the
+  user 2026-10-24: worth it, an Android version of manosaba is planned; design them with a Vulkan backend in mind). `hle_nvn.c` in parts by its
+  sections (batch 105), `host/` in directories (batch 106), the core tests' shared fakes (batch 107). The encoder layer's header for the backend's
+  units, `mtl/enc.h` (the submission's command buffer and copy encoder, the command buffers outside the replay, the render pass's end, the copy calls;
+  the render and compute wrappers stay with the draw's path), and the texture dumps with the presented times a unit of their own, `mtl/texdump.m`
+  (batch 189). The other parts by how many names each needs from the rest when compiled alone with the header (batch 189; the next to move are those
+  that need few and are off the draw's path): tbdr_xv 0, occlusion 1, usnap 1, store_index 4, args 6, passes 6, textures 8, live 10, lod_bias 12,
+  uniform_rename 12, shaders 18, metalfx_scene 19, chunks 20, shot 20, pipeline 22, writeback 25, pools 28, u8_layers 28, upload 29, descriptors 32,
+  present_thread 33, encoders 40, exec 43, present 43, commit 50, tile_merge 55, copies 57, rtheap 65, border_warm 70, encode_args 70, renderpass 81,
+  lookahead 95, draw 147; the first ten are mostly state the draw's path reads (the texture registry, the pass's state), which is what their headers
+  have to carry. The Vulkan backend later (the user, 2026-10-24: no Android for now, a clean base first); from 2026-10-30 the Android version of
+  manosaba is under way (the user), item 301.
 
 The iPhone's frame rate (the current focus; the power split above decides what helps):
 - 190 (batch 183: `DM_SCENE_AUTO=1`, off by default) a scene size driven by dropped frames, now that the scene size can change while the game
@@ -2165,3 +2172,14 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Android: built, the phone not connected. Smoke: Tears of the Kingdom (the switch unset there: as before) its two red lines, s800 the same, s1300 and
   s1800 other moments of the same two shots (looked at), 0.2-0.9 tile reads and no copy a frame, instructions a draw 26,238-35,832; manosaba none, its
   frames the same.
+- [x] batch 189 · 264, the encoder layer's header and one more translation unit of the backend. `gfx/nvn/mtl/enc.h` (included by `mtl/mtl.h`): `g_cb`,
+  `g_blit`, `blit`, `q_cb`, `rp_end` declared (no longer static where they are defined: `mtl/encoders.inc`, `mtl/renderpass.inc`), `m4_end` and the
+  copy calls (`enc_b_end`, `enc_b_copy_*`) inline in it. `gfx/nvn/mtl/texdump.m` from `mtl/texdump.inc` (DM_NVN_TEXDUMP, DM_NVN_TEXSNAP, the presented
+  times' ring, the display's rate); what it needed of the others is declared in `mtl/mtl.h`: `res_add` / `res_remove` (nvn_mtl.m), `serial_get` and
+  the NvPkg record (`mtl/textures.inc`), `mtl_finish_gpu` (`mtl/commit.inc`), `shot` (`mtl/shot.inc`), and of it `td_note`, `ts_note`, `ts_after`,
+  `g_pres`, `g_drawable_ns`. Done by a script tried on a copy first (each unit compiled alone on Metal 4 and Metal 3): the main unit's warnings as
+  before (41 and 6), texdump.m none. `tools/tests/t_ios_screen.py` reads the new file. No new test: the units' own tests as before. gfx 203 / 203 on
+  Metal 4 and Metal 3, host 219 / 219, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of
+  the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots (looked at), 0.2-0.7 tile reads and no
+  copy a frame, instructions a draw 26,241-38,046 (26,238-35,832 in batch 188: within the spread of its six windows); manosaba none, its frames the
+  same.

@@ -69,7 +69,7 @@ static void stor_add_holder_locked(id o, uint64_t ser) {
     if (e->nser == e->cap) { e->cap = e->cap ? e->cap * 2 : 4; e->ser = realloc(e->ser, (size_t)e->cap * sizeof *e->ser); if (!e->ser) MDIE("storage holder list"); }
     e->ser[e->nser++] = ser;
 }
-static __unsafe_unretained id serial_get(uint64_t k) { pthread_mutex_lock(&g_smu); __unsafe_unretained id o = hm_get_id(&g_by_serial, &k); pthread_mutex_unlock(&g_smu); return o; }
+__unsafe_unretained id serial_get(uint64_t k) { pthread_mutex_lock(&g_smu); __unsafe_unretained id o = hm_get_id(&g_by_serial, &k); pthread_mutex_unlock(&g_smu); return o; }
 static void serial_put(uint64_t k, id o) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { if (stor_drop_holder_locked(old, k)) defer_obj_unref(old); else defer_obj_release(old); }
     hm_put_id(&g_by_serial, &k, o); stor_add_holder_locked(o, k); ser_bump_locked(k); pthread_mutex_unlock(&g_smu); }
 static void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { if (stor_drop_holder_locked(old, k)) defer_obj_unref(old); else defer_obj_release(old); }
@@ -92,7 +92,6 @@ static void stor_drop_range(uintptr_t lo, uintptr_t hi) {   // mtl_pool_del: the
     pthread_mutex_unlock(&g_smu);
 }
 // Host record of a packaged texture: the current MTLTexture, the upload stamp, and the global write generation at the last check
-@interface NvPkg : NSObject { @public id<MTLTexture> tex, spare; uint64_t stamp, seen, hash, csub, chash, spare_fence; int tracked, hashed, dspan; } @end   // hash: full hash of the uploaded content under DM_NVN_DIRTYCHECK
 // csub: the submission that last checked it (tex_mtl); tracked: its storage was tracked at that check; hashed / chash: a small texture checked by its content (pkg_hashed);
 // dspan: the slot of the dirty-tracking range holding its storage (nvn_dirty_state_hint, -1 until found); spare: the texture before the last re-upload,
 // written by the next one once spare_fence (the last submission that could read it) has completed

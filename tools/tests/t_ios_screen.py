@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The screen the iOS app reads (plan item 302, iPhone Duo: two displays, the outer and the inner one; UIScreen.mainScreen does not say which
 the game's window is on): no code in ios/Sources or gfx/nvn reads UIScreen's main screen (comments left out); mtl_display_hz's iOS branch
-(gfx/nvn/mtl/texdump.inc) returns front_ios_screen_hz(), which ios/Sources/front_ios.m defines from the screen the front end notes on the main
+(gfx/nvn/mtl/texdump.m) returns front_ios_screen_hz(), which ios/Sources/front_ios.m defines from the screen the front end notes on the main
 thread, at the view's creation (the scene's screen) and on every layout of the black container (its window scene's screen); the frame rate hint
 asks the game view's window scene's screen for 120 Hz. The old lines put back (T_IOS_SCREEN_OLD=1, the broken variant): 3 fail."""
 import glob, os, re, sys
@@ -14,7 +14,7 @@ def code(text):   # without // comments (none of these files has // inside a str
     return '\n'.join(line.split('//', 1)[0] for line in text.split('\n'))
 src = {p: open(p, encoding='utf-8').read() for p in sorted(glob.glob(os.path.join(ROOT, 'ios', 'Sources', '*.m')) + glob.glob(os.path.join(ROOT, 'gfx', 'nvn', '**', '*.m'), recursive=True)
                                                             + glob.glob(os.path.join(ROOT, 'gfx', 'nvn', '**', '*.inc'), recursive=True))}
-FRONT, TEXDUMP = os.path.join(ROOT, 'ios', 'Sources', 'front_ios.m'), os.path.join(ROOT, 'gfx', 'nvn', 'mtl', 'texdump.inc')
+FRONT, TEXDUMP = os.path.join(ROOT, 'ios', 'Sources', 'front_ios.m'), os.path.join(ROOT, 'gfx', 'nvn', 'mtl', 'texdump.m')
 if os.environ.get('T_IOS_SCREEN_OLD'):   # the broken variant: the lines before plan item 302
     src[TEXDUMP] = src[TEXDUMP].replace('    return front_ios_screen_hz();',
         '    Class c = NSClassFromString(@"UIScreen"); id s = c ? [c valueForKey:@"mainScreen"] : nil;\n    return s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0;')

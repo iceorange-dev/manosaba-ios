@@ -130,6 +130,19 @@ static const pfv_pair g_pfv_srgb[] = {
     {MTLPixelFormatBC3_RGBA, MTLPixelFormatBC3_RGBA_sRGB},
     {MTLPixelFormatBC7_RGBAUnorm, MTLPixelFormatBC7_RGBAUnorm_sRGB},
 };
+// The residency set (nvn_mtl.m): a resource the GPU may use from now on, and one it no longer does
+void res_add(id<MTLResource> r); void res_remove(id<MTLResource> r);
+// Textures (mtl/textures.inc): the object of a texture serial (an MTLTexture, or the record of a packaged one), and that record
+id serial_get(uint64_t k);        // (not retained: the table holds it)
+@interface NvPkg : NSObject { @public id<MTLTexture> tex, spare; uint64_t stamp, seen, hash, csub, chash, spare_fence; int tracked, hashed, dspan; } @end   // hash: full hash of the uploaded content under DM_NVN_DIRTYCHECK
+void mtl_finish_gpu(void);          // the submissions committed so far completed (mtl/commit.inc)
+void shot(id<MTLTexture> src, const char *path, int screen, const int crop[4]);   // a texture written to a PNG (mtl/shot.inc)
+// Texture dumps and presented times (mtl/texdump.m)
+void td_note(RPD *pd, NSUInteger nc); void ts_note(RPD *pd, NSUInteger nc); void ts_after(void);   // a pass's colour targets noted for DM_NVN_TEXDUMP / DM_NVN_TEXSNAP; after a pass
+#define PRING 1024
+typedef struct { uint64_t n; double t; } pres_ent;
+extern pres_ent g_pres[PRING];      // present sequence number → presented time (seconds; -1: dropped)
+extern _Atomic uint64_t g_drawable_ns;   // wall clock spent waiting for a drawable (taken by mtl_drawable_ns_take)
 // Commits (mtl/encoders.inc): blocks run at the submission's commit
 extern NSMutableArray<dispatch_block_t> *g_commit_blocks;
 void lay_report(uint64_t f);                         // layered passes, every 300 frames (mtl/u8_layers.inc)
@@ -150,3 +163,4 @@ extern CAMetalLayer *g_present_layer_resident;
 void present_pipeline(MTLPixelFormat format); id<MTLTexture> present_src(id<MTLTexture> src); MTLViewport present_vp(double dw, double dh, double cw, double ch);
 int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]);
 void mtl_present_stretch(int on);                    // the wide picture (plan item 154)
+#include "enc.h"

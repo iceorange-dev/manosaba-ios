@@ -1,4 +1,8 @@
-// gfx/nvn/mtl/texdump.inc, part of nvn_mtl.m (included there in order, one translation unit): Texture dumps and snapshots (DM_NVN_TEXDUMP, DM_NVN_TEXSNAP), presented times
+// gfx/nvn/mtl/texdump.m: texture dumps and snapshots (DM_NVN_TEXDUMP, DM_NVN_TEXSNAP) and the presented times, a translation unit of the Metal
+// backend of its own (plan item 264; what the others use of it and it of them: mtl/mtl.h, mtl/enc.h)
+#include "mtl.h"
+#include "fp16_probe.h"
+#include "../../../host/front.h"
 // ---------- DM_NVN_TEXDUMP=frame number:path (%d in the path is replaced with "index*100+mip level"): save each color render target used by that frame as an image ----------
 // Diagnostic: before the first render pass of the next frame is opened, wait for the GPU to finish, then draw each one (the mip level used by that frame) by full-screen sampling into RGBA8 and save as PNG (float formats are clamped to [0,1])
 static long g_td_frame = -2; static const char *g_td_path; static NSMutableArray *g_td_list; static int g_td_done;
@@ -160,12 +164,10 @@ void ts_after(void) {
     g_ts_on = 0;
 }
 // Ring of actual presentation times: present sequence number -> presentedTime (seconds; -1 = dropped by the system, not presented)
-#define PRING 1024
-typedef struct { uint64_t n; double t; } pres_ent;
-static pres_ent g_pres[PRING];
+pres_ent g_pres[PRING];
 // Get the actual presentation time of the nth present (returns 0 if not ready, -1 if dropped)
 double mtl_presented_time(uint64_t n) { pres_ent e = g_pres[n % PRING]; return e.n == n ? e.t : 0; }
-static _Atomic uint64_t g_drawable_ns;   // Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
+_Atomic uint64_t g_drawable_ns;   // Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
 // Maximum refresh rate (Hz) of the screen when there is a window; returns 0 without a window. Mac uses CoreGraphics display modes (thread-safe C interface; the present configuration is read on the game thread)
 int mtl_display_hz(void) {
@@ -179,3 +181,4 @@ int mtl_display_hz(void) {
     return front_ios_screen_hz();
 #endif
 }
+#pragma clang attribute pop

@@ -115,6 +115,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/occlusion.inc` | Occlusion queries (samples passed) |
 | `nvn/mtl/usnap.inc` | Uniform snapshots' backend side: the pools, arena, worker threads and fences they use; dropping copies a GPU write reaches; what a range reads as at this point of the replay |
 | `nvn/mtl/encoders.inc` | The encoder layer: Metal 4 / Metal 3 encoder wrappers, blits, inline updates, events, counters, timestamps |
+| `nvn/mtl/enc.h` | What the backend's translation units share of it (included by `mtl/mtl.h`): the submission's command buffer and copy encoder (`g_cb`, `g_blit`, `blit`), command buffers outside the replay (`q_cb`), the render pass's end (`rp_end`), the copy calls |
 | `nvn/mtl/frame_timing.m` | The frame number, GPU time tags of command buffers, DM_NVN_GPUWATCH: a translation unit of its own |
 | `nvn/mtl/keepalive.m` | GPU keep-alive (MacNativeGames' TOTK_GPU_KEEPALIVE): a translation unit of its own |
 | `nvn/mtl/commit.inc` | The GPU memory budget, submission commits, fences, waits and drains |
@@ -145,7 +146,7 @@ Binding conventions used by the translation:
 | `nvn/mtl/copies.inc` | Copies between buffers and textures, texel reads and writes, texture clears |
 | `nvn/mtl/exec.inc` | A submission's context for the failure line; the power-saving mode; the execution interface's commands (`nvn_be_*`, `nvn/nvn_backend.h`) |
 | `nvn/mtl/shot.inc` | Present screenshots |
-| `nvn/mtl/texdump.inc` | Texture dumps and snapshots (DM_NVN_TEXDUMP, DM_NVN_TEXSNAP), presented times |
+| `nvn/mtl/texdump.m` | Texture dumps and snapshots (DM_NVN_TEXDUMP, DM_NVN_TEXSNAP), presented times, the display's rate; a translation unit of its own |
 | `nvn/mtl/present_pipe.m` | The present pipeline and its encoding: a translation unit of its own |
 | `nvn/mtl/present.inc` | MetalFX upscaling of the presented picture, live shots, the perf line, present_now |
 | `nvn/mtl/present_thread.inc` | The present thread and the display link, statistics getters |

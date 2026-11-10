@@ -4,8 +4,8 @@ typedef struct { uint64_t ser; uint16_t level, slice; } zskip_zero;
 static zskip_zero g_zskip_zero[4096]; static int g_zskip_n, g_zskip_count;
 static zskip_zero g_zskip_cand[8]; static uint8_t g_zskip_cand_ok[8];
 static void zskip_clear(void);
-static id g_cb;
-static BENC g_blit;
+id g_cb;
+BENC g_blit;
 NSMutableArray<dispatch_block_t> *g_commit_blocks;
 static uint64_t g_alloc_fence[ALLOC_MAX]; static uint64_t g_alloc_waits, g_alloc_grown;
 int mtl_wait(uint64_t fence, uint64_t timeout_ns);
@@ -25,7 +25,7 @@ static void up_owner_check(const char *where) {
 // other threads (the present thread etc.) creating a command buffer do not touch the batch: they do not read or write textures uploaded in this batch; commands that need these textures all come after this replay submission (the batch is flushed before it)
 // Old-queue command buffers (readback / diagnostics / present; to be deleted once M4-4 and M4-5 are migrated away): uploads are already on the Metal 4 queue, and there is no ordering guarantee between the two queues -
 // wait for the upload to complete after flushing it, and only then can the old queue read the upload result (mtl_read_texels waited first and flushed afterwards, the readback beat the upload, 4 failures on t_nvn upload content)
-static id<MTLCommandBuffer> q_cb(void) { if (on_sub_thread()) { up_flush(); up_wait_zero(&g_up_pending); } return [g_q commandBuffer]; }
+id<MTLCommandBuffer> q_cb(void) { if (on_sub_thread()) { up_flush(); up_wait_zero(&g_up_pending); } return [g_q commandBuffer]; }
 static post_op *g_post; static int g_npost, g_postcap;
 // g_sub_work, the work replayed in this submission so far: gfx/nvn/core/exec.h
 // The parts of a submission committed before its end (mid-submission commits): their work boundaries and GPU start / end on the guest clock, filled
@@ -102,20 +102,14 @@ void mtl_sub_begin(void) {
     void arena_begin(void); arena_begin();
 }
 
-static void rp_end(void);
 // Metal 4 conservative barriers (first version): a consumer barrier at the start of an encoder (all prior work → this encoder) and a producer barrier at the end (this encoder and earlier → later encoders).
 // Only the one at the start is not enough: t_view_levels' 'pass 1 → pass 2 → copy' (then t_rt_range) read back black, and after adding the end barrier it is 19/19. Old-queue encoders (upload / diagnostics / present) do not go through these barriers.
 #if DM_NVN_M3
-static inline void m4_end(id e) { [e endEncoding]; }   // the older API has no explicit barriers: dependencies come from useResource declarations plus the system's automatic tracking
 static inline void m3_rbuf(id<MTLRenderCommandEncoder> e, int vertex, NSUInteger i, uint64_t gpu) {
     NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (gpu && !b) { { static int n_; if (!n_++) MLOG("[red] " "legacy API bind: GPU address %#llx is not in any registered buffer (slot %lu)", (unsigned long long)gpu, (unsigned long)i); } return; }
     if (vertex) [e setVertexBuffer:b offset:off atIndex:i]; else [e setFragmentBuffer:b offset:off atIndex:i];
 }
 #else
-static inline void m4_end(id e) {
-    if ([e conformsToProtocol:@protocol(MTL4CommandEncoder)]) [(id<MTL4CommandEncoder>)e barrierAfterStages:MTLStageAll beforeQueueStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
-    [e endEncoding];
-}
 #endif
 // Render state already set on the current encoder (MacNativeGames' es_* filter, MIT; written anew here): the replay sets viewport, scissor, cull,
 // winding, fill, depth bias, depth clip, stencil reference and blend color for every draw, nearly always unchanged (about 30,000 encoder calls a
@@ -207,21 +201,16 @@ static inline id enc_b_begin(id cb) { return [cb blitCommandEncoder]; }
 #else
 static inline id enc_b_begin(id cb) { if (cb == g_cb) rs_sync(); return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? [cb computeCommandEncoder] : [cb blitCommandEncoder]; }
 #endif
-static inline void enc_b_end(id e) { m4_end(e); }
-static inline void enc_b_copy_buffer(id e, id<MTLBuffer> s, NSUInteger so, id<MTLBuffer> d, NSUInteger doff, NSUInteger n) { [e copyFromBuffer:s sourceOffset:so toBuffer:d destinationOffset:doff size:n]; }
-static inline void enc_b_copy_buffer_texture(id e, id<MTLBuffer> s, NSUInteger so, NSUInteger row, NSUInteger img, MTLSize z, id<MTLTexture> d, NSUInteger sl, NSUInteger lv, MTLOrigin o) { [e copyFromBuffer:s sourceOffset:so sourceBytesPerRow:row sourceBytesPerImage:img sourceSize:z toTexture:d destinationSlice:sl destinationLevel:lv destinationOrigin:o]; }
-static inline void enc_b_copy_texture_buffer(id e, id<MTLTexture> s, NSUInteger sl, NSUInteger lv, MTLOrigin o, MTLSize z, id<MTLBuffer> d, NSUInteger doff, NSUInteger row, NSUInteger img) { [e copyFromTexture:s sourceSlice:sl sourceLevel:lv sourceOrigin:o sourceSize:z toBuffer:d destinationOffset:doff destinationBytesPerRow:row destinationBytesPerImage:img]; }
-static inline void enc_b_copy_texture(id e, id<MTLTexture> s, NSUInteger sl, NSUInteger lv, MTLOrigin so, MTLSize z, id<MTLTexture> d, NSUInteger dl, NSUInteger dv, MTLOrigin doo) { [e copyFromTexture:s sourceSlice:sl sourceLevel:lv sourceOrigin:so sourceSize:z toTexture:d destinationSlice:dl destinationLevel:dv destinationOrigin:doo]; }
 static void blit_note(void);   // Per-pass dump: a copy / buffer update ended the render pass (defined after PD)
 static void upd_flush(void);
 static void chunk_maybe_split(void);   // mid-submission commits (defined with the render pass state)
 #if DM_NVN_M3
-static BENC blit(void) { if (g_nupd && !g_upd_flushing) upd_flush(); blit_note(); rp_end(); if (!g_blit) { chunk_maybe_split(); g_blit = enc_b_begin(g_cb); } return g_blit; }
+BENC blit(void) { if (g_nupd && !g_upd_flushing) upd_flush(); blit_note(); rp_end(); if (!g_blit) { chunk_maybe_split(); g_blit = enc_b_begin(g_cb); } return g_blit; }
 #else
 // A reused blit encoder also needs a barrier between two copies: Metal 4 does not keep the commands of one encoder in recording order, and the
 // queue barrier at encoder creation covers only earlier encoders (Apple: "Synchronizing stages within a pass"). Without it a write-then-read or two
 // writes to one range may overlap (seen upstream in t_nvn 5c, once in three runs). The blit encoder is a compute encoder on Metal 4: both stages
-static BENC blit(void) { if (g_nupd && !g_upd_flushing) upd_flush(); blit_note(); rp_end();   // logged uniform updates reach memory before any copy or dispatch
+BENC blit(void) { if (g_nupd && !g_upd_flushing) upd_flush(); blit_note(); rp_end();   // logged uniform updates reach memory before any copy or dispatch
     if (!g_blit) { chunk_maybe_split(); g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; }
     else [g_blit barrierAfterEncoderStages:MTLStageBlit | MTLStageDispatch beforeEncoderStages:MTLStageBlit | MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
     return g_blit; }

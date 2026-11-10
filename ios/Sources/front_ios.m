@@ -71,7 +71,7 @@ static CGRect picture_rect(UIView *v, int *how, const char **src) {
     return CGRectMake(o.x, o.y, o.w, o.h);
 }
 // The screen the game's window is on (plan item 302: the iPhone Duo has two, the outer and the inner display): its maximum refresh rate, kept on
-// the main thread for mtl_display_hz (gfx/nvn/mtl/texdump.inc, read on the game thread), which read UIScreen.mainScreen before
+// the main thread for mtl_display_hz (gfx/nvn/mtl/texdump.m, read on the game thread), which read UIScreen.mainScreen before
 static _Atomic int g_screen_hz;
 int front_ios_screen_hz(void) { return atomic_load(&g_screen_hz); }
 static void screen_note(UIScreen *s) { if (s) atomic_store(&g_screen_hz, (int)s.maximumFramesPerSecond); }

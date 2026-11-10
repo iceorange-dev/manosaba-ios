@@ -156,7 +156,7 @@ int mtl_wait(uint64_t fence, uint64_t timeout_ns) { @autoreleasepool {
     return ok;
 } }
 
-static void mtl_finish_gpu(void) {
+void mtl_finish_gpu(void) {
     if (g_fence) mtl_wait(g_fence, UINT64_MAX);
     up_wait_zero(&g_up_pending);
 }
