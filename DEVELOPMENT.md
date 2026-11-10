@@ -255,7 +255,9 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   dispatches (218's two, and the first of a run of eleven that read no attachment), three have a seventh attachment the others lack. The
   rewrites there are do not merge those: on the Mac the same scene loads 251 MB and stores 241 MB a frame with them off, 230 and 231 with
   the store decisions and the same-target continuation alone (228's set; the translation's instructions the same), 221 and 227 with all
-  of them (instructions +15 %). 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read` without
+  of them (instructions +15 %). On the Air under the hold (2026-11-10, one run each, the second started warmer): the store decisions and
+  the continuation give 30.0 fps against 29.8, the resolution 81 % of the frames at the 0.9 tier against 41 %, and cost the translation
+  68.3 M instructions and 13.0 ms a frame against 54.1 M and 11.0 ms. 186: the leads 62j left in those rewrites (shared storage tracked by serial, `attr_read` without
   `pend_hits`, the load probe's readback order on Metal 4, a run under Metal API validation).
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
@@ -531,8 +533,8 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   frames where the HUD's hearts glow red too (three shots in a row at the tree, 2.5 s apart); the frame between the fall and those has the
   hearts unlit and Link in his own colours. (Those runs' one red line, a 3D 8x8x8 texture in a 2D slot of pixel shader 9808aabbd3219e97, is
   apart from it: the shader samples that slot only under a flag, alpha alone.)
-- 324 (batch 184; left: its second change seen on a phone) the iPhone Air started hot (batch 183's fourth run in a row, thermal state serious at
-  launch, so 30 fps from the boot's settings): 15.0 fps for about 150 s, every frame 66.7 ms with the GPU at p50 29 / p95 34 ms, and 28 fps
+- 324 (batch 184; its second change seen on the iPhone Air, 2026-11-10) the iPhone Air started hot (batch 183's fourth run in a row,
+  thermal state serious at launch, so 30 fps from the boot's settings): 15.0 fps for about 150 s, every frame 66.7 ms with the GPU at p50 29 / p95 34 ms, and 28 fps
   once the state fell to fair and the hold ended; where the state reaches serious while the game runs the same hold gives 27.4 fps. What it
   was, from that log: the game set its present interval 2 → 3 eight seconds before the 15.0 fps and kept 3 through it. With the target 30
   from the start the front end's rate hint never reported the ProMotion screen's rate (it reported only while the target was 60), so the
@@ -546,15 +548,18 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   And on a ProMotion screen a game stepping by the measured time presents at 120 while the target is below 60 as well (`nvn_promotion_hz`'s
   held; the front end reports under the hold too), so the hold paces the same whenever it began. On the Mac in a window (a real display
   link, `DM_FPS=30`, the report times stretched by `DM_NVN_TS_DVFS=10` so the game picks 3): 66.67 ms a frame before, 50.00 after, the link
-  at 60 Hz from the first interval 3 and at 30 Hz again 3 s after the last. Left: the second change on a phone (a launch with `DM_FPS=30`:
-  the log's "ProMotion: the frame rate held at 30 fps, presents at 120").
-- 325 (batch 185; left: the phone measured again) the decals' tile reads lost behind the vertex edge push. From chain 28614768c859 (batch
+  at 60 Hz from the first interval 3 and at 30 Hz again 3 s after the last. On the Air, a launch with `DM_FPS=30` (Great Sky Island
+  standing, six minutes): the log's "ProMotion: the frame rate held at 30 fps, presents at 120", the game set its interval to 3 sixty
+  times and every 10 s line stayed at 29.0-30.0 fps (frame time p50 33.4 / p95 35.5 ms), the thermal state fair at most.
+- 325 (batch 185; the Air measured again on 2026-11-10) the decals' tile reads lost behind the vertex edge push. From chain 28614768c859 (batch
   172, 2026-11-09) every vertex shader ends with the translator's edge push (320f), which writes the position's x and y last, and
   `gfx/tools/dmsh_fetch.py` screen_locn took the position from its last write: no vertex shader's screen output was proven any more (2,388
-  before), so no draw that samples its own pass read the tile (181). Great Sky Island on the iPhone Air before and after that batch: 272
-  tile reads and 6 copies a frame became 13 splits with 31 copies; render targets loaded 236 → 508 MB a frame, stored 236 → 480; the GPU
-  under the 30 fps hold 15 → 26-34 ms and the hold's 29.8 fps → 27.4. Batch 183's measurements on the Air were taken with it, and 324's log:
-  a GPU at 29-34 ms is what made the game set interval 3 there. Found from 218's pass dump (the G-buffer in 15 passes, each loading and
+  before), so no draw that samples its own pass read the tile (181). Great Sky Island on the iPhone Air, the logs before and after that
+  batch: 272 tile reads and 6 copies a frame became 13 splits with 31 copies; at the game's full size render targets loaded 315 → 508 MB a
+  frame and stored 304 → 480; at 60 fps the GPU's time did not show it (p50 9.6-10.0 against 9.7-9.8 ms), under the 30 fps hold it did:
+  p50 25.3 → 29.4 ms and p95 29.5 → 34.4, past a frame's 33.3 ms, so 29.8 fps → 27.4. (The
+  first reading here, "15 → 26-34 ms" and "236 → 508 MB", compared a window where the hold began with later ones.) Batch 183's
+  measurements on the Air were taken with it. Found from 218's pass dump (the G-buffer in 15 passes, each loading and
   storing five or six 1280x720 attachments) and a new line of the dump naming why a draw is not read from the tile (`f`, `mtl/tile_merge.inc`
   fbx_fetch). Nothing had shown it: the unit test's vertex shader had no tail, and the smoke's 0.2-0.7 tile reads a frame going to copies
   was not in the batch report. Now screen_locn takes the position's x and y from before the push when the tail is exactly the push (every
@@ -564,9 +569,12 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   fd1036a8b871: 2,388 vertex shaders with a screen position again. On the Mac (Great Sky Island standing, 1280x720, the chain before
   against this one): 0 → 274 tile reads and 31 → 6 copies a frame, render targets loaded 508 → 315 MB and stored 480 → 304 MB a frame; the
   two shots differ by where the clouds are (looked at). The GPU's time does not show it on the Mac: three runs each (batch 186) give p50
-  7.0-7.9 ms before and 6.7-7.4 after, within the spread from run to run (the first single runs' 8.5 → 5.9 was that spread). Left: the
-  Air again (Great Sky Island under the hold; 190 and 285 were judged with the regression).
-- 326 (batch 186; left: the phone) the three draws a frame on Great Sky Island that still got copies and a split (fragment shaders
+  7.0-7.9 ms before and 6.7-7.4 after, within the spread from run to run (the first single runs' 8.5 → 5.9 was that spread). The Air
+  again (2026-11-10, with 326, a cool start): no copy, 300 tile reads a frame, 252 MB loaded and 241 stored at the full size; 59.4 fps with
+  GPU p50 10.0 / p95 15.0 ms until the hold 85 s after the launch (44-46 s in the two logs above; one run each), then 29.8 fps, frame time
+  p50 33.4 / p95 35.9 ms, GPU p50 25.3 / p95 29.4 ms as before batch 172, the resolution 41 % of the frames at the 0.9 tier and 54 % at
+  0.8; the shots looked at.
+- 326 (batch 186) the three draws a frame on Great Sky Island that still got copies and a split (fragment shaders
   ecbe4aa4417b3f80, c345c12c5f1a4f06, 5f9b0657c39ac2cb; e3a11670702f91c2 and c2093bd96a8bb59c elsewhere): they sample colour targets of
   their pass at the projected screen position as the decals do, but `dmsh_fetch.py` variant made no readable-tile version of a fragment
   shader with more than four colour outputs (theirs: colours 0, 1, 3, 5 and 7) or a depth output (ecbe4aa4: three colours and
@@ -574,7 +582,9 @@ From the twelfth review (2026-11-09, S2Arm, [docs/sources.md](docs/sources.md); 
   8). Chain 5a7de6a8fef9 (the second stage only: 354 versions compiled, 10,057 fetch tables). On the Mac, Great Sky Island standing:
   every such draw reads the tile (about 300 a frame, no copy), render targets loaded 315 → 251 MB and stored 304 → 241 MB a frame (508 and
   480 with 325's regression); GPU p50 6.2-8.2 ms over three runs against 6.7-7.4, the same within the spread; the shots' ground, Link and
-  pillars differ as two runs of the same build do (0.2 % of pixels past 8 against 0.2-0.3 %). Left: what it gives the phone's GPU.
+  pillars differ as two runs of the same build do (0.2 % of pixels past 8 against 0.2-0.3 %). On the Air (325's run above): its picture
+  right, no copy left; what it adds alone was not separated there (the log before batch 172, with the three copies, shows the same GPU
+  time at 60 fps and under the hold: the game's resolution tiers take up the difference).
 With the next game (64): 64a2 ClearBuffer, the indirect and IndirectCount draws and dispatches, Downsample, the deferred uniform / storage binds;
 64f tessellation; 64h2 a SystemEvent kept while its detached read end waits (UE4); 64j2 AVC / AAC decoded from the game's bytes; 64n2 LDN.
 Also [docs/sources.md § Port when a game needs it](docs/sources.md#port-when-a-game-needs-it).
