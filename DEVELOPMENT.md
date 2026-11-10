@@ -288,8 +288,12 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   batch 193, the Mac, the first trial's opening into its debate, one run each): with all of them off (`DM_NVN_TBDR=0`) the render targets loaded and
   stored a frame are the same in every 300-frame line (nothing loaded, 24.9-91.6 MB stored), the GPU's time too (p50 1.9-2.8 ms), the pictures the
   same, and the translation takes 8-9 % fewer instructions (1.24 against 1.36 M a frame in the debate): the game clears every target at the start of
-  its pass, its depth targets have no memory now, and what is left is stored because it is read. Not changed on two scenes' evidence; left: the map
-  scene (`work/run/mano/save_ch1_map_20261027`) the same way, then whether manosaba runs without them as Tears of the Kingdom does.
+  its pass, its depth targets have no memory now, and what is left is stored because it is read. The same from the map save
+  (`work/run/mano/save_ch1_map_20261027`: Load Game → the Auto page → its first save, A every 1.2 s; a dialogue with three characters, then the map
+  from frame 6300): 62.9 MB stored a frame in the dialogue and 16.9 MB on the map either way, the same GPU time and pictures, 9-10 % fewer
+  instructions with them off. Left on all the same: the instructions are 0.6-1.4 M a frame there (0.09 ms of translation), so there is no time to
+  gain, and the render targets' heap is one of the parts (Metal's allocated bytes in the debate 1,304 MB with them off against 1,205, one run each
+  with few memory lines: not measured properly).
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
   three runs without it, thermal state serious 46 s after start against 44-58 s, and 27.44 fps under the hold against 27.40-27.65.
