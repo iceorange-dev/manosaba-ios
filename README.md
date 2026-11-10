@@ -18,48 +18,40 @@ translated shaders, the app icon) is generated on your machine and stays out of 
 
 ## Status (manosaba 2.0.4b)
 
-Verified on a Mac (Apple silicon, macOS 26) and on an iPhone 17 Pro (iOS 26), including the reorganized iOS app:
+Verified on a Mac (Apple silicon, macOS 26), an iPhone 17 Pro (iOS 26) and an iPhone Air (iOS 27):
 
 - boot, title screen, new game, story scenes with sprites, CG, text and UI, the opening movie, a trial including presenting evidence;
 - native touch input (one rewriter rule turns on Unity's touchscreen device): scripted touches on the Mac, by hand on the iPhone;
 - saving and loading, with transactional commits; iCloud sync of the save files (needs a paid developer account's entitlements; not tested);
-- memory over a long session: finalized render targets used to stay alive in the texture ID view cache (about 800 MB within three minutes of a
-  trial on the Mac; an iPhone session ended without a crash report after about 40 minutes near the memory limit). Fixed: a 16-minute iPhone
-  session through scene changes and a trip to the background stayed between 1.2 and 1.5 GB resident, with no upward trend;
-- repeated scene loads: the game may finalize a texture object right after recording commands that use it, and replay used to read the object
-  when the commands were submitted (garbage texture formats in the log, now and then a crash in Metal's copy encoder). Fixed: 54 reloads of a
-  trial on the Mac without a crash or a warning;
+- long sessions and repeated scene loads: a 16-minute iPhone session through scene changes and a trip to the background stayed between 1.2
+  and 1.5 GB resident with no upward trend; 54 reloads of a trial on the Mac ran without a crash or a warning;
 - graphics settings in the Settings app (frame rate 60 / 30 fps, render resolution, MetalFX upscaling): 720p with MetalFX used on the iPhone;
   30 fps not yet tried there. On the Mac the render resolution barely changes this game's GPU load; 30 fps is the setting that lowers it;
 - rewrite equivalence: `verify/regress.sh --fuzz` passes on all three modules.
 
-Not verified or known open: compute shader dispatch at run time (the game's compute shaders are Unity's built-in skinning, blend shape, virtual
-texturing and probe debug kernels; no dispatch happens in the story or in a trial); 13 NVN functions the game looks up that the layer does not
-know (returned as NULL: this build stores the pointers but never calls them); an intermittent texture crash seen early on the iPhone, likely
-fixed by an NVN struct size correction (not seen since, unconfirmed); keyboard, mouse and game controller input not tested with this game.
-Memory on 8 GB iPads: without the increased memory limit the app may use about 3.4 GB on an iPad mini (A17 Pro); a free account can sign that
-limit now (6.1 GB on the iPhone 17 Pro), not yet tried on the iPad mini. A trial's loading adds about 1.4 GB for a moment (the character
-render targets), and the game's own memory grows by some 30 MB per scene load over a long session,
-so after about two hours of play a trial's loading went past the limit and the system ended the app; restarting the app before then avoids it.
-The growth is the game's own: every save load builds a new set of Naninovel's script and resource managers and the old ones stay referenced,
-with their parsed scripts and UI objects (a census of the managed heap after 9 reloads of one save held up to 12 copies of the same scripts).
-The Switch version is reported to end with an error now and then in long sessions too, and version 2.0.4's notes say such errors were made less
-likely.
+Not verified or known open: compute shader dispatch (none happens in the story or in a trial); 13 NVN functions the game looks up and never
+calls; keyboard, mouse and game controller input with this game. Memory over hours of play: the game's own memory grows by some 30 MB per
+scene load (every save load builds a new set of Naninovel's script and resource managers and the old ones stay referenced), and a trial's
+loading adds over a gigabyte for a moment, so after about two hours a trial's loading went past an 8 GB iPad's limit without the increased
+memory limit; restarting the app before then avoids it, and a free account can sign that limit (6.1 GB on the iPhone 17 Pro). The Switch
+version is reported to end with an error now and then in long sessions too.
 
 On Android (plan item 301, under way): on a Redmi K100 Pro Max (Android 17) manosaba runs as an app of this repository's own (no Android SDK:
 `android/tools/apk.py` writes and signs the APK) at 60 fps, with sound (AAudio), touch, game controllers and saves, drawn by a Vulkan backend
 of its own (`gfx/nvn/vk/`, the game's shaders from the same translation as Metal's): the title, the prologue and the first trial checked so far,
-at 60 fps; the render-pass merging, frame pacing and the on-screen controls are still to come (plan items 301e3, 301f, 301d2).
+at 60 fps; what is left (the on-screen controls among it) is plan item 301 in [docs/plan.md](docs/plan.md).
 
 ## Status (Tears of the Kingdom 1.4.3)
 
-Played on a Mac (Apple silicon, macOS 26) in a window and on an iPhone 17 Pro (iOS 26.4, free developer account, handheld mode):
+Played on a Mac (Apple silicon, macOS 26) in a window, on an iPhone 17 Pro (iOS 26.4) and an iPhone Air (iOS 27), both with a free developer
+account, in handheld mode:
 
 - the title screen, the prologue with its tutorial and pre-rendered cutscenes (VP9 movies, decoded with libvpx, also on the iPhone), the dive
   from the Great Sky Island and play after it;
 - frame rate: the default product runs at 30 fps; a product with the frame-rate rules runs at 60 fps (on the iPhone the game's own controller
   then picks 60, 30 or 20 by its frame time) with a RomFS overlay that `games/totk/romfs_overlay.py` builds from your own RomFS: without it
-  the quick menus (the ability wheel) draw over black;
+  the quick menus (the ability wheel) draw over black. On the Great Sky Island the iPhone 17 Pro held about 59.5 fps at a 1280x720 scene; the
+  thinner iPhone Air runs near 60 until it is hot, a minute or two in, and at 30 from then on;
 - on the iPhone: on-screen controls (a floating stick, the buttons and a camera swipe; a game controller turns them off), the RomFS carried
   as 1 GiB parts and unpacked at the first launch ([ios/README.md](ios/README.md#on-the-device)), and the increased memory limit signed by a
   free account (6.1 GB on the iPhone 17 Pro).
@@ -119,8 +111,9 @@ Do not attach game files, keys, dumps, rewritten modules or IPAs.
 | Document | Covers |
 |---|---|
 | [PORTING.md](PORTING.md) | The workflow for a new game, from the dump to the device |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Restoring a working copy, test procedures, where the work stands, open work |
-| [docs/sources.md](docs/sources.md), [docs/plan-archive.md](docs/plan-archive.md) | Community ports drawn from and how far each was read; the finished plan items cited in the code |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Restoring a working copy, test procedures, where the work stands, how Tears of the Kingdom runs |
+| [docs/plan.md](docs/plan.md), [docs/plan-done.md](docs/plan-done.md) | What is left to do; every finished plan item in a few lines (the "plan item N" of code comments) |
+| [docs/sources.md](docs/sources.md) | Community ports drawn from, how far each was read, what was taken from each and what not |
 | [games/README.md](games/README.md) | Game directory: `game.json`, `rules.py`, C hooks |
 | [host/README.md](host/README.md) | Loader, services, files, environment variables |
 | [gfx/README.md](gfx/README.md), [gfx/nvn_metal_mapping.md](gfx/nvn_metal_mapping.md), [gfx/tex/README.md](gfx/tex/README.md) | Graphics layer, shader chain, NVN → Metal mapping, textures |
@@ -136,75 +129,35 @@ endorsed by Nintendo or any game publisher. Nintendo Switch is a trademark of Ni
 
 ## Acknowledgements
 
+What was taken from each, item by item: [docs/sources.md § Taken from each project](docs/sources.md#taken-from-each-project); every
+port is also credited where it lives in the code.
+
 - **[d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)** ([jhaizhou](https://github.com/jhaizhou-ops), MIT): the architecture and most of
-  the host, graphics layer and verification tools; later the controller mapping, silent no-ops reported, the per-program reflection summary, the
-  Metal 4 launch check, the audio notifier's priority and dropped presents for a covered window; for Android, the rewrite blocks that move sp before
-  they save a register (no red zone on Linux) and the save's extended attributes in the `user.` namespace.
-- **d2r-mobile contributors** [SepheTT](https://github.com/SepheTT) (buffer ↔ texture copy strides, the weak import test) and
-  [BossaMelon](https://github.com/BossaMelon) (the declared launch screen).
+  the host, graphics layer and verification tools, and later fixes; its contributors [SepheTT](https://github.com/SepheTT) and
+  [BossaMelon](https://github.com/BossaMelon).
 - **[nxnative](https://github.com/seedds/nxnative)** ([seedds](https://github.com/seedds), MIT) and **botw-mobile**
-  ([Tommy Lau](https://github.com/TommyLau), MIT; the repository is no longer on GitHub), community ports built on d2r-mobile: the crash-report,
-  dirty-page, RomFS-index and thread-exit fixes, and from nxnative the memory pool lookup index, compatible texture views, unwritten colour
-  outputs and frame-timed scripted input, credited in their commits; `tools/game_extract` follows nxnative's `nx_extract`. For Tears of the
-  Kingdom, whose system modules are the ones nxnative brought up for Breath of the Wild 1.9.0: the explicit jump-table rewrite (`site_br_tab`),
-  the in-process audio renderer, host guest threads, amiibo, play report, oe / hid / fs additions, NVN 55 functions, deferred texture binds,
-  growable command-memory segments, the NVN API version setting, shader keys over control section and code, linear textures on the pool buffer,
-  the inline-uniform ring and per-stage vertex shader padding; later the autorelease pool for retired objects, the driver segment for vertex and
-  compute shaders, clears on a left-out attachment slot, the growable dirty-range table, QueueFinish without present waits, two translator fixes,
-  vertex output defaults, invariance and the Metal compile cache; then precise SleepThread, env.txt switches, compressed files stored in the IPA,
-  yield back-off (opt-in), targeted wakes, waits on upload completion and buffer releases, a per-thread pool cache, the dirty range kept per
-  texture, residency no-op skips, page runs, a spare texture for re-uploads and VP9 row multithreading; then the host race fixes, the c1 guard
-  by interval arithmetic, the yield back-off start, the guest CPU power line and the BAHS shader entries; later Maxwell's min / max / clamp results for a NaN operand on
-  every GPU (`precise::`), and the SDK's address-region node area cut and two SDK return types; then the store-decision records for ten
-  attachments, page protection under the pool-slot lock, an ID's cached view dropped with its texture, the AudioOut notifier's disarm and Game
-  Mode off on the Mac; WaitSynchronization ended by the signal that woke it, credited in the code; the translator's split storage words read
-  whole; a pool's buffer made only over writable pages.
+  ([Tommy Lau](https://github.com/TommyLau), MIT; no longer on GitHub), ports built on d2r-mobile: host and replay fixes, the extraction tool's
+  model, and most of what Tears of the Kingdom's system modules needed (they are Breath of the Wild 1.9.0's).
 - **[tomodachi-native](https://github.com/kuosuko/tomodachi-native)** ([kuosuko](https://github.com/kuosuko), MIT), a fork of nxnative: the
-  variant of the duplicated colour slot handling that keeps the slot the pass writes, the memory snapshots (`DM_MEMSNAP`), the FMZ multiply in
-  the shader translator, the attachment copies for draws that sample what their pass draws and code options applied at load.
+  duplicated colour slot, memory snapshots, a translator fix, attachment copies, code options.
 - **[MacNativeGames](https://github.com/ly05010419/MacNativeGames)** ([ly05010419](https://github.com/ly05010419), MIT), a Tears of the Kingdom
-  port on the same lineage: which RomFS files hold the shaders, virtual cores, clears drawn as quads, BC render targets through an auxiliary
-  texture, storage buffers addressed from uniform buffers, stale texture views, the behaviour and pacing of the VP9 movie decoder, the 60 fps
-  controller words, the real-time frame step, its uncapped pacing and the scene render size, uniform snapshots, and from its graphics layer the pending-write table, keep-alive, chunked
-  commits, render-state filter, upload staging pool, storage-followed and storage-shared textures, GPU write-back, uniform renaming,
-  small-texture hashing and once-per-submission checks, layered passes, the encode stage, driver segment fills, block height and D16 clear fixes,
-  the GPU memory budget and pool range checks, and the RomFS overlay findings for 60 fps; then the fault guard around snapshot copies, read-only
-  rodata, waiting for a save at quit and one game at a time on the Mac, host calls on a per-thread host stack with the frame record back to
-  the guest, the live command channel, the sead heap walk and list watch and the soak measurement; then no blending on integer colour outputs,
-  empty memory pools, virtual cores handed over by moving their owner and fewer pipeline guesses, ported by hand and credited in the code; the
-  Mac shader libraries' minimum system version; and shaders that differ only in control bytes the translator does not read translated and
-  packed once.
-- **[LASRecomp](https://github.com/peiikai/LASRecomp)** ([Peiikai](https://github.com/peiikai), MIT), a static recompilation of Link's Awakening:
-  its rule that a texture is uploaded from guest memory until the GPU renders into it, behind the CPU-filled textures of Tears of the Kingdom,
-  and the order of WaitSynchronization's checks; GPU time as the union of command buffers; the ring of lock / condition variable calls, the late
-  condition variable wait and the layout of its CI checks; its SHF / I2I instruction vectors; HSETP2 `.H_AND`'s rule and its vectors.
-- **Single fixes from other ports**, credited in the code: [Kamisorara/d2r-mobile](https://github.com/Kamisorara/d2r-mobile) (controller face
-  buttons by the printed letter, also upstream's), [jiangjifeng/nxnative](https://github.com/jiangjifeng/nxnative) (scaled vertex formats),
-  [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) and [lordran-native](https://github.com/Nishikori-Yui/lordran-native) (sampler LOD
-  bias and reduction; lordran-native also the alpha test and occlusion counts across submissions), [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (the handles of a WaitSynchronization in thread dumps, user mod folders, RGBA4's
-  channel order, as [nxport](https://github.com/nxporting/nxport) found it; nxport also Link's grip on moving ground above 100 fps),
-  [BotWRecomp](https://github.com/IshaanKalra2103/BotWRecomp) (game data out of backups, GCSupportsGameMode),
-  [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17) (what an iOS 17 build needs), [GirlNet/nxnative](https://github.com/GirlNet/nxnative)
-  (the host built for every game on a CI runner), [RogelioLB/nxnative-android](https://github.com/RogelioLB/nxnative-android) (a thread's stack
-  reported without bionic's guard page), upstream d2r-mobile's later fixes (no writes for outputs a pixel shader leaves, nearest filters for formats
-  not filtered linearly, the on-screen controls drawn again only when they look different), [LASRecomp](https://github.com/peiikai/LASRecomp) and [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (a
-  swapchain that survives a lost surface, a pipeline cache kept between launches), [PKShield-Android](https://github.com/simipoB/PKShield-Android)
-  (the barrier to host reads at a submission's end), [doom-port](https://github.com/Desm0nt/doom-port) (AAudio's legacy path after a stall).
-- **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's Android port:
-  the address-region refusals logged and the node area cut for a Unity 6 sdk build, the rewriter's Android target (thread slots in bionic's
-  TLS_SLOT_APP), an APK written and signed without the Android SDK (binary manifest, aligned ZIP, APK Signature Scheme v2), credited in the
-  code; its Android facts guide the Android port; later the view's swizzle replacing the texture's, a texture at two colour slots on Vulkan, the
-  manifest's configuration changes and the frame rate voted for the window; the subgroup size and gather precision given to the translator for
-  Vulkan, and TMML's LOD as unsigned.
-- **[S2Arm](https://github.com/jhaizhou-ops/S2Arm)** ([jhaizhou-ops](https://github.com/jhaizhou-ops), Apache-2.0; written anew from what it does,
-  no code taken): the dirty tracking's `mprotect` results checked, the argument buffer's length from the reflection, the app's name in ASCII with
-  the title per language, the phone's haptics-only engine; the unwritten attachments' stores dropped with the TBDR rewrites off; mid-submission
-  commits held while the GPU is busy; texture uploads from a pool not yet resident read through a buffer of their own pages; how a half-float
-  target rounds; the on-screen stick and camera ring as layers of their own; runs of short sleeps backed off; MetricKit's reports kept and named;
-  the signature's expiry shown in the app; whether the GPU applies a sampler's LOD bias and min / max reduction; the install without local.env,
-  the renewal by signing again, the data pushed by content.
-- **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): a stamp of the
-  rewriter in the product, the rewriter refusing system registers it does not know, the SDK's abort text at a Break.
+  port on the same lineage: where the game's shaders are, virtual cores, the movie decoder's behaviour, the 60 fps rules and the real-time
+  step, uniform snapshots and much of the graphics layer's handling of this game.
+- **[LASRecomp](https://github.com/peiikai/LASRecomp)** ([Peiikai](https://github.com/peiikai), MIT), a static recompilation of Link's
+  Awakening: CPU-filled textures, wait and lock rules, GPU time, instruction test vectors.
+- **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's
+  Android port: the rewriter's Android target, the APK written without the Android SDK, facts for the Android port.
+- **[S2Arm](https://github.com/jhaizhou-ops/S2Arm)** ([jhaizhou-ops](https://github.com/jhaizhou-ops), Apache-2.0; written anew from what it
+  does, no code taken): checks and measurements for the iPhone (bandwidth, sleeps, diagnostics, the install flow, the wide screen's route).
+- **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): three rewriter
+  safeguards.
+- **Single fixes from other ports**: [Kamisorara/d2r-mobile](https://github.com/Kamisorara/d2r-mobile),
+  [jiangjifeng/nxnative](https://github.com/jiangjifeng/nxnative), [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile),
+  [lordran-native](https://github.com/Nishikori-Yui/lordran-native), [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp),
+  [nxport](https://github.com/nxporting/nxport), [BotWRecomp](https://github.com/IshaanKalra2103/BotWRecomp),
+  [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17), [GirlNet/nxnative](https://github.com/GirlNet/nxnative),
+  [RogelioLB/nxnative-android](https://github.com/RogelioLB/nxnative-android),
+  [PKShield-Android](https://github.com/simipoB/PKShield-Android), [doom-port](https://github.com/Desm0nt/doom-port).
 - **[LibHac](https://www.nuget.org/packages/LibHac/0.19.0)** ([Alex Barney](https://github.com/Thealexbarney), MIT; the NuGet package, as its
   GitHub repository is no longer reachable): reads NSP, XCI and NCA containers in `tools/game_extract`.
 - **[Ryujinx](https://ryujinx.app)** (MIT; source on the project's own Forgejo instance): the shader translator in `third_party/ryujinx`.

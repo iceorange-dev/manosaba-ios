@@ -110,7 +110,81 @@ Seen, not reviewed: CODPHISH/ns2app (Silksong on iOS), WangTingYeYe/rtg-mobile, 
 - 2026-11-08, eleventh review (six reviewers, after Xcode 27.2): 303-313.
 - 2026-11-09, twelfth review (six reviewers, S2Arm): 314-321 and 313's Tears of the Kingdom on Android part.
 
-The items: [plan-archive.md](plan-archive.md); the open ones: [DEVELOPMENT.md](../DEVELOPMENT.md#open-work).
+The items: [plan-done.md](plan-done.md); the open ones: [plan.md](plan.md).
+
+## Taken from each project
+
+What was ported from each project, by hand and credited where it lives in the code (the README names the projects; this is the list behind it).
+
+- **[d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)** ([jhaizhou](https://github.com/jhaizhou-ops), MIT): the architecture and most of
+  the host, graphics layer and verification tools; later the controller mapping, silent no-ops reported, the per-program reflection summary, the
+  Metal 4 launch check, the audio notifier's priority and dropped presents for a covered window; for Android, the rewrite blocks that move sp before
+  they save a register (no red zone on Linux) and the save's extended attributes in the `user.` namespace.
+- **d2r-mobile contributors** [SepheTT](https://github.com/SepheTT) (buffer ↔ texture copy strides, the weak import test) and
+  [BossaMelon](https://github.com/BossaMelon) (the declared launch screen).
+- **[nxnative](https://github.com/seedds/nxnative)** ([seedds](https://github.com/seedds), MIT) and **botw-mobile**
+  ([Tommy Lau](https://github.com/TommyLau), MIT; the repository is no longer on GitHub), community ports built on d2r-mobile: the crash-report,
+  dirty-page, RomFS-index and thread-exit fixes, and from nxnative the memory pool lookup index, compatible texture views, unwritten colour
+  outputs and frame-timed scripted input, credited in their commits; `tools/game_extract` follows nxnative's `nx_extract`. For Tears of the
+  Kingdom, whose system modules are the ones nxnative brought up for Breath of the Wild 1.9.0: the explicit jump-table rewrite (`site_br_tab`),
+  the in-process audio renderer, host guest threads, amiibo, play report, oe / hid / fs additions, NVN 55 functions, deferred texture binds,
+  growable command-memory segments, the NVN API version setting, shader keys over control section and code, linear textures on the pool buffer,
+  the inline-uniform ring and per-stage vertex shader padding; later the autorelease pool for retired objects, the driver segment for vertex and
+  compute shaders, clears on a left-out attachment slot, the growable dirty-range table, QueueFinish without present waits, two translator fixes,
+  vertex output defaults, invariance and the Metal compile cache; then precise SleepThread, env.txt switches, compressed files stored in the IPA,
+  yield back-off (opt-in), targeted wakes, waits on upload completion and buffer releases, a per-thread pool cache, the dirty range kept per
+  texture, residency no-op skips, page runs, a spare texture for re-uploads and VP9 row multithreading; then the host race fixes, the c1 guard
+  by interval arithmetic, the yield back-off start, the guest CPU power line and the BAHS shader entries; later Maxwell's min / max / clamp results for a NaN operand on
+  every GPU (`precise::`), and the SDK's address-region node area cut and two SDK return types; then the store-decision records for ten
+  attachments, page protection under the pool-slot lock, an ID's cached view dropped with its texture, the AudioOut notifier's disarm and Game
+  Mode off on the Mac; WaitSynchronization ended by the signal that woke it, credited in the code; the translator's split storage words read
+  whole; a pool's buffer made only over writable pages.
+- **[tomodachi-native](https://github.com/kuosuko/tomodachi-native)** ([kuosuko](https://github.com/kuosuko), MIT), a fork of nxnative: the
+  variant of the duplicated colour slot handling that keeps the slot the pass writes, the memory snapshots (`DM_MEMSNAP`), the FMZ multiply in
+  the shader translator, the attachment copies for draws that sample what their pass draws and code options applied at load.
+- **[MacNativeGames](https://github.com/ly05010419/MacNativeGames)** ([ly05010419](https://github.com/ly05010419), MIT), a Tears of the Kingdom
+  port on the same lineage: which RomFS files hold the shaders, virtual cores, clears drawn as quads, BC render targets through an auxiliary
+  texture, storage buffers addressed from uniform buffers, stale texture views, the behaviour and pacing of the VP9 movie decoder, the 60 fps
+  controller words, the real-time frame step, its uncapped pacing and the scene render size, uniform snapshots, and from its graphics layer the pending-write table, keep-alive, chunked
+  commits, render-state filter, upload staging pool, storage-followed and storage-shared textures, GPU write-back, uniform renaming,
+  small-texture hashing and once-per-submission checks, layered passes, the encode stage, driver segment fills, block height and D16 clear fixes,
+  the GPU memory budget and pool range checks, and the RomFS overlay findings for 60 fps; then the fault guard around snapshot copies, read-only
+  rodata, waiting for a save at quit and one game at a time on the Mac, host calls on a per-thread host stack with the frame record back to
+  the guest, the live command channel, the sead heap walk and list watch and the soak measurement; then no blending on integer colour outputs,
+  empty memory pools, virtual cores handed over by moving their owner and fewer pipeline guesses, ported by hand and credited in the code; the
+  Mac shader libraries' minimum system version; and shaders that differ only in control bytes the translator does not read translated and
+  packed once.
+- **[LASRecomp](https://github.com/peiikai/LASRecomp)** ([Peiikai](https://github.com/peiikai), MIT), a static recompilation of Link's Awakening:
+  its rule that a texture is uploaded from guest memory until the GPU renders into it, behind the CPU-filled textures of Tears of the Kingdom,
+  and the order of WaitSynchronization's checks; GPU time as the union of command buffers; the ring of lock / condition variable calls, the late
+  condition variable wait and the layout of its CI checks; its SHF / I2I instruction vectors; HSETP2 `.H_AND`'s rule and its vectors.
+- **Single fixes from other ports**, credited in the code: [Kamisorara/d2r-mobile](https://github.com/Kamisorara/d2r-mobile) (controller face
+  buttons by the printed letter, also upstream's), [jiangjifeng/nxnative](https://github.com/jiangjifeng/nxnative) (scaled vertex formats),
+  [GirlNet/d2r-mobile](https://github.com/GirlNet/d2r-mobile) and [lordran-native](https://github.com/Nishikori-Yui/lordran-native) (sampler LOD
+  bias and reduction; lordran-native also the alpha test and occlusion counts across submissions), [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (the handles of a WaitSynchronization in thread dumps, user mod folders, RGBA4's
+  channel order, as [nxport](https://github.com/nxporting/nxport) found it; nxport also Link's grip on moving ground above 100 fps),
+  [BotWRecomp](https://github.com/IshaanKalra2103/BotWRecomp) (game data out of backups, GCSupportsGameMode),
+  [4ppp44/d2r-mobile-ios17](https://github.com/4ppp44/d2r-mobile-ios17) (what an iOS 17 build needs), [GirlNet/nxnative](https://github.com/GirlNet/nxnative)
+  (the host built for every game on a CI runner), [RogelioLB/nxnative-android](https://github.com/RogelioLB/nxnative-android) (a thread's stack
+  reported without bionic's guard page), upstream d2r-mobile's later fixes (no writes for outputs a pixel shader leaves, nearest filters for formats
+  not filtered linearly, the on-screen controls drawn again only when they look different), [LASRecomp](https://github.com/peiikai/LASRecomp) and [SkyRecomp](https://github.com/Apolinario-coder/SkyRecomp) (a
+  swapchain that survives a lost surface, a pipeline cache kept between launches), [PKShield-Android](https://github.com/simipoB/PKShield-Android)
+  (the barrier to host reads at a submission's end), [doom-port](https://github.com/Desm0nt/doom-port) (AAudio's legacy path after a stall).
+- **[nx2android](https://github.com/shirai91/nx2android)** ([shirai91](https://github.com/shirai91), MIT as its README states), nxnative's Android port:
+  the address-region refusals logged and the node area cut for a Unity 6 sdk build, the rewriter's Android target (thread slots in bionic's
+  TLS_SLOT_APP), an APK written and signed without the Android SDK (binary manifest, aligned ZIP, APK Signature Scheme v2), credited in the
+  code; its Android facts guide the Android port; later the view's swizzle replacing the texture's, a texture at two colour slots on Vulkan, the
+  manifest's configuration changes and the frame rate voted for the window; the subgroup size and gather precision given to the translator for
+  Vulkan, and TMML's LOD as unsigned.
+- **[S2Arm](https://github.com/jhaizhou-ops/S2Arm)** ([jhaizhou-ops](https://github.com/jhaizhou-ops), Apache-2.0; written anew from what it does,
+  no code taken): the dirty tracking's `mprotect` results checked, the argument buffer's length from the reflection, the app's name in ASCII with
+  the title per language, the phone's haptics-only engine; the unwritten attachments' stores dropped with the TBDR rewrites off; mid-submission
+  commits held while the GPU is busy; texture uploads from a pool not yet resident read through a buffer of their own pages; how a half-float
+  target rounds; the on-screen stick and camera ring as layers of their own; runs of short sleeps backed off; MetricKit's reports kept and named;
+  the signature's expiry shown in the app; whether the GPU applies a sampler's LOD bias and min / max reduction; the install without local.env,
+  the renewal by signing again, the data pushed by content.
+- **[mush8](https://github.com/c22dev/mush8)** ([c22dev](https://github.com/c22dev), GPL-3.0; ideas only, no code taken): a stamp of the
+  rewriter in the product, the rewriter refusing system registers it does not know, the SDK's abort text at a Break.
 
 ## Not taken (and why)
 
