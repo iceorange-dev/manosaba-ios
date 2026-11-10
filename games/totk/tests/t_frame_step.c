@@ -10,7 +10,8 @@
 // same way (ignored, -DDM_TEST_OUTPUT_NO_DISPLAY, fails 3); docked when a display size is reported and DM_OPMODE is unset (the mode left as it was,
 // -DDM_TEST_NATIVE_HANDHELD, fails 1). A scene size from dropped frames (plan item 190, scene_auto_step): every frame of a run counted
 // (-DDM_TEST_SCENE_AUTO_COUNT_ALL) fails 1; the lowest level kept however late the frames stay (-DDM_TEST_SCENE_AUTO_NO_GIVE_UP) fails 3; a rate
-// the host holds not taken for the period (-DDM_TEST_SCENE_AUTO_HOLD_IGNORED) fails 2.
+// the host holds not taken for the period (-DDM_TEST_SCENE_AUTO_HOLD_IGNORED) fails 2. The game's dynamic resolution step by step (plan item
+// 305, dr_step): the first present's scale taken for a step (-DDM_TEST_DR_STEP_FIRST) fails 1.
 #include <stdio.h>
 #include <math.h>
 #define FRAME_STEP_TEST 1
@@ -170,6 +171,15 @@ int main(void) {
         expect("... level 2 = 960x540, level 0 the boot size", 1, scene_auto_size(b720, 2) == ((uint64_t)540 << 32 | 960) && scene_auto_size(b720, 0) == b720, 0);
         expect("auto sizes from 1600x900: 1400x786 and 1200x674 (even), each a live size", 1, scene_auto_size(b900, 1) == ((uint64_t)786 << 32 | 1400)
                && scene_auto_size(b900, 2) == ((uint64_t)674 << 32 | 1200) && scene_live_size(1400, 786, "", b900) && scene_live_size(1200, 674, "", b900), 0); }
+    {   // the game's dynamic resolution step by step (plan item 305, DM_SCENE_DR_LOG)
+        dr_steps d = {0}; float a = -1, b = -1; const float one = 1.0f, p8 = 0.8f; uint32_t u1, u8; memcpy(&u1, &one, 4); memcpy(&u8, &p8, 4);
+        expect("steps: the first present is no step [-DDM_TEST_DR_STEP_FIRST: 1]", 0, dr_step(&d, u1, &a, &b), 0);
+        expect("... the same scale again: none", 0, dr_step(&d, u1, &a, &b), 0);
+        int s = dr_step(&d, u8, &a, &b);
+        expect("... 1 then 0.8: a step from 1 to 0.8 at the third present", 1, s && a == one && b == p8 && d.presents == 3, 0);
+        expect("... 0.8 again: none", 0, dr_step(&d, u8, &a, &b), 0);
+        s = dr_step(&d, u1, &a, &b);
+        expect("... back to 1: a step from 0.8 to 1 at the fifth", 1, s && a == p8 && b == one && d.presents == 5, 0); }
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }

@@ -279,6 +279,20 @@ static uint64_t scene_auto_size(uint64_t boot, int level) {
     unsigned w = (unsigned)((uint32_t)boot * (8u - (unsigned)level) / 8) & ~1u, h = (unsigned)((boot >> 32) * (8u - (unsigned)level) / 8) & ~1u;
     return (uint64_t)h << 32 | w;
 }
+// The game's dynamic resolution step by step (DM_SCENE_DR_LOG=1, plan item 305: which presented frames follow a step, for shots taken across
+// one): 1 when this present's scale (the float's bits) is not the present's before, with both; the first present is no step
+typedef struct { uint32_t was; int any; unsigned long presents; } dr_steps;
+static int dr_step(dr_steps *s, uint32_t v, float *from, float *to) {
+    s->presents++;
+#ifndef DM_TEST_DR_STEP_FIRST   // negative control of t_frame_step only: the first present's scale taken for a step from 0
+    int step = s->any && v != s->was;
+#else
+    int step = v != s->was;
+#endif
+    if (step) { memcpy(from, &s->was, 4); memcpy(to, &v, 4); }
+    s->was = v; s->any = 1;
+    return step;
+}
 #ifndef FRAME_STEP_TEST
 static _Atomic uint64_t *g_page;
 static frame_mean g_mean;
@@ -351,7 +365,7 @@ int dm_game_realtime_step(void) { return g_realtime && g_pin <= 0; }   // (a pin
 int nvn_fstep_step(void);   // gfx/nvn/hle_nvn.c: DM_FRAME_STEP=vsync, the host's step in vsyncs of 60 Hz (plan item 133), 0 otherwise
 // The game's dynamic resolution as it runs (plan items 131a / 276): the scale the renderer holds at +0xccc (the controller 0x584300's tier, stored by
 // its caller; rules.py option fixedres holds it at 100 %), read at each present from the renderer the scene option keeps at +48; every 600 presents
-// the values seen and how often, when more than one was or it moved
+// the values seen and how often, when more than one was or it moved. DM_SCENE_DR_LOG=1: each step as it happens too (dr_step)
 static void dr_note(void) {
     static struct { uint32_t v; unsigned n; } seen[4]; static int ns; static unsigned presents, other; static uint32_t last;
     uintptr_t rend = (uintptr_t)atomic_load_explicit((_Atomic uint64_t *)(void *)((uint8_t *)g_page + 48), memory_order_relaxed);
@@ -360,7 +374,11 @@ static void dr_note(void) {
     int k = 0; while (k < ns && seen[k].v != v) k++;
     if (k == ns) { if (ns < 4) { seen[ns].v = v; seen[ns].n = 0; ns++; } else k = -1; }
     if (k >= 0) seen[k].n++; else other++;
-    int moved = presents && v != last; last = v;
+    int moved = presents && v != last;
+    { static int each = -1; static dr_steps st; float a = 0, b = 0;   // DM_SCENE_DR_LOG=1: every step as it happens, by its present
+      if (each < 0) { const char *e = getenv("DM_SCENE_DR_LOG"); each = e && strcmp(e, "0"); }
+      if (dr_step(&st, v, &a, &b) && each) LOG("[scene size] the game's dynamic resolution %g → %g at present %lu (DM_SCENE_DR_LOG)", a, b, st.presents); }
+    last = v;
     if (++presents < 600 && !moved) return;
     if (presents >= 600) {
         if (ns > 1 || other) { char b[256]; int o = 0; for (int i = 0; i < ns; i++) { float f; memcpy(&f, &seen[i].v, 4); o += snprintf(b + o, sizeof b - o, " %g × %u", f, seen[i].n); }

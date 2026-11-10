@@ -292,8 +292,9 @@ The iPhone's frame rate (the current focus; the power split above decides what h
   (`work/run/mano/save_ch1_map_20261027`: Load Game → the Auto page → its first save, A every 1.2 s; a dialogue with three characters, then the map
   from frame 6300): 62.9 MB stored a frame in the dialogue and 16.9 MB on the map either way, the same GPU time and pictures, 9-10 % fewer
   instructions with them off. Left on all the same: the instructions are 0.6-1.4 M a frame there (0.09 ms of translation), so there is no time to
-  gain, and the render targets' heap is one of the parts (Metal's allocated bytes in the debate 1,304 MB with them off against 1,205, one run each
-  with few memory lines: not measured properly).
+  gain, nor memory (batch 194, the trial's opening into the debate three times each in turn with a memory line every 60 frames: Metal's allocated
+  bytes in the debate 1,248-1,301 MB with them on and 1,241-1,295 off, RSS 1,780-1,825 and 1,760-1,870, at the opening's sampled peak 1,645-1,710 and
+  1,632-2,227 MB; the single runs' 1,205 against 1,304 were that spread).
 - [-] 229 the guest main thread's QoS: `DM_MAIN_QOS=ui` exists (batch 79). The A/B on the iPhone Air (batch 183, Great Sky Island standing): no
   difference. From a cool start its 60 fps windows have frame time p50 13.7-15.3 / p95 17.0-21.9 ms against 12.9-14.9 / 16.8-22.3 ms of
   three runs without it, thermal state serious 46 s after start against 44-58 s, and 27.44 fps under the hold against 27.40-27.65.
@@ -487,10 +488,21 @@ and 297 in batch 142, the user's order: 301 next):
   about 200 ms near the 45th line was the test's own screenshot (the read-back and PNG encoding on the render thread).
 
 From the eleventh review (2026-11-08, [docs/sources.md](docs/sources.md); the user: fix the bugs, port what is worth it):
-- 305 Tears of the Kingdom's scene targets across a resolution step (BennettStaley 38a1348, MIT): the game makes them again at the new size at
-  the same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); look at a shrine across a step first
-  (needs a save in or by a shrine). Also MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps), checked at 90 and 120 with 292;
-  the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run time).
+- 305 Tears of the Kingdom's scene targets across a resolution step (BennettStaley 38a1348, MIT): the game makes them again at the new size at the
+  same memory and a storage keyed by size hands out an empty texture (temporal history flashes in shrines); looked at in batch 194, nothing to see.
+  The save: `work/run/totk/save_iphone_1022`, its slot 02 alone, loads inside a shrine (the Mac, handheld, product60 at 60 Hz). The game's own steps
+  were made to come by `DM_NVN_TS_SCALE=2.25` (the game sees a GPU that much slower: 1, 0.9 and 0.8 of 1280x720 in turn, about 25 steps in 1,800
+  presents there; at 3 it stays at 0.8, at 2 at 1), each logged with its present (`DM_SCENE_DR_LOG=1`, new) and a shot taken at every present across
+  them. Standing, two steps: one changed frame each (1.1 and 1.6 levels of mean difference, the picture at the other size) and the frames after it as
+  steady as those before (0.03-0.1). Running through the room and along its walls, two steps with the render targets' heap and seven without it
+  (`DM_NVN_RT_HEAP=0`; a Metal 3 build has none): no frame after a step stands out of the motion's own differences, and the six frames around each
+  show no flash, ghost or missing shading (looked at). The same across the live scene size (four `scene` commands between 960x540 and 1600x900): one
+  changed frame, nothing settling. What there is of their finding here: the storage table is keyed as theirs (storage, layout, format), so a target at
+  another size has another texture; with the heap it is placed over the bytes the other size's drew, as on the console, without it it is new or the
+  one last drawn at that size. Their answer (the storage's last render target drawn scaled into the new size's texture) is not taken while nothing
+  shows; it is the one to take if a shrine flashes in play. Also MacNativeGames #1348 (camera too fast, Link stopping at steps above 63.5 fps),
+  checked at 90 and 120 with 292; the camera-rate getter (nxport b588cf2; 1.4.3's only getter of that shape is main 0x1bd3528, to confirm at run
+  time).
 - 310 on the iPhone, left: sound with other apps' (acnh-mobile 8dcd00c: crackles when mixed; the user plays music on the phone while manosaba runs),
   memory touched before loading (nxnative-mkw b8f81e4; after other apps have filled the phone's memory). Its half-float rounding went to 315d, the
   pad's redraw to 315e (batch 152).
@@ -2241,3 +2253,9 @@ Finished items from 260 on, in the archive's form (`[x] batch N` is the commit w
   Metal 4 and Metal 3, host 220 / 220, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected. Smoke: Tears of
   the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots, 0.2-0.9 tile reads and no copy a frame,
   instructions a draw 26,262-36,342; manosaba none, its frames the same.
+- [x] batch 194 · 305, a shrine across the game's resolution steps on the Mac: nothing flashes, no fix taken (the item above).
+  `games/totk/frame_step.c`: `DM_SCENE_DR_LOG=1` logs each step of the game's dynamic resolution with its present (dr_step). `t_frame_step` +5 (109;
+  `-DDM_TEST_DR_STEP_FIRST` 1 fails). And 219's open reading for manosaba: its memory is the same with the pass rewrites on and off (three runs each).
+  gfx 203 / 203 on Metal 4 and Metal 3, host 220 / 220, sanitizer, texture, audit and tool tests, both IPAs; Android: built, the phone not connected.
+  Smoke: Tears of the Kingdom's two red lines as before, s800 the same, s1300 and s1800 other moments of the same two shots, 0.0-0.7 tile reads and no
+  copy a frame, instructions a draw 26,114-38,640; manosaba none, its frames the same.
