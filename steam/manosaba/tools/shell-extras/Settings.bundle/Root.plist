@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PreferenceSpecifiers</key>
+	<array>
+		<dict>
+			<key>Type</key><string>PSGroupSpecifier</string>
+			<key>Title</key><string>声音</string>
+			<key>FooterText</key><string>开启后，静音模式（iPhone 侧边的静音开关、iPad 控制中心里的静音）不再让游戏静音；其他 App 的音乐仍可同时播放。回到游戏即生效。</string>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSToggleSwitchSpecifier</string>
+			<key>Title</key><string>静音模式下仍播放声音</string>
+			<key>Key</key><string>manosaba_play_in_silent_mode</string>
+			<key>DefaultValue</key><false/>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSGroupSpecifier</string>
+			<key>Title</key><string>性能</string>
+			<key>FooterText</key><string>机身发热时把帧率降到 40 fps，过热时降到 30 fps，避免系统降频后掉到十几帧。最高帧率对所有场景生效。回到游戏即生效。</string>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSToggleSwitchSpecifier</string>
+			<key>Title</key><string>发热时自动降帧</string>
+			<key>Key</key><string>manosaba_thermal_cap</string>
+			<key>DefaultValue</key><true/>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSMultiValueSpecifier</string>
+			<key>Title</key><string>最高帧率</string>
+			<key>Key</key><string>manosaba_max_fps</string>
+			<key>DefaultValue</key><integer>0</integer>
+			<key>Titles</key>
+			<array><string>跟随游戏设置</string><string>60 fps</string><string>40 fps</string><string>30 fps</string></array>
+			<key>Values</key>
+			<array><integer>0</integer><integer>60</integer><integer>40</integer><integer>30</integer></array>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSGroupSpecifier</string>
+			<key>Title</key><string>存档</string>
+			<key>FooterText</key><string>在登录同一 Apple ID 的 iPhone 和 iPad 之间同步存档和游戏设置（音量、文字速度等）。换设备时先把游戏切到后台，再在另一台设备上重新打开。下次启动游戏时生效。</string>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSToggleSwitchSpecifier</string>
+			<key>Title</key><string>iCloud 存档同步</string>
+			<key>Key</key><string>manosaba_icloud_sync</string>
+			<key>DefaultValue</key><true/>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSGroupSpecifier</string>
+			<key>Title</key><string>诊断</string>
+			<key>FooterText</key><string>在设备控制台输出内存、帧率和 Metal 分配日志，供调试用；关闭可略微省电。下次启动游戏时生效。</string>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSToggleSwitchSpecifier</string>
+			<key>Title</key><string>调试日志</string>
+			<key>Key</key><string>manosaba_diagnostics</string>
+			<key>DefaultValue</key><true/>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSGroupSpecifier</string>
+			<key>Title</key><string>关于</string>
+		</dict>
+		<dict>
+			<key>Type</key><string>PSTitleValueSpecifier</string>
+			<key>Title</key><string>版本</string>
+			<key>Key</key><string>manosaba_version</string>
+			<key>DefaultValue</key><string>—</string>
+		</dict>
+	</array>
+</dict>
+</plist>

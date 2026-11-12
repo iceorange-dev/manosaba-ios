@@ -1,0 +1,11 @@
+unity-6000.0.48f1/
+ShellProject/Library/
+ShellProject/Temp/
+ShellProject/Logs/
+ShellProject/UserSettings/
+build/
+logs/
+.venv/
+__pycache__/
+saves/
+tools/**/*.xcodeproj/

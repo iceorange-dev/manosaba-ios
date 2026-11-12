@@ -1,0 +1,21 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="#0f0d14", pad=0.4, nodesep=0.35, ranksep=0.6, fontname="Helvetica"];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=13, color="#3a2f4d", fontcolor="#f2ecff", fillcolor="#1d1828", penwidth=1.4, margin="0.18,0.10"];
+  edge  [color="#b48cff", penwidth=1.4, arrowsize=0.7, fontname="Helvetica", fontsize=10, fontcolor="#cdbdf0"];
+
+  subgraph cluster_steam { label="Steam macOS build (yours)"; fontcolor="#cdbdf0"; color="#3a2f4d"; style="rounded";
+    ga   [label="GameAssembly.dylib\narm64 IL2CPP game code"];
+    data [label="Data/  +  StreamingAssets\n6.5 GB scenes · bundles · voice"];
+  }
+  subgraph cluster_unity { label="Unity 6000.0.48f1 iOS player"; fontcolor="#cdbdf0"; color="#3a2f4d"; style="rounded";
+    eng  [label="libiPhone-lib.a\nplatform check NOP'd"];
+    reg  [label="9,684 icall registrations"];
+  }
+  fw    [label="ManosabaGame.framework\nretagged platform=iOS", fillcolor="#2b1f40"];
+  stub  [label="steam_api.dylib\noffline stub", fillcolor="#2b1f40"];
+  app   [label="manosaba.app\non iPad", shape=box, fillcolor="#b48cff", fontcolor="#120e1a", color="#b48cff"];
+
+  ga -> fw [label="vtool + install_name_tool"];
+  fw -> app; stub -> app; eng -> app; reg -> app;
+  data -> app [label="APFS clone → Data/Raw"];
+}

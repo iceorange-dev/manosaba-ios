@@ -1,0 +1,31 @@
+name: ManosabaDrive
+options:
+  bundleIdPrefix: ${MANOSABA_BUNDLE_ID}
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Host:
+    type: application
+    platform: iOS
+    sources: [Host]
+    info:
+      path: Host/Info.plist
+      properties:
+        UILaunchScreen: {}
+  Drive:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Drive]
+    dependencies:
+      - target: Host
+    settings:
+      TEST_TARGET_NAME: Host
+      GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Drive:
+    build:
+      targets:
+        Host: all
+        Drive: [test]
+    test:
+      targets: [Drive]
