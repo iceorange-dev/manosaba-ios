@@ -2,7 +2,7 @@
 
 The open plan items, by what each needs (2026-11-11). An entry holds only what is left; what was done for an item is in
 [plan-done.md](plan-done.md) under the same number, the state of the ports in [DEVELOPMENT.md](../DEVELOPMENT.md#where-the-work-stands-2026-11-11).
-A new item takes the next number (327). How these two files are kept: [DEVELOPMENT.md § Testing](../DEVELOPMENT.md#testing).
+A new item takes the next number (328). How these two files are kept: [DEVELOPMENT.md § Testing](../DEVELOPMENT.md#testing).
 
 ## The iPhone Air (the test phone)
 
@@ -17,13 +17,14 @@ A new item takes the next number (327). How these two files are kept: [DEVELOPME
 - 317a · whether a free-account install receives MetricKit's payloads.
 - 281 · Tears of the Kingdom above 1080 on iOS: the heap overlay of `games/totk/heapdef.py`, a larger application pool than `ios_pool_add_mb` 0
   and a heap region above `guest_heap_mb` 2176 (none tried on a device).
-- 321 · once its cost is the critical path (below): the frame step's rules measured again, for `DM_FRAME_STEP=vsync` as the iOS default.
+- 321 · the frame step's rules measured again now that its cost is the critical path (the `[frame step]` line gives CPU, GPU and path), for
+  `DM_FRAME_STEP=vsync` as the iOS default.
 
 ## The Mac alone
 
-- 264 · the next parts of the Metal backend as translation units of their own: the presentation layer (present, present_thread, shot) as one;
-  then live, uniform_rename, chunks, u8_layers. The parts the draw reads at every call stay in the main unit.
-- 321 · the frame step's cost as the critical path (submits' start to the GPU's end; S2Arm: 27 against 35 ms at a hold of 3).
+- 327 · the frame step's cost does not hold the game's own work between its frames (Tears of the Kingdom submits before it acquires its window
+  texture: a CPU reading of 0.03 vsyncs): with `DM_TEST_WORK_MS=22` on the Mac 12 and 15 trials failed in 6,600 frames (the path 0.70-0.86
+  vsyncs). The presenting thread's CPU time between presents would be such a term; whether a phone scene shows failed trials (321) decides.
 - 271 · CPU per draw: what the profile still shows is small (pool lookups 6.4 % of the translation thread, the snapshots' lookup 3.7 %). Not
   taken so far: 4ppp44 cb21bec / d0d3cb1 (argument blocks reused across a submission's passes, the driver segment filled only where read).
 - 220 · MetalFX frame interpolation: with no motion target the camera's motion would come from the depth and two frames' matrices, and moving

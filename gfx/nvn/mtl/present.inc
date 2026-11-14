@@ -1,4 +1,4 @@
-// gfx/nvn/mtl/present.inc, part of nvn_mtl.m (included there in order, one translation unit): MetalFX upscaling of the presented picture, live shots, the perf line, present_now
+// gfx/nvn/mtl/present.inc, part of mtl/present.m (included there in order, one translation unit): MetalFX upscaling of the presented picture, live shots, the luma check, present_now
 // ---------- MetalFX spatial upscaling of the presented picture ----------
 // Mode: mtl_upscale_set (iOS Settings page), else DM_UPSCALE=metalfx; off = the present pass scales bilinearly. With it on and the picture shown
 // larger than the game renders it (crop rectangle at the texture's origin), MetalFX's spatial scaler first scales the picture to its on-screen size
@@ -11,7 +11,7 @@
 // frame, and (2) the present pass waits on the fence before its fragment stage. The older API (DM_NVN_M3) tracks these hazards itself.
 static _Atomic int g_upscale = -1;
 void mtl_upscale_set(int on) { int v = on != 0; if (atomic_exchange(&g_upscale, v) != v) MLOG("MetalFX upscaling %s", v ? "on" : "off"); }
-static int upscale_on(void) {
+int upscale_on(void) {
     int m = atomic_load(&g_upscale);
     if (m < 0) { const char *e = getenv("DM_UPSCALE"); int v = e && (!strcmp(e, "metalfx") || !strcmp(e, "1")), x = -1; atomic_compare_exchange_strong(&g_upscale, &x, v); m = atomic_load(&g_upscale); }
     return m;
@@ -190,7 +190,7 @@ static id<MTLBuffer> live_copy(id cb, id<MTLTexture> src, uint64_t n, char *path
     if (f != MTLPixelFormatRGBA8Unorm && f != MTLPixelFormatRGBA8Unorm_sRGB && f != MTLPixelFormatBGRA8Unorm && f != MTLPixelFormatBGRA8Unorm_sRGB) { RED_ONCE(60, "live shot: format %lu not supported", (unsigned long)f); return nil; }
     size_t w = src.width, h = src.height; id<MTLBuffer> buf = [g_dev newBufferWithLength:w * h * 4 options:MTLResourceStorageModeShared]; if (!buf) return nil;
     res_add(buf); res_commit();   // resident before this command buffer is committed
-    id e = enc_b_begin(cb);
+    id e = enc_b_open(cb);
 #if !DM_NVN_M3
     [(id<MTL4ComputeCommandEncoder>)e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
 #endif
@@ -211,7 +211,7 @@ static id<MTLBuffer> live_rows(id cb, id<MTLTexture> src, uint64_t n) {
     if (f != MTLPixelFormatRGBA8Unorm && f != MTLPixelFormatRGBA8Unorm_sRGB && f != MTLPixelFormatBGRA8Unorm && f != MTLPixelFormatBGRA8Unorm_sRGB) return nil;
     size_t w = src.width, h = src.height, row = w * 4; int k = (int)(n % LR_RING);
     if (!g_lr_buf[k] || g_lr_buf[k].length < row * LR_ROWS) { g_lr_buf[k] = [g_dev newBufferWithLength:row * LR_ROWS options:MTLResourceStorageModeShared]; res_add(g_lr_buf[k]); res_commit(); }
-    id e = enc_b_begin(cb);
+    id e = enc_b_open(cb);
 #if !DM_NVN_M3
     [(id<MTL4ComputeCommandEncoder>)e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
 #endif
@@ -257,7 +257,7 @@ static void pl_encode(id cb, id<MTLTexture> src, const int crop[4], id<MTLTextur
     if (crop && (crop[2] || crop[3])) { x = (NSUInteger)crop[0]; y = (NSUInteger)crop[1]; w = (NSUInteger)crop[2]; h = (NSUInteger)crop[3]; }
 #endif
     *bs = pl_buf(slot, 0, w); *bo = pl_buf(slot, 1, out.width);
-    id e = enc_b_begin(cb);
+    id e = enc_b_open(cb);
 #if !DM_NVN_M3
     [(id<MTL4ComputeCommandEncoder>)e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
 #endif
@@ -278,22 +278,11 @@ static void pl_write(uint64_t n, double src, double out) {   // the present's co
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
-    if (g_use != USE_OFF && g_use != USE_DONE) use_tick();
-    if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
-        if (g_present_n == 1) g_bp.first_present = bp_now() - g_bp.t0;
-        MLOG("[bootprof] t=%.3f s present #%llu: metallib loads %llu / %.1f ms; pipeline creations %llu / %.1f ms (all synchronous on the submit thread); warm-up claimed shaders %llu / render pipelines %llu / compute pipelines %llu; "
-             "texture uploads %.1f MB / %llu first uploads + %llu re-uploads / %.1f ms; first frame presented t=%.3f s", (bp_now() - g_bp.t0) / 1e9, g_present_n,
-             g_bp.lib_n, g_bp.lib_ns / 1e6, g_bp.pso_n, g_bp.pso_ns / 1e6, g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps,
-             g_bp.up_bytes / 1048576.0, g_pkg_uploads, g_pkg_reuploads,
-             g_up_total_ns / 1e6, g_bp.first_present / 1e9);
-    }
+    use_present();
+    if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) bootprof_present(g_present_n);
     PD("X ser=%llu", t->serial);
-    id<MTLTexture> src = tex_mtl(t);
+    int wcrop[4]; id<MTLTexture> src = present_tex(t, &crop, wcrop);   // (on widened storage the crop is mapped into wcrop)
     if (!src) { RED_ONCE(8, "cannot create MTLTexture for the present texture"); return 0; }
-    // The game's crop on widened storage (plan item 320g): mapped by the storage's ratio, so the widened picture is shown, not its left 16:9 part
-    int wcrop[4];
-    if (__builtin_expect(crop && (crop[2] || crop[3]) && t->d.width && t->d.height && tex_is_widened(src, t), 0)) {
-        widen_map_rect(crop, (double)src.width / t->d.width, (double)src.height / t->d.height, (int)src.width, (int)src.height, wcrop); crop = wcrop; }
     // DM_NVN_REGLUM=x0,y0,x1,y1:file (normalized coordinates): read back this region on every present and record "present sequence number, present time ns, region mean luminance, subsampled grayscale thumbnail (hex)" (diagnostic: verify that animation speed is independent of frame rate).
     // A separate command buffer is queued after this frame's rendering (the same queue executes in submit order); does not wait for the GPU and does not disturb frame pacing
     static int rl = -1; static float rr[4]; static FILE *rlf; static pthread_mutex_t rlmu = PTHREAD_MUTEX_INITIALIZER;

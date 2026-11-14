@@ -15,7 +15,6 @@ void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int fail, count;
 #define EXPECT(name, want, got) do { long long w=(want), g=(got); count++; printf("%-84s expected %-6lld → got %-6lld %s\n", name, w, g, w==g?"✓":"✗"); fail += w != g; } while (0)
-static id<MTLCommandQueue> g_q;
 static int gpu_fill_ok(uint8_t *at, size_t n, uint8_t v) {   // a GPU fill of [at, at + n) through the pool buffer holding it, then whether the memory holds it
     void *bp = NULL; uint64_t off = 0; if (!mtl_addr((uint64_t)(uintptr_t)at, n, &bp, &off) || !bp) return 0;
     id<MTLBuffer> b = (__bridge id<MTLBuffer>)bp; id<MTLCommandBuffer> cb = [g_q commandBuffer]; id<MTLBlitCommandEncoder> e = [cb blitCommandEncoder];

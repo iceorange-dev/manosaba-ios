@@ -1,6 +1,6 @@
 // gfx/nvn/mtl/mtl.h: the Metal backend's private header (plan item 264): the includes, the Metal 4 / Metal 3 macros and the declarations its
-// translation units share. nvn_mtl.m is one translation unit with the parts in mtl/*.inc; the parts in mtl/*.m are translation units of their
-// own, each ending with `#pragma clang attribute pop` for the push at the end of this header
+// translation units share. nvn_mtl.m is one translation unit with most of the parts in mtl/*.inc; the parts in mtl/*.m are translation units of
+// their own (mtl/present.m with three .inc parts), each ending with `#pragma clang attribute pop` for the push at the end of this header
 #pragma once
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -115,6 +115,10 @@
 
 // ---- Shared between the backend's translation units: defined once, declared here ----
 extern id<MTLDevice> g_dev;                          // nvn_mtl.m
+extern id<MTLCommandQueue> g_q;                      // nvn_mtl.m: readbacks, screenshots, teardown (q_cb); on Metal 3 the one command stream queue
+#if !DM_NVN_M3
+extern id<MTL4CommandQueue> g_q4;                    // nvn_mtl.m: the one command stream queue (the game's command buffers and the presents)
+#endif
 // GPU keep-alive (mtl/keepalive.m)
 extern _Atomic int g_inflight;                       // the game's command buffers committed and not completed
 extern dispatch_semaphore_t g_ka_idle;               // signalled when g_inflight drops to 0
@@ -132,6 +136,7 @@ static const pfv_pair g_pfv_srgb[] = {
 };
 // The residency set (nvn_mtl.m): a resource the GPU may use from now on, and one it no longer does
 void res_add(id<MTLResource> r); void res_remove(id<MTLResource> r);
+void res_commit(void);              // the set's changes committed: before a command buffer that uses what was just added
 // Textures (mtl/textures.inc): the object of a texture serial (an MTLTexture, or the record of a packaged one), and that record
 id serial_get(uint64_t k);        // (not retained: the table holds it)
 @interface NvPkg : NSObject { @public id<MTLTexture> tex, spare; uint64_t stamp, seen, hash, csub, chash, spare_fence; int tracked, hashed, dspan; } @end   // hash: full hash of the uploaded content under DM_NVN_DIRTYCHECK
@@ -163,5 +168,16 @@ extern CAMetalLayer *g_present_layer_resident;
 void present_pipeline(MTLPixelFormat format); id<MTLTexture> present_src(id<MTLTexture> src); MTLViewport present_vp(double dw, double dh, double cw, double ch);
 int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]);
 void mtl_present_stretch(int on);                    // the wide picture (plan item 154)
+// The presentation layer (mtl/present.m): screenshots, MetalFX upscaling of the presented picture, the present queue, the display link
+void present_init(void);                             // with the device (mtl_init): the presents' allocators, command buffers, argument table and UV buffers; DM_PRESENT_LINK, DM_PRESENT_LATENCY
+uint64_t present_alloc_bytes(void);                  // its command allocators' memory (Metal 4; 0 on Metal 3)
+void present_queue_state(uint64_t *in, uint64_t *done);   // presents queued and processed so far
+void present_drop_for_suspend(void);                 // before the background (mtl_drain): the queued frames the display link will not take are dropped
+void mtl_upscale_set(int on); int upscale_on(void);  // MetalFX upscaling of the presented picture: the iOS setting; whether it is on (that, or DM_UPSCALE)
+// What a present asks of nvn_mtl.m (mtl/stats.inc)
+id<MTLTexture> present_tex(const tex_t *t, const int **crop, int wcrop[4]);   // the texture it shows, the game's crop on it
+void use_present(void);                              // DM_GFXUSE's count of presents
+void bootprof_present(uint64_t n);                   // DM_BOOTPROF's line at present n
+int mtl_fps_target(void);                            // the player's frame rate target (mtl/exec.inc)
 #include "enc.h"
 #include "reg.h"

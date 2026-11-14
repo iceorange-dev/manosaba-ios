@@ -1,30 +1,8 @@
-// gfx/nvn/mtl/shot.inc, part of nvn_mtl.m (included there in order, one translation unit): Present screenshots
+// gfx/nvn/mtl/shot.inc, part of mtl/present.m (included there in order, one translation unit): Present screenshots
 // ---------- Present: draw the swapchain texture to the CAMetalLayer; optional screenshot ----------
 id<MTLRenderPipelineState> g_blit_pso; MTLPixelFormat g_blit_fmt;
 id<MTLSamplerState> g_blit_samp;
 static uint64_t g_present_n;
-void mtl_res_snapshot(mtl_res_count *out) {
-    memset(out, 0, sizeof *out);
-    out->pso = g_pso.n;
-    out->cps = g_cps.n;
-    out->dss = g_dss.n;
-    out->shaders = (uint32_t)(g_shcache ? g_shcache.count : 0);
-    os_unfair_lock_lock(&g_c1_lock);
-    out->c1_bufs = (uint32_t)(g_c1_banks.count + g_c1_exclusive); out->c1_alloc = g_c1_alloc_bytes; out->c1_data = g_c1_data_bytes;
-    os_unfair_lock_unlock(&g_c1_lock);
-    pthread_mutex_lock(&g_smu);
-    out->live_tex = g_by_serial.n;
-    pthread_mutex_unlock(&g_smu);
-    pthread_mutex_lock(&g_mu);
-    out->pools = (uint32_t)g_npool;
-    out->pool_adds = g_pool_adds;
-    pthread_mutex_unlock(&g_mu);
-    pthread_mutex_lock(&g_rmu);
-    out->view_slots = (uint32_t)g_ntreg;
-    for (int i = 0; i < g_ntreg; i++) if (g_treg[i].view) out->view_nonnull++;
-    for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) out->sview_nonnull++;
-    pthread_mutex_unlock(&g_rmu);
-}
 // Screenshot on request: dm_gfx_shot_at(k, path) = take a screenshot k frames after the current one; due requests are checked at every present
 #define SHOTQ_MAX 8
 static struct { uint64_t frame; char path[1024]; } g_shotq[SHOTQ_MAX]; static int g_nshotq;

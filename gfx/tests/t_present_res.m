@@ -3,6 +3,7 @@
 // PR #30: a GPU page fault in 4 of 14 boots). A real present into an offscreen layer; the set must hold no uncommitted change once present_now has
 // returned, and the GPU must finish it without an error. Without the commit (-DDM_TEST_PRESENT_NO_RESCOMMIT) the first check fails.
 #include "../nvn/nvn_mtl.m"
+#include "../nvn/mtl/present.m"   // the presentation unit's statics, in this translation unit too
 static CAMetalLayer *g_layer;
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 module_t *module_of(const void *p) { (void)p; return NULL; }

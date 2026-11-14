@@ -49,11 +49,8 @@ static void udc_selftest(void) {
 // in mtl_init and WriteTexels; OBJC_DEBUG_MISSING_POOLS=YES lists what is still missed). Submissions push their own pool (mtl_sub_begin)
 void mtl_init(void) { @autoreleasepool {
     if (g_dev) return;
-    const char *link = getenv("DM_PRESENT_LINK");
-    g_dm_present_link = link ? atoi(link) : 1; if (g_dm_present_link < 0 || g_dm_present_link > 2) g_dm_present_link = 1;   // Default 1 (real-device same-process alternation: when load exceeds one display-link period, long frames 15% → 0 and frame intervals even out; no difference from 0 at a steady 60); DM_PRESENT_LINK=0 turns it off   // 1 = present on every tick of a 60 Hz display link; 2 = 120 Hz display link, the game presents a frame every other display-link tick (when behind, it can present on the next 8.33 ms display-link tick)
-    g_latency_set = nvn_latency_setting(getenv("DM_PRESENT_LATENCY"));
-    if (!g_latency_set) MLOG("display link frame latency: auto (2 while the link ticks at 30 Hz, 1 otherwise; DM_PRESENT_LATENCY)");
     g_res_check_on = getenv("DM_RES_CHECK") != NULL;
+    g_gpu_span_host = 1;   // GPUStartTime / GPUEndTime are on the host's clock (core/frame.h)
     g_dev = MTLCreateSystemDefaultDevice();
     if (!g_dev) MDIE("no Metal device");
 #if TARGET_OS_SIMULATOR   // the Simulator's stand-in reports none; its buffers are the Mac's (plan item 114: tried as they are)
@@ -114,12 +111,6 @@ void mtl_init(void) { @autoreleasepool {
         if (!g_alloc4[i]) MDIE("failed to create MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
         g_up_alloc4[i] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae];
         if (!g_up_alloc4[i]) MDIE("failed to create upload MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
-        MTL4CommandAllocatorDescriptor *pad = [MTL4CommandAllocatorDescriptor new];
-        pad.label = [NSString stringWithFormat:@"nvn-mtl present allocator %d", i];
-        g_present_alloc4[i] = [g_dev newCommandAllocatorWithDescriptor:pad error:&ae];
-        if (!g_present_alloc4[i]) MDIE("failed to create present MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
-        g_present_cb[i] = [g_dev newCommandBuffer];
-        if (!g_present_cb[i]) MDIE("failed to create present MTL4CommandBuffer[%d]", i);
     }
     MTL4ArgumentTableDescriptor *atd = [MTL4ArgumentTableDescriptor new];
     atd.maxBufferBindCount = 31; atd.maxTextureBindCount = 1;
@@ -128,16 +119,8 @@ void mtl_init(void) { @autoreleasepool {
     g_ft = [g_dev newArgumentTableWithDescriptor:atd error:&ate]; if (!g_ft) MDIE("failed to create fragment argument table: %s", ate.localizedDescription.UTF8String);
     g_ct = [g_dev newArgumentTableWithDescriptor:atd error:&ate]; if (!g_ct) MDIE("failed to create compute argument table: %s", ate.localizedDescription.UTF8String);
     g_up_ct = [g_dev newArgumentTableWithDescriptor:atd error:&ate]; if (!g_up_ct) MDIE("failed to create upload compute argument table: %s", ate.localizedDescription.UTF8String);
-    MTL4ArgumentTableDescriptor *pad = [MTL4ArgumentTableDescriptor new];
-    pad.maxTextureBindCount = 1; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
-    g_present_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
-    if (!g_present_args) MDIE("failed to create present argument table: %s", ate.localizedDescription.UTF8String);
 #endif
-    for (int i = 0; i < 3; i++) {
-        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
-        if (!g_present_uv[i]) MDIE("failed to create present UV buffer[%d]", i);
-        res_add(g_present_uv[i]);
-    }
+    present_init();   // the presents' own objects, the pacing mode and the frame latency (mtl/present.m)
     g_ev = [g_dev newSharedEvent];
     g_keep = [NSMutableArray array];
     g_nvn_deswz_gpu = nvn_deswz_gpu_init(g_dev) == 0;

@@ -15,6 +15,10 @@
 // row as before (-DDM_TEST_FSTEP_RUN3): 2 fail (the bursts, the 25th frame); no probe (-DDM_TEST_FSTEP_NO_PROBE): 1 fails. The window took the
 // flapping the jitter case showed without the margin away, so a scene whose frames take 0.9 vsyncs at 30 fps and 1.15 at 60 (they fit 1 without
 // the margin, then every frame is late) checks it: no trial in 2,000 frames (without the margin, -DDM_TEST_FSTEP_NO_MARGIN: trials, 1 fails).
+// The cost as the critical path (nvn_fstep_cost, nvn_fpath): S2Arm's hold of 3, a CPU reading of 35 ms (2.1 vsyncs) with a path of 27 ms (1.62):
+// the cost is the path, never under the GPU's time, and max(CPU, GPU) without one; with it the step goes back to a hold of 2 within 600 frames,
+// with the CPU reading it stays at 3 (-DDM_TEST_FSTEP_COST_CPU: 2 fail); the path runs from the frame's first submit (every submit moving the
+// start, -DDM_TEST_FPATH_LAST_SUBMIT: 1 fails), and there is none for a frame out of the ring, without submits, or whose GPU end is not after them.
 #include "../nvn/nvn_fstep.h"
 #include <stdio.h>
 #include <string.h>
@@ -109,6 +113,22 @@ int main(void) {
       for (int i = 0; i < 100; i++) nvn_fstep_gpu_slowed(&h, 0.75, 1, 1, 0);
       for (int i = 0; i < 40; i++) sl2 = nvn_fstep_gpu_slowed(&h, 0.9, 2, 1, 0);
       check("the GPU at hold 2 1.5 times its time at 60 and over 0.85 vsync: slowed; 1.2 times: not", sl == 1 && sl2 == 0, "%.0f, %.0f", sl, sl2); }
+    {   // the cost as the critical path (321)
+      double c1 = nvn_fstep_cost(2.1, 1.2, 1.62), c2 = nvn_fstep_cost(2.1, 1.7, 1.62);
+      check("cost: the path 1.62 for a CPU reading of 2.1, and the GPU's 1.7 when that is more [-DDM_TEST_FSTEP_COST_CPU: 2.1]", c1 == 1.62 && c2 == 1.7, "%.2f, %.2f", c1, c2);
+      check("... without a path: max(CPU, GPU)", nvn_fstep_cost(0.9, 0.4, 0) == 0.9 && nvn_fstep_cost(0.3, 0.4, 0) == 0.4, "%.2f, %.2f", nvn_fstep_cost(0.9, 0.4, 0), nvn_fstep_cost(0.3, 0.4, 0));
+      nvn_fstep p; memset(&p, 0, sizeof p); nvn_fstep_next(&p, 0, 0, 1, FSTEP_MAX); p.k = 3;
+      for (int i = 0; i < 600; i++) { int k = p.k; double c = nvn_fstep_cost(2.1, 1.2, 1.62), shown = c > k ? ceil(c - 1e-9) : k; nvn_fstep_next(&p, shown, c, 1, FSTEP_MAX); }
+      check("a hold of 3 whose path is 1.62 vsyncs (CPU reading 2.1): back to a hold of 2 [-DDM_TEST_FSTEP_COST_CPU: stays at 3]", p.k == 2 && p.downs >= 1, "k %.0f, trials %.0f", p.k, (double)p.downs);
+      nvn_fpath fp; memset(&fp, 0, sizeof fp); const double vs = 1e9 / 60;
+      nvn_fpath_submit(&fp, 100, 1000000000ull); nvn_fpath_submit(&fp, 100, 1010000000ull);   // two submits of frame 100, 10 ms apart; its GPU work ends 27 ms after the first
+      double a = nvn_fpath_vsyncs(&fp, 100, 1027000000ull, vs);
+      check("the path from the frame's first submit to its GPU end: 27 ms, 1.62 vsyncs [-DDM_TEST_FPATH_LAST_SUBMIT: 17 ms]", fabs(a - 1.62) < 0.005, "%.3f vsyncs%.0s", a, 0);
+      nvn_fpath_submit(&fp, 116, 2000000000ull);   // the same slot, 16 frames on
+      nvn_fpath_submit(&fp, 0, 5);
+      check("... none for a frame out of the ring, one without submits, a GPU end before the submits; frame 0 has one",
+            nvn_fpath_vsyncs(&fp, 100, 1027000000ull, vs) == 0 && nvn_fpath_vsyncs(&fp, 101, 1027000000ull, vs) == 0 && nvn_fpath_vsyncs(&fp, 116, 1999000000ull, vs) == 0 && fabs(nvn_fpath_vsyncs(&fp, 0, 5 + 16666667, vs) - 1) < 1e-6,
+            "%.2f, %.2f", nvn_fpath_vsyncs(&fp, 100, 1027000000ull, vs), nvn_fpath_vsyncs(&fp, 0, 5 + 16666667, vs)); }
     printf("== %d checks, %d failed ==\n", n, fail);
     return fail != 0;
 }

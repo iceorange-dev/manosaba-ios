@@ -361,7 +361,8 @@ void mtl_cmd_alloc_bytes(uint64_t out[3]) {
     out[0] = out[1] = out[2] = 0;
 #if !DM_NVN_M3
     for (int i = 0; i < g_alloc_n; i++) out[0] += g_alloc4[i].allocatedSize;
-    for (int i = 0; i < 3; i++) { out[1] += g_up_alloc4[i].allocatedSize; out[2] += g_present_alloc4[i].allocatedSize; }
+    for (int i = 0; i < 3; i++) out[1] += g_up_alloc4[i].allocatedSize;
+    out[2] = present_alloc_bytes();
 #endif
 }
 void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_ok, unsigned long long heap_mb, unsigned long long heap_free_mb, unsigned long long heap_maxblk_kb) {

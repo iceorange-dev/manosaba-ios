@@ -21,6 +21,7 @@ void gpu_tag_done(uint64_t f, double g0, double g1);
 double mtl_gpu_ms(uint64_t f);       // The union of the frame's command-buffer spans; -1 while one is still running or the frame is gone
 double mtl_gpu_sum_ms(uint64_t f);   // The plain sum of the spans (what mtl_gpu_ms reported before 2026-10-19), for comparison with older numbers
 int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1);   // The frame's earliest GPU start and latest GPU end (0 while running or gone)
+extern int g_gpu_span_host;          // The spans are on the host's clock (now_ns), so a GPU end can be set against a CPU time: Metal's are (mtl_init sets it); Vulkan's are on the GPU's own clock
 
 // ---------- Same-process alternating measurement (DM_NVN_UB, off by default: without the environment variable the code below only adds one 'is it enabled' check) ----------
 // On a hot real device the system keeps adjusting power / frequency, and segment comparison (segments A and B each run for a minute) cannot resolve differences of <10%; within the same run, toggle by phase in turn and take differences of adjacent phase pairs, so the drift cancels.

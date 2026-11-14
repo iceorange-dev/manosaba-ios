@@ -172,7 +172,12 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     if (fstep_on()) {   // the step for the next frame from this one's time on screen and cost (nvn_fstep.h), before the game's hook stores it
         const double vs = 1e9 / 60; uint64_t now = now_ns();
         double shown = g_fs_prev_start && g_fs_start > g_fs_prev_start ? (g_fs_start - g_fs_prev_start) / vs : 0, cpu = g_fs_start && now > g_fs_start ? (now - g_fs_start) / vs : 0;
-        double gpu = g_frame >= 8 ? mtl_gpu_ms(g_frame - 8) : -1, cost = gpu * 1e6 / vs > cpu ? gpu * 1e6 / vs : cpu;
+        double gpu = g_frame >= 8 ? mtl_gpu_ms(g_frame - 8) : -1, gv = gpu > 0 ? gpu * 1e6 / vs : 0, path = 0; uint64_t pg0, pg1;
+        // The critical path of the frame whose GPU time this is, from where its submits began to its GPU work's end (plan item 321, nvn_fstep_cost): on
+        // a backend whose GPU times are on the host's clock. DM_FSTEP_RULES=0: measured for the log, max(CPU, GPU) used as before
+        if (g_gpu_span_host && gpu > 0 && mtl_gpu_span(g_frame - 8, &pg0, &pg1)) path = nvn_fpath_vsyncs(&g_fs_path, g_frame - 8, pg1, vs);
+        double cost = nvn_fstep_cost(cpu, gv, g_fs.no321 ? 0 : path);
+        static double cs_cpu, cs_gpu, cs_path; static int cs_n, cs_np; cs_cpu += cpu; cs_gpu += gv; cs_n++; if (path > 0) { cs_path += path; cs_np++; }
         if (shown > 0) { g_fs_game += g_fs_step; g_fs_real += shown; }
         int kmin = nvn_hold_interval(1, 60, nvn_pace_hold(atomic_load(&g_fps_hold), mtl_fps_target()));
         int gslow = nvn_fstep_gpu_slowed(&g_fs_gpu, gpu > 0 ? gpu * 1e6 / vs : 0, g_fs.k, kmin, g_fs.probe), cslow = fstep_cpu_slowed();   // plan item 321
@@ -181,9 +186,12 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         g_fs.slow = cslow || gslow;
         g_fs_step = nvn_fstep_next(&g_fs, shown, cost, kmin, FSTEP_MAX);
         g_fs_started = 0;
-        if (g_fs.frames % 300 == 0) LOG("[frame step] vsync step at frame %llu: k %d, step %d; %llu late, %llu up, %llu down (%llu failed, %llu probes), %llu paid back, %.0f vsyncs dropped; game time / real time %.4f",
+        if (g_fs.frames % 300 == 0) { LOG("[frame step] vsync step at frame %llu: k %d, step %d; %llu late, %llu up, %llu down (%llu failed, %llu probes), %llu paid back, %.0f vsyncs dropped; game time / real time %.4f; "
+                "the cost since the last line: CPU %.2f, GPU %.2f, critical path %.2f vsyncs (%d of %d frames with a path%s)",
             (unsigned long long)g_fs.frames, g_fs.k, g_fs_step, (unsigned long long)g_fs.late, (unsigned long long)g_fs.ups, (unsigned long long)g_fs.downs, (unsigned long long)g_fs.failed, (unsigned long long)g_fs.probes,
-            (unsigned long long)g_fs.paid, g_fs.dropped, g_fs_real > 0 ? g_fs_game / g_fs_real : 0);
+            (unsigned long long)g_fs.paid, g_fs.dropped, g_fs_real > 0 ? g_fs_game / g_fs_real : 0,
+            cs_n ? cs_cpu / cs_n : 0, cs_n ? cs_gpu / cs_n : 0, cs_np ? cs_path / cs_np : 0, cs_np, cs_n, g_fs.no321 ? "; DM_FSTEP_RULES=0: max(CPU, GPU) is the cost" : "");
+            cs_cpu = cs_gpu = cs_path = 0; cs_n = cs_np = 0; }
     }
     dm_game_present(); dm_sdk_test_present(g_frame);
     dm_movie_tick();   // before the core is given away: it signals the game's movie events (guest code)

@@ -10,7 +10,7 @@ uint64_t now_ns(void) { return bp_now(); }
 static int n, fail;
 #define EXPECT(name, want, got) do { long long w_ = (want), g_ = (got); n++; printf("%-84s expected %-4lld → got %-4lld %s\n", name, w_, g_, w_ == g_ ? "✓" : "✗"); fail += w_ != g_; } while (0)
 
-static id<MTLComputePipelineState> g_ps; static id<MTLCommandQueue> g_q;
+static id<MTLComputePipelineState> g_ps;
 static uint8_t sample_red(id<MTLTexture> t, int sid, float u, float lodgrad) {   // the red byte of one sample at (u, 0.5) with gradients for that footprint
     pthread_mutex_lock(&g_rmu); id<MTLSamplerState> s = samp_by_id(sid); pthread_mutex_unlock(&g_rmu);
     id<MTLBuffer> out = [g_dev newBufferWithLength:16 options:MTLResourceStorageModeShared];

@@ -9,39 +9,22 @@ static void wb_cpu_pass(void);
 
 id<MTLDevice> g_dev;   // (mtl/mtl.h: the backend's translation units share it)
 static int g_nvn_deswz_gpu;
-static id<MTLCommandQueue> g_q;
+id<MTLCommandQueue> g_q;   // (mtl/mtl.h)
 #if !DM_NVN_M3
-static id<MTL4CommandQueue> g_q4;
+id<MTL4CommandQueue> g_q4;   // (mtl/mtl.h: mtl/present.m commits the presents to it)
 static dispatch_queue_t g_feedback_q;
 #endif
 // Only one command stream queue: the game's command buffers and the presents all go to it (Metal 4: g_q4; older API: g_q; in Metal 4 builds g_q only
 // serves CPU-synchronous readback / screenshots / teardown). WaitSync and WaitEvent being correct as no-ops rests on this (g_nops in hle_nvn.c):
 // every command stream queue is created through here, and a second one aborts
 static void stream_queue_once(void) { static int n; if (++n > 1) MDIE("[red] command stream queue #%d created: the no-op WaitSync / WaitEvent rely on a single queue (g_nops in hle_nvn.c); make them real waits before adding a queue", n); }
-static _Atomic uint32_t g_present_qos;
 #define ALLOC_MAX 8
 static int g_alloc_n, g_alloc_cur;   // in-flight slots of the main submission (Metal 4: one command allocator per slot; older API: used only to limit the number of in-flight submissions)
 #if !DM_NVN_M3
 static id<MTL4CommandAllocator> g_alloc4[ALLOC_MAX];   // Command allocator pool of the main submission: at start pick one the GPU has finished with, create a new one if there is none (wait only at the cap)
 static id<MTL4CommandAllocator> g_up_alloc4[3];
-static id<MTL4CommandAllocator> g_present_alloc4[3];
-static CBUF g_present_cb[3];
 static id<MTL4ArgumentTable> g_vt, g_ft, g_ct, g_up_ct;
-static id<MTL4ArgumentTable> g_present_args;
 #endif
-static id<MTLBuffer> g_present_uv[3];
-static uint64_t g_present_alloc_fence[3];
-static pthread_mutex_t g_pq_mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t g_pq_cv = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t g_link_cv = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t g_link_mu = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t g_link_tick_ns, g_link_tick_n;
-static uint64_t g_link_dropped;
-static int g_pq_inflight;   // Under g_pq_mu: number of presents committed to the GPU whose completion callback has not arrived yet
-int g_dm_present_link;   // Present pacing mode (runtime value of DM_PRESENT_LINK, modified directly during same-process alternating measurement): 0 = acquire the drawable itself; 1 = display link at 60 Hz; 2 = display link at 120 Hz, the game presents a frame every other display-link tick
-static int g_latency_set = -1;   // DM_PRESENT_LATENCY (nvn_pace.h nvn_latency_setting): n, 0 = auto (2 at a 30 Hz link), -1 = unset (1)
-static uint64_t g_pq_done;
-static uint64_t g_pq_read;
 #if DM_NVN_M3
 static id g_res;   // the MTLResidencySet (iOS 18 / macOS 15); nil on iOS 17, where the Metal 3 path's useResource declarations alone make resources resident
 #else
@@ -143,7 +126,7 @@ static void res_check(id r, const char *what, int reg) {
         MLOG("[red] residency missing #%d: %s slot %d %s %p (parent chain %d levels) allocated %lu B storage %lu%s", nbad, what, reg, is_tex ? "texture" : "buffer", (__bridge void *)a, hops, (unsigned long)a.allocatedSize, (unsigned long)a.storageMode,
              t ? [NSString stringWithFormat:@" format %lu %lux%lu type %lu usage %#lx", (unsigned long)t.pixelFormat, (unsigned long)t.width, (unsigned long)t.height, (unsigned long)t.textureType, (unsigned long)t.usage].UTF8String : ""); }
 }
-static void res_commit(void) {
+void res_commit(void) {
     pthread_mutex_lock(&g_res_mu);
     if (g_res_dirty) { [g_res commit]; g_res_dirty = 0; }
     pthread_mutex_unlock(&g_res_mu);
@@ -248,6 +231,6 @@ static const char *cctx_snap(void);   // What is in this submission (printed int
 #include "mtl/draw.inc"
 #include "mtl/copies.inc"
 #include "mtl/exec.inc"
-#include "mtl/shot.inc"
-#include "mtl/present.inc"
-#include "mtl/present_thread.inc"
+#include "mtl/stats.inc"
+#pragma clang attribute pop
+#define NVN_MTL_M_ENDED   // (for a unit test that includes this file and then mtl/present.m as one translation unit)

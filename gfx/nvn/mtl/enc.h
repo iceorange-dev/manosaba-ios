@@ -18,6 +18,13 @@ static inline void m4_end(id e) {
     [e endEncoding];
 }
 #endif
+// A copy encoder on a command buffer: Metal 4's own command buffers have a compute encoder for it, the others (q_cb) a blit encoder. On the
+// submission's command buffer enc_b_begin (mtl/encoders.inc) brings the render state up to date first
+#if DM_NVN_M3
+static inline id enc_b_open(id cb) { return [cb blitCommandEncoder]; }
+#else
+static inline id enc_b_open(id cb) { return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? (id)[cb computeCommandEncoder] : (id)[cb blitCommandEncoder]; }
+#endif
 static inline void enc_b_end(id e) { m4_end(e); }
 static inline void enc_b_copy_buffer(id e, id<MTLBuffer> s, NSUInteger so, id<MTLBuffer> d, NSUInteger doff, NSUInteger n) { [e copyFromBuffer:s sourceOffset:so toBuffer:d destinationOffset:doff size:n]; }
 static inline void enc_b_copy_buffer_texture(id e, id<MTLBuffer> s, NSUInteger so, NSUInteger row, NSUInteger img, MTLSize z, id<MTLTexture> d, NSUInteger sl, NSUInteger lv, MTLOrigin o) { [e copyFromBuffer:s sourceOffset:so sourceBytesPerRow:row sourceBytesPerImage:img sourceSize:z toTexture:d destinationSlice:sl destinationLevel:lv destinationOrigin:o]; }

@@ -15,7 +15,6 @@ static int fail, count;
 #define CHECK(c, ...) do { count++; if (c) printf("  ✓ "); else { fail++; printf("  ✗ "); } printf(__VA_ARGS__); printf("\n"); } while (0)
 
 static id<MTLTexture> g_rt[2];
-static id<MTLCommandQueue> g_q;
 // 1 = drawn (red in target 0 and green in target 1), 0 = discarded (both still the blue clear colour), -1 = anything else; *plain: the pipeline used fs->fn
 static int draw1(NvShader *vs, NvShader *fs, unsigned op, float ref, float alpha, uint32_t early, int *plain) {
     state_reset(); S.color.alpha_func = op;

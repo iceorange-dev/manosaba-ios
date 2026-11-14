@@ -228,6 +228,7 @@ void mtl_sub_snapshot(const uint64_t *h, int n);   // Start of submission: copy 
 void mtl_bh_deferred_seen(void);   // A deferred binding was recorded: submissions read deferred handles at their start even without uniform snapshots (nvn_mtl.m)
 void xv_test_counts(int *dc, int *viol);
 int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1);   // The frame's earliest GPUStart / latest GPUEnd (mach absolute time, ns); returns 0 if not all complete or there is no GPU time
+extern int g_gpu_span_host;          // those times are on the host's clock (now_ns): the Metal backend's are; the Vulkan backend's are on the GPU's own clock (core/frame.h)
 void mtl_stats(uint64_t *passes, uint64_t *draws);
 void mtl_args_stats(uint64_t *enc, uint64_t *reuse);
 void mtl_use_stats(uint64_t *call, uint64_t *skip);

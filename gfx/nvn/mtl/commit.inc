@@ -165,7 +165,6 @@ void mtl_present_flush(void);
 // tick, so each call cost a display frame or two (seedds/nxnative 3b72aea, MIT: Fire Emblem: Three Houses calls it after every resource upload, its
 // first load took 78 s on an iPhone). A swapchain texture is still handed back only after its previous present (AcquireTexture); mtl_drain flushes
 void mtl_finish(void) { @autoreleasepool { mtl_finish_gpu(); } }
-static void present_drop_for_suspend(void);
 void mtl_drain(void) { @autoreleasepool { present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); } }
 
 // ================= Render replay =================

@@ -4,6 +4,7 @@
 // flagged (a source under 16); a 16-bit float image is not compared; each present writes its line and the red line comes once. The whole guest
 // image read (-DDM_TEST_PLUMA_NO_CROP): 1 fails
 #include "../nvn/nvn_mtl.m"
+#include "../nvn/mtl/present.m"   // the presentation unit's statics, in this translation unit too
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
 module_t g_mod[MAX_MOD]; int g_nmod;

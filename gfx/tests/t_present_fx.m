@@ -3,6 +3,7 @@
 // the fence): on an M5 the result was right even with fx_commit_sync left out, also with 40 serialized 4K clears as the frame (render passes ran in
 // order there); the ordering rests on the documented signalEvent / waitForEvent of MTL4CommandQueue and on MetalFX's measured fence use (fx_apply)
 #include "../nvn/nvn_mtl.m"
+#include "../nvn/mtl/present.m"   // the presentation unit's statics, in this translation unit too
 #include "../nvn/hle_nvn.c"
 const dm_game_profile dm_game = { .id = "test", .nvn_api_major = 55, .nvn_api_minor = 15, .nvn_c2 = {0x168, 128, 0x568, 128, 0x120, 8}, .nvn_depth_mode = 1 };   // hle_nvn.c reports the NVN API version and sets the c[2] layout from the profile
 uint64_t g_t0_ns;   // process start time from host main.c (used by hle_nvn's per-frame @t_s); unit test stub

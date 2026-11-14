@@ -12,7 +12,6 @@ void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int n, fail;
 #define CHECK(c, ...) do { n++; if (c) printf("  ✓ "); else { fail++; printf("  ✗ "); } printf(__VA_ARGS__); printf("\n"); } while (0)
-static id<MTLCommandQueue> g_q;
 // the attribute's 4 words as the vertex shader sees them (type: "float" or "uint"); 0 if the pipeline is refused
 static int fetch(int nvn_fmt, int float_input, const void *data, size_t bytes, uint32_t out[4]) {
     NSString *ty = float_input ? @"float" : @"uint";

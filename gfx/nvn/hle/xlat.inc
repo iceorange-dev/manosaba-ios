@@ -119,11 +119,13 @@ static uint64_t x_present_ticket(uint64_t job) {   // the present-thread ticket 
 void nvn_xlat_hold(int on) { pthread_mutex_lock(&g_xq_mu); g_xleft = on ? 0 : -1; pthread_cond_broadcast(&g_xq_cv); pthread_mutex_unlock(&g_xq_mu); }
 void nvn_xlat_step(int n) { pthread_mutex_lock(&g_xq_mu); g_xleft = n; pthread_cond_broadcast(&g_xq_cv); pthread_mutex_unlock(&g_xq_mu); }
 uint64_t nvn_xlat_pending(void) { pthread_mutex_lock(&g_xq_mu); uint64_t n = g_xq_in - g_xq_done; pthread_mutex_unlock(&g_xq_mu); return n; }
+static void fstep_submit_note(void);   // window.inc: where the frame's submits began, for the frame step's cost (plan item 321)
 NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
     if (test_work_ms() > 0) { uint64_t from = atomic_exchange(&g_test_work_from, 0); if (from) sleep_until_ns(from + (uint64_t)test_work_ms() * 1000000ull); }
     NVN_BLOCKING();
     uint64_t tr = trace_now();
     gfx_enter();
+    fstep_submit_note();
     ((queue_t *)q)->submits++;
     if (xlat_on()) {
         xjob j = {.kind = XJ_SUBMIT, .n = n, .h = malloc(sizeof(uint64_t) * (size_t)(n > 0 ? n : 1))};

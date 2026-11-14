@@ -10,7 +10,7 @@ void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
 static int n, fail;
 #define EXPECT(name, want, got) do { double w_ = (want), g_ = (got); n++; printf("%-74s expected %-9g → got %-9g %s\n", name, w_, g_, w_ == g_ ? "✓" : "✗"); fail += w_ != g_; } while (0)
-static NvShader *g_tvs, *g_tfs; static id<MTLCommandQueue> g_q;
+static NvShader *g_tvs, *g_tfs;
 static void fetch(int fmt, const uint8_t *bytes, size_t len, float out[4]) {   // one point whose attribute 2 (stream 1, offset 2) has this format and these bytes
     pso_key k = {0}; k.cfmt[0] = MTLPixelFormatRGBA32Float; k.chmask = 0xf; k.samples = 1;
     k.attr[2] = (va_st){.fmt = (uint32_t)fmt, .offset = 2, .stream = 1}; k.stream[1].stride = 16;

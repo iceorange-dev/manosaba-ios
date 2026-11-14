@@ -16,7 +16,6 @@
 // Neither while a TBDR rewrite holds draws back (the game's own then). The profile's colour processing for each (Tears of the Kingdom's HDR for
 // both: the scene keeps highlights above 1, as MacNativeGames found). Metal 4: a fence after all earlier work, which the scaler waits on; the next
 // encoder's queue barrier orders it after the scaler. Each scaler is made on this thread the first time (3-50 ms, once per sizes / formats).
-static int upscale_on(void);
 static char g_up_fs[2][17]; static int g_up_color[2];   // the profile's passes (hle_nvn.c, at DeviceInitialize): fragment shader key, MetalFX's colour processing
 void mtl_set_upscale_pass(const char *fs, int color, const char *compose_fs, int compose_color) {
     g_up_fs[0][0] = g_up_fs[1][0] = 0; if (fs) strlcpy(g_up_fs[0], fs, sizeof g_up_fs[0]); if (compose_fs) strlcpy(g_up_fs[1], compose_fs, sizeof g_up_fs[1]);

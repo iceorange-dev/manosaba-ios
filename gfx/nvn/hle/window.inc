@@ -81,6 +81,8 @@ static int fstep_on(void) { static int v = -1; if (v < 0) { const char *e = gete
     if (g_fs.no321) LOG("[nvn] frame step: plan item 321's rules off (DM_FSTEP_RULES=0): three late frames in a row step up from kmin, no probes");
     if (v) LOG("[nvn] frame step in whole vsyncs: each frame shown k vsyncs of 60 Hz, the game steps k (DM_FRAME_STEP=vsync)%s",
                g_fs.opt ? "; a trial of k - 1 every 5 s or more whatever the cost, its first second not counted late (DM_FSTEP_OPT=0 turns that off)" : ""); } return v; }
+static nvn_fpath g_fs_path;   // where each frame's submits began (plan item 321: the cost as the critical path, pacing.inc)
+static void fstep_submit_note(void) { if (fstep_on()) nvn_fpath_submit(&g_fs_path, g_frame, now_ns()); }   // nvnQueueSubmitCommands
 int nvn_fstep_step(void) { return fstep_on() ? g_fs_step : 0; }   // the step for the frame the game is about to make, in vsyncs (0 = not in this mode)
 int mtl_fps_target(void);   // nvn_mtl.m: the player's frame rate target (DM_FPS, the iOS setting, 135's thermal hold)
 // The rate the host holds frames at now, 0 for none: the game's hold (130) or the player's target below 60 (DM_FPS, the iOS setting, 135's thermal

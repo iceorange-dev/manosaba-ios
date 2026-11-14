@@ -1,4 +1,4 @@
-// gfx/nvn/mtl/present_thread.inc, part of nvn_mtl.m (included there in order, one translation unit): The present thread and the display link, statistics getters
+// gfx/nvn/mtl/present_thread.inc, part of mtl/present.m (included there in order, one translation unit): The present queue and its thread, the display link
 // ---------- Present thread ----------
 // NVN semantics: QueuePresentTexture only queues the present and returns immediately (the game often calls it while holding a lock; iOS real device: synchronously waiting for nextDrawable inside it
 // takes about 30 ms, the lock is held about 90% of the time, and the loading thread starves). Taking the drawable, blit and present are all done on this thread in enqueue order.
@@ -152,7 +152,7 @@ static void link_sync(void) {   // Called every frame by the game's present thre
 // Before going to the background (mtl_drain): when the display link drives presents, frames queued but not yet presented can only be taken by the display-link callback, and in the background the system no longer calls back --
 // waiting as-is for "the present queue to empty" would wait forever, the enter-background callback would not return, and the system would kill the process (the process disappears within 22 seconds after switching to another App).
 // These frames will not be seen anyway: discard them directly (accounted as dropped frames) and only wait for the one present already submitted to the GPU to finish.
-static void present_drop_for_suspend(void) {
+void present_drop_for_suspend(void) {
     pthread_mutex_lock(&g_pq_mu);
     if (g_link_owns_layer) {
         uint64_t n = g_pq_in - g_pq_read;
@@ -253,12 +253,7 @@ void mtl_present_wait(uint64_t tk) { @autoreleasepool {
 // and this used to wait here without a timeout; nobody took the 3 queued frames and the game stalled; those two runs on Mac did not hit this call)
 double mtl_link_tick_age_ms(void) { uint64_t t = __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED); return t ? (now_ns() - t) / 1e6 : -1; }   // front ends log it next to volume / route changes
 void mtl_present_flush(void) { pthread_mutex_lock(&g_pq_mu); uint64_t h = g_pq_in; pthread_mutex_unlock(&g_pq_mu); mtl_present_wait(h); }
-void mtl_stats(uint64_t *passes, uint64_t *draws) { *passes = g_stat_pass; *draws = g_stat_draw; }
-void mtl_args_stats(uint64_t *enc, uint64_t *reuse) { *enc = g_stat_args_enc; *reuse = g_stat_args_reuse; }
-void mtl_use_stats(uint64_t *call, uint64_t *skip) { *call = 0; *skip = 0; }
-uint64_t mtl_ds_omit(void) { return g_stat_ds_omit; }
-void mtl_bw(uint64_t *load, uint64_t *store, uint64_t *full) { *load = g_bw_load; *store = g_bw_store; *full = g_pass_full_rw; }
-uint64_t mtl_udc_saved_bytes(void) { return g_udc_saved_bytes; }
+void present_queue_state(uint64_t *in, uint64_t *done) { *in = g_pq_in; *done = g_pq_done; }   // for the watchdog's wait point dump (read without the lock, as it was: the dump must not wait)
 int mtl_has_window(void) { return front_metal_layer() != NULL; }
 int mtl_link_active(void) { return link_on(); }
 void mtl_link_pause(int on) { CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }   // For testing (DM_TEST_BG): imitates the system stopping the display-link callback in the background
@@ -282,15 +277,3 @@ int mtl_link_wait_tick(uint64_t timeout_ns) { @autoreleasepool {
     started_tick = g_link_tick_n;
     pthread_mutex_unlock(&g_link_mu); return 1;
 } }
-
-
-
-// Called by the watchdog (no progress): writes the state of all blocking wait points on the graphics side to the log -- who is waiting for whom is visible at a glance (after switching to the Metal 4 submit model there was once a case of "ran to 900 frames then stopped, no failure line")
-void mtl_wait_state_dump(void) {
-    MLOG("wait point state: main fence committed %llu / completed %llu; main allocator fences [%llu %llu %llu]; upload pending %d, allocators busy [%d %d %d], seq %u, unflushed batch %d; present queue in %llu / done %llu; main command buffer encoding %d, submit thread set %d",
-         (unsigned long long)g_fence, (unsigned long long)g_done, (unsigned long long)g_alloc_fence[0], (unsigned long long)g_alloc_fence[1], (unsigned long long)g_alloc_fence[2],
-         atomic_load(&g_up_pending), atomic_load(&g_up_alloc_busy[0]), atomic_load(&g_up_alloc_busy[1]), atomic_load(&g_up_alloc_busy[2]), g_up_seq, g_up_cb != nil,
-         (unsigned long long)g_pq_in, (unsigned long long)g_pq_done, g_cb != nil, atomic_load(&g_sub_thread_set));
-}
-void mtl_alloc_stats(uint64_t *waits, uint64_t *grown, int *n) { *waits = g_alloc_waits; *grown = g_alloc_grown; *n = g_alloc_n; }   // Main submit allocator pool: how many times it waited, how many times it grew, how many exist now
-#pragma clang attribute pop

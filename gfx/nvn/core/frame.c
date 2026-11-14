@@ -10,6 +10,7 @@ __attribute__((constructor)) static void bp_t0(void) { g_bp.t0 = bp_now(); }
 int bootprof(void) { static int v = -1; if (v < 0) v = getenv("DM_BOOTPROF") != NULL; return v; }
 // ---------- Per-frame GPU time aggregation ----------
 #define GRING 1024
+int g_gpu_span_host;
 static struct { _Atomic uint64_t frame, ns, t0, t1; _Atomic int pending; } g_gpu[GRING];   // t0 / t1: the frame's earliest GPUStart / latest GPUEnd (mach absolute time, ns)
 // The frame's GPU time is the union of its command buffers' spans: Apple GPUs start a buffer while the one before it runs, so the plain sum (ns) counted
 // the overlap twice (LASRecomp PR #197: summed 13-17 ms against a union of 6.5-7 ms). The spans of the last GIVR frames are kept (the time is read 8

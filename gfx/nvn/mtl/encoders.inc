@@ -197,9 +197,9 @@ static inline void enc_c_args(id e, uint64_t gpu, NSUInteger i) { (void)e; [g_ct
 #endif
 static inline void enc_c_dispatch(id e, MTLSize n, MTLSize t) { [e dispatchThreadgroups:n threadsPerThreadgroup:t]; }
 #if DM_NVN_M3
-static inline id enc_b_begin(id cb) { return [cb blitCommandEncoder]; }
+static inline id enc_b_begin(id cb) { return enc_b_open(cb); }
 #else
-static inline id enc_b_begin(id cb) { if (cb == g_cb) rs_sync(); return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? [cb computeCommandEncoder] : [cb blitCommandEncoder]; }
+static inline id enc_b_begin(id cb) { if (cb == g_cb) rs_sync(); return enc_b_open(cb); }
 #endif
 static void blit_note(void);   // Per-pass dump: a copy / buffer update ended the render pass (defined after PD)
 static void upd_flush(void);

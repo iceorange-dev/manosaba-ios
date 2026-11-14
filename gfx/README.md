@@ -109,7 +109,7 @@ Binding conventions used by the translation:
 | `nvn/hle/window.inc` | Windows: building them, their crop and present interval, acquiring their images |
 | `nvn/hle/timing.inc` | Timing instrumentation: `DM_NVN_TSV`, the fps / GPU line, thermal attribution, the summaries every 300 frames |
 | `nvn/hle/pacing.inc` | Frame pacing and `nvnQueuePresentTexture`: dropped frames, the real-time thread's declaration, the present rate, frame-rate trials |
-| `nvn/nvn_mtl.m`, `nvn/nvn_mtl.h` | Replay layer: the Metal device, queues, residency and deferred releases, then the `.inc` parts below, included in this order (one translation unit, plan item 261) |
+| `nvn/nvn_mtl.m`, `nvn/nvn_mtl.h` | Replay layer: the Metal device, queues, residency and deferred releases, then the `.inc` parts below up to `stats.inc`, included in this order (one translation unit, plan item 261); the `.m` files among them are translation units of their own (plan item 264) |
 | `nvn/mtl/mtl.h` | The Metal backend's private header: its includes, the Metal 4 / Metal 3 macros, and what its translation units share (plan item 264) |
 | `nvn/mtl/pools.inc` | Memory pools: the pool table, GPU addresses of guest memory and the buffers behind them |
 | `nvn/mtl/occlusion.inc` | Occlusion queries (samples passed) |
@@ -146,11 +146,13 @@ Binding conventions used by the translation:
 | `nvn/mtl/draw.inc` | Draws (in three stages: admitted, its render pass, its encoding) and dispatches |
 | `nvn/mtl/copies.inc` | Copies between buffers and textures, texel reads and writes, texture clears |
 | `nvn/mtl/exec.inc` | A submission's context for the failure line; the power-saving mode; the execution interface's commands (`nvn_be_*`, `nvn/nvn_backend.h`) |
-| `nvn/mtl/shot.inc` | Present screenshots |
+| `nvn/mtl/stats.inc` | Counts and wait points read from outside (`mtl_res_snapshot`, `mtl_stats`, `mtl_wait_state_dump`); what a present asks of this unit (`present_tex`, `use_present`, `bootprof_present`). The last part of `nvn_mtl.m` |
+| `nvn/mtl/present.m` | The presentation layer, a translation unit of its own: the presents' own Metal objects and the queue's counters (`present_init`), then its three parts below. A unit test of them includes `nvn_mtl.m` and then this file |
+| `nvn/mtl/shot.inc` | Present screenshots (part of `present.m`) |
 | `nvn/mtl/texdump.m` | Texture dumps and snapshots (DM_NVN_TEXDUMP, DM_NVN_TEXSNAP), presented times, the display's rate; a translation unit of its own |
 | `nvn/mtl/present_pipe.m` | The present pipeline and its encoding: a translation unit of its own |
-| `nvn/mtl/present.inc` | MetalFX upscaling of the presented picture, live shots, the perf line, present_now |
-| `nvn/mtl/present_thread.inc` | The present thread and the display link, statistics getters |
+| `nvn/mtl/present.inc` | MetalFX upscaling of the presented picture, live shots, the luma check, present_now (part of `present.m`) |
+| `nvn/mtl/present_thread.inc` | The present queue and its thread, the display link (part of `present.m`) |
 | `nvn/core/core.h`, `nvn/core/core.c` | The core's conventions; log lines and red lines once a tag (`MLOG`, `RED_ONCE`), shared with the backend; the pass dump (`PD`, `DM_NVN_PASSDUMP`) with the frame number and the pass and draw counts; a clock for statistics |
 | `nvn/core/tbdr.c`, `nvn/core/tbdr.h` | The TBDR rewrites' switches (`DM_NVN_TBDR`, `DM_NVN_TBDR_OFF`, the ruler, `DM_NVN_UNWRITTEN_DC`) and the cross-submission attachment validity ledger (`xv_*`) |
 | `nvn/core/rt.c`, `nvn/core/rt.h` | Render target helpers: a mip level's extent, an attachment's subresource, whether a scissor covers a target; whether two target sets are the same (`rt_same`) or two attachments one subresource (`rt_sub_eq`), a colour slot left out because another attaches the same subresource (`rt_dup_slot`); a target whose storage another live texture object holds too (`tex_shared`, `rt_any_shared`: the rewrites, which follow a texture by its serial, leave it alone) |
@@ -243,6 +245,7 @@ All are environment variables. The Mac host fills `DM_NVN_SHMAP` and `DM_MSL_DIR
 | `DM_NVN_TS_DVFS=<x>` | A diagnostic for a Mac: report times x times further apart once the game has held interval 2 or 3 for 1 s, the real times 0.5 s after it picks interval 1, as an iPhone's GPU clock follows the frame rate |
 | `DM_FRAME_STEP=vsync` | The host paces the frames (plan items 133, 222, `nvn/nvn_fstep.h`) for a game whose step the host sets: each frame stays k vsyncs of 60 Hz, three late frames step up, frames that fit k − 1 try it, and the game steps the time shown; its own present interval is not used for pacing |
 | `DM_FSTEP_OPT=0` | With `DM_FRAME_STEP=vsync`: no trial of k − 1 whatever the cost (plan item 222). By default one starts after 5 s at k above its minimum, its first second not counted late while the GPU clock comes up; a failed one doubles the wait (up to 32 s) |
+| `DM_FSTEP_RULES=0` | With `DM_FRAME_STEP=vsync`: plan item 321's rules off, for an A/B: three late frames in a row step up from the minimum (by default more than 24 of the last 120 shown late), no probes back to it, and the cost is max(CPU, GPU) (by default the frame's critical path, from its first submit to the end of its GPU work, on a backend whose GPU times are on the host's clock) |
 | `DM_NVN_FBX=all` or `0` | Copy the attachment for every draw that samples it (default: only after a texture barrier), or never |
 | `DM_GFXUSE=<file>[:<frame>]` | Record the guest memory ranges the GPU reads over 30 frames |
 | `DM_NVN_TBDR=0` | Turn off all pass optimizations (attach, load and store everything), for equivalence comparisons |

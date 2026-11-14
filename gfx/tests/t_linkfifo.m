@@ -6,6 +6,7 @@
 // at interval 2, the present rate's mode at interval 3 and for 3 s after, the ticks mtl_link_wait_tick would count from each mode; with the
 // target back at 60 mode 1. 30 Hz whatever the interval (-DDM_TEST_LINK30_ALWAYS): 2 fail
 #include "../nvn/nvn_mtl.m"
+#include "../nvn/mtl/present.m"   // the presentation unit's statics, in this translation unit too
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
 module_t g_mod[MAX_MOD]; int g_nmod;

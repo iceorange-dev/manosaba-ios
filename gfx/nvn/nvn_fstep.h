@@ -16,7 +16,8 @@
 // keep the three in a row. A probe is a trial back to kmin the cost does not justify, started after the hold-off while the caller reports the
 // frames slowed for reasons other than the scene (slow: the CPU parked on the efficiency cores, or the GPU clock lowered at the longer hold,
 // nvn_fstep_gpu_slowed): its first FSTEP_GRACE frames do not count, and the run at kmin it starts must last FSTEP_HOLD_MAX before the hold-off
-// returns to 1 s (a shorter one fails the probe: a CPU that cannot hold kmin is not probed every second).
+// returns to 1 s (a shorter one fails the probe: a CPU that cannot hold kmin is not probed every second). The cost itself is the frame's critical
+// path where one is known (nvn_fstep_cost, nvn_fpath, at the end of this file).
 // Unit test gfx/tests/t_fstep.c. Pure: no clock, no I/O.
 #pragma once
 #include <math.h>
@@ -122,4 +123,34 @@ static inline int nvn_fstep_gpu_slowed(nvn_fgpu *g, double gpu, int k, int kmin,
     if (k != g->k) { g->k = k; g->n = 0; }
     g->cur = g->n ? g->cur + (gpu - g->cur) / 8 : gpu; g->n++;
     return nvn_fgpu_slow(g);
+}
+
+// The cost handed to nvn_fstep_next, in vsyncs (plan item 321; S2Arm's measurement of Tears of the Kingdom on an iPhone, written anew). cpu: the
+// time from the frame's start (its first acquire) to its present call; gpu: its GPU time; path: its critical path, from where its submits began
+// to the end of its GPU work (0: not known). The submitting thread's waits on the GPU are in cpu and not in the path: S2Arm at a hold of 3 read
+// 35 ms of CPU where the path was 27 ms, which fits a hold of 2, so a failed probe stepped up to 20 fps and 30 never fitted again. With a path
+// the cost is the path, and never under the GPU's time. Tears of the Kingdom here submits before it acquires its window texture, so its cpu is
+// 0.03 vsyncs on a Mac and the cost was the GPU's time alone (0.46-0.55 on Great Sky Island, the path 0.61-0.70). Neither measure holds the game's own
+// work between its frames: a scene bound by that looks as if it fitted k − 1 (plan item 327)
+static inline double nvn_fstep_cost(double cpu, double gpu, double path) {
+#ifndef DM_TEST_FSTEP_COST_CPU   // negative control of t_fstep only: max(CPU, GPU), as before
+    if (path > 0) return path > gpu ? path : gpu;
+#endif
+    return cpu > gpu ? cpu : gpu;
+}
+// Where each of the last FSTEP_PATH_N frames' submits began (ns), kept until the frame's GPU work has ended
+enum { FSTEP_PATH_N = 16 };
+typedef struct { uint64_t f[FSTEP_PATH_N], t[FSTEP_PATH_N]; } nvn_fpath;   // f: the frame's number + 1 (0: empty); t: its first submit
+static inline void nvn_fpath_submit(nvn_fpath *p, uint64_t frame, uint64_t now) {   // at every submit: the frame's first one is where they began
+    unsigned k = (unsigned)(frame % FSTEP_PATH_N);
+#ifndef DM_TEST_FPATH_LAST_SUBMIT   // negative control of t_fstep only: every submit moves the start
+    if (p->f[k] == frame + 1) return;
+#endif
+    p->f[k] = frame + 1; p->t[k] = now;
+}
+// The critical path of a frame whose GPU work ended at gpu_end (ns, on the clock of nvn_fpath_submit), in vsyncs of vs ns; 0: the frame is not
+// kept (more than FSTEP_PATH_N frames ago, or it made no submit) or the end is not after its submits' start
+static inline double nvn_fpath_vsyncs(const nvn_fpath *p, uint64_t frame, uint64_t gpu_end, double vs) {
+    unsigned k = (unsigned)(frame % FSTEP_PATH_N);
+    return p->f[k] == frame + 1 && gpu_end > p->t[k] ? (double)(gpu_end - p->t[k]) / vs : 0;
 }

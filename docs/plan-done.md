@@ -533,12 +533,12 @@ licence. The long text these records were written from: `git show e683f23:DEVELO
 - 263 · b95 · the two switches off by default traced and removed: `DM_NVN_RT_RANGE` (a pass continued across a SetRenderTargets that only
   narrows a colour view's levels; from the initial release 46578a2, no measurement on record, spread over ten parts) and `DM_NVN_DEPTH_PLAIN`
   (plan item 99's A/B: the same picture either way). The default path is unchanged; in `DM_NVN_TBDR_OFF` "range" now names nothing.
-- 264 · part (b88-b94, b96-b107, b189, b192) · the replay core and the Metal backend apart (the user, 2026-10-24: the 10,000-line Metal
-  file first, before Android; headers designed with a Vulkan backend in mind): what the replay decides in plain C in `gfx/nvn/core/`, each step
-  with its header and a test that needs no GPU (b88-94, b96-99), `gfx/nvn/nvn_backend.h` with the replay loop in `core/exec.c` (`nvn_exec`,
-  was `mtl_exec`; b100), `mtl/draw.inc` split (b102), the backend's private header `mtl/mtl.h` and first units `mtl/keepalive.m`,
-  `mtl/frame_timing.m`, `mtl/passgpu.m`, `mtl/present_pipe.m` (b103-104), `gfx/nvn/hle_nvn.c` in 17 `gfx/nvn/hle/` parts, `host/`'s 62 sources
-  in directories (b105-106), `mtl/enc.h`, `mtl/texdump.m` (b189), `mtl/reg.h`, `mtl/lod_bias.m` (b192). Left: the other parts off the draw's path.
+- 264 · b88-b94, b96-b107, b189, b192, b195 · the replay core and the Metal backend apart (the user, 2026-10-24: the 10,000-line Metal file
+  first, before Android; headers with a Vulkan backend in mind): what the replay decides in plain C in `gfx/nvn/core/`, each step with its header
+  and a test that needs no GPU; `gfx/nvn/nvn_backend.h` with the replay loop in `core/exec.c` (`nvn_exec`); the backend's private headers
+  `mtl/mtl.h`, `mtl/enc.h`, `mtl/reg.h` and its own units `mtl/keepalive.m`, `frame_timing.m`, `passgpu.m`, `present_pipe.m`, `texdump.m`,
+  `lod_bias.m`, `present.m` (the presentation layer, b195); `gfx/nvn/hle_nvn.c` in 17 `gfx/nvn/hle/` parts, `host/`'s 62 sources in directories.
+  Not taken: the other parts as units (alone each lacks 9 to 59 of the main unit's file-scope names, or the draw reads it at every call).
 - 265 · b108 · GPU write-back records that outlived their pool (MacNativeGames 0930478 / 873edff, MIT, written anew: after a warp, Tears of
   the Kingdom's heap blocks, an allocator node and index buffers were overwritten with an old rendering): a finalized pool takes its
   textures' records with it (`wb_drop_range` from `mtl_pool_del`); a dirty-tracking range keeps the clock it was registered at (`range_t.born`).
@@ -838,9 +838,10 @@ licence. The long text these records were written from: `git show e683f23:DEVELO
   `widen_rw.h` `wrw_block_r`; chain 36a510fd7866): iPhone Air, Great Sky Island standing, widened 27.3 fps against 28.3 unwidened; b176 the
   setting "Wide screen (next launch)" (`ios/Settings.bundle/Root.plist` `dm.widen`, and the in-game panel; the user, 2026-11-09: a setting,
   off unless chosen); b177 the edge push per axis (`EmitterContext.EmitWidenPushAxis`, `widen_push_y`; chain 1f985598396c). Left: the Duo.
-- 321 · part (b178) · the frame step's rules S2Arm measured on an iPhone (written anew in `gfx/nvn/nvn_fstep.h`), for when `DM_FRAME_STEP=vsync`
-  becomes the iOS default: the window (step up only when more than 24 of the last 120 frames were shown late) and the probes back to 60
-  (`gfx/nvn/hle/pacing.inc`; `DM_FSTEP_RULES=0` off). iPhone Air, rules on and off: 30 fps throughout; it stays a switch. Left: the critical path.
+- 321 · part (b178, b195) · the frame step's rules S2Arm measured on an iPhone (written anew in `gfx/nvn/nvn_fstep.h`), for when
+  `DM_FRAME_STEP=vsync` becomes the iOS default: the window (step up only when more than 24 of the last 120 frames were shown late), the probes
+  back to 60, the cost as the critical path from the frame's first submit to its GPU end (`nvn_fstep_cost`; Great Sky Island on the Mac: 0.61-0.70
+  vsyncs against the GPU's 0.46-0.55); `DM_FSTEP_RULES=0` off. iPhone Air, the first two on and off: 30 fps throughout. Left: the phone with the path.
 - 322 · part (b180) · the translator's warnings (317c, b179): 324 of Tears of the Kingdom's compute shaders decoded through 24 zero words;
   vertex shader 588e242a52f5f7aa's stores with no storage buffer; manosaba's pixel shaders a1fe71290083482a and 45eb69b3b99c6600 reading a
   multisample texture at PIXLD.MY_INDEX, left out. `DM_NVN_KEY_WATCH` found none of the three drawn. Left: each changed when a run draws with it.
