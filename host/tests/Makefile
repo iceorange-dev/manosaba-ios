@@ -316,9 +316,9 @@ run: \
 	 fi; echo "t_crash_bt_unguarded: a backtrace reading frames directly faults on a corrupt frame pointer, as expected"
 	$(B)/t_crash_stderr
 	@status=0; $(B)/t_crash_stderr_counted > $(B)/t_crash_stderr_counted.log 2>&1 || status=$$?; \
-	 if [ "$$status" -ne 1 ] || [ "$$(grep -c ' FAIL$$' $(B)/t_crash_stderr_counted.log)" -ne 1 ] || ! grep -q "six times as long.* FAIL" $(B)/t_crash_stderr_counted.log; then \
+	 if [ "$$status" -ne 1 ] || [ "$$(grep -c ' FAIL$$' $(B)/t_crash_stderr_counted.log)" -ne 2 ] || ! grep -q "six times as long.* FAIL" $(B)/t_crash_stderr_counted.log || ! grep -q "stderr held: the first part.* FAIL" $(B)/t_crash_stderr_counted.log; then \
 	   cat $(B)/t_crash_stderr_counted.log; echo "t_crash_stderr_counted: unexpected negative-control result ($$status)"; exit 1; \
-	 fi; echo "t_crash_stderr_counted: 100 sleeps counted take 6 s when each sleeps longer, as expected"
+	 fi; echo "t_crash_stderr_counted: 100 sleeps counted outlast the 3 s limit when each sleeps longer, as expected"
 	@status=0; $(B)/t_crash_stderr_nodeadman > $(B)/t_crash_stderr_nodeadman.log 2>&1 || status=$$?; \
 	 if [ "$$status" -ne 1 ] || [ "$$(grep -c ' FAIL$$' $(B)/t_crash_stderr_nodeadman.log)" -ne 9 ] || ! grep -q "never returns.* FAIL" $(B)/t_crash_stderr_nodeadman.log; then \
 	   cat $(B)/t_crash_stderr_nodeadman.log; echo "t_crash_stderr_nodeadman: unexpected negative-control result ($$status)"; exit 1; \

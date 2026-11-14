@@ -12,7 +12,9 @@
 //   heap: DM_CRASH_HEAP=x19,x99 with x19 set before the fault → the heap lookup gets x19's value (crash.c's weak stand-in for sead.c prints it),
 //         x99 is reported as not parsed.
 //   slow: held, with every sleep of the child six times as long (a busy machine; GitHub's macOS runner took 5.4 s for crash.c's 100 sleeps of
-//         10 ms) → it still gives up after about 1 s, measured. The sleeps counted instead (-DDM_TEST_CRASH_COUNTED_WAIT) fail 1: 6 s.
+//         10 ms) → it still gives up after about 1 s, measured. The sleeps counted instead (-DDM_TEST_CRASH_COUNTED_WAIT) fail 2: that build's
+//         child sleeps five times as long throughout, as the runner does, so the 3 s limit ends the slow case and the plain held one before
+//         the line is written. (Without that the control failed 1 on a Mac and 2 on the runner, and the rule took only 1: 28 of 40 runs red.)
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -30,10 +32,14 @@ static void dump_self(void) { pthread_mutex_lock(&g_held); }
 
 static void *hold_stderr(void *a) { flockfile(stderr); *(volatile int *)a = 1; for (;;) pause(); }
 static volatile int g_slow;   // the "slow" child: crash.c's sleeps go through this usleep, six times as long
-int usleep(useconds_t us) { uint64_t ns = (uint64_t)us * 1000u * (g_slow ? 6u : 1u); struct timespec ts = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)}; return nanosleep(&ts, NULL); }
+static volatile int g_machine = 1;   // the counted control's child: every sleep five times as long (a 10 ms sleep took 30 to 54 ms on GitHub's runner)
+int usleep(useconds_t us) { uint64_t ns = (uint64_t)us * 1000u * (g_slow ? 6u : 1u) * (unsigned)g_machine; struct timespec ts = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)}; return nanosleep(&ts, NULL); }
 static void child(int hold) {
     if (hold == 6) setenv("DM_FREEZE_DUMP", "0", 1);   // no watchdog thread: the only thread blocks SIGALRM, so nothing else takes the limit's
     crash_install();
+#ifdef DM_TEST_CRASH_COUNTED_WAIT
+    g_machine = 5;
+#endif
     if (hold == 3) { g_slow = 1; hold = 1; }
     if (hold == 4 || hold == 6) { if (pipe(g_never)) _exit(98); crash_set_dump_hook(dump_stuck); }
     if (hold == 6) { raise(SIGALRM); _exit(99); }
@@ -58,9 +64,12 @@ static void run(int hold) {
     pid_t pid = fork();
     if (!pid) { dup2(pfd[1], 2); close(pfd[0]); close(pfd[1]); child(hold); }
     close(pfd[1]);
-    int status = 0, waited = 0;
-    for (; waited < 1000 && !waitpid(pid, &status, WNOHANG); waited++) usleep(10000);   // at most 10 s
-    int hung = waited >= 1000;
+    int status = 0, hung = 0;
+    while (!waitpid(pid, &status, WNOHANG)) {   // at most 10 s, by the clock (1000 sleeps of 10 ms took 49 s on GitHub's runner)
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        if ((t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9 >= 10) { hung = 1; break; }
+        usleep(10000);
+    }
     if (hung) { kill(pid, SIGKILL); waitpid(pid, &status, 0); }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     static char out[65536]; out[0] = 0; ssize_t n, k = 0; while (k < (ssize_t)sizeof out - 1 && (n = read(pfd[0], out + k, sizeof out - 1 - k)) > 0) k += n; out[k] = 0; close(pfd[0]);
@@ -79,7 +88,7 @@ static void run(int hold) {
         return;
     }
     if (hold == 3) {   // only the time matters here
-        EXPECT("sleeps six times as long: still gave up after about 1 s (under 2.5 s) [-DDM_TEST_CRASH_COUNTED_WAIT: 6 s]", !hung && s < 2.5);
+        EXPECT("sleeps six times as long: still gave up after about 1 s (under 2.5 s) [-DDM_TEST_CRASH_COUNTED_WAIT: the 3 s limit]", !hung && s < 2.5);
         return;
     }
     EXPECT(hold == 2 ? "DM_CRASH_HEAP: the child exits by itself" : hold ? "stderr held: the child exits by itself" : "stderr free: the child exits by itself", !hung);
